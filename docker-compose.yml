@@ -69,7 +69,6 @@ services:
     networks:
       - messaging-net
 
-
   mongodb-init:
     image: mongo:6.0
     container_name: mongodb-init
@@ -220,6 +219,39 @@ services:
     networks:
       - messaging-net
 
+  redis3:
+    image: redis:7.0
+    container_name: redis3
+    hostname: redis3
+    depends_on:
+      - redis2
+    environment:
+      REDISCLI_AUTH: redispass
+    ports:
+      - "6381:6379"
+      - "16381:16379"
+    command: [
+      "redis-server",
+      "--cluster-enabled", "yes",
+      "--cluster-config-file", "nodes.conf",
+      "--cluster-node-timeout", "5000",
+      "--requirepass", "redispass",
+      "--masterauth", "redispass",
+      "--protected-mode", "no",
+      "--cluster-announce-ip", "redis3",
+      "--cluster-announce-port", "6379",
+      "--cluster-announce-bus-port", "16379"
+    ]
+    volumes:
+      - redis3_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redispass", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - messaging-net
+
   redis-init:
     image: redis:7.0
     container_name: redis-init
@@ -228,12 +260,14 @@ services:
         condition: service_healthy
       redis2:
         condition: service_healthy
+      redis3: 
+        condition: service_healthy
     entrypoint: ["bash", "-c", "
       echo 'Waiting for Redis cluster nodes to be ready...';
       sleep 5;
       echo 'Creating Redis cluster...';
       yes yes | redis-cli --cluster create \
-        redis1:6379 redis2:6379 \
+        redis1:6379 redis2:6379 redis3:6379 \
         --cluster-replicas 0 \
         -a redispass;
       echo 'Redis cluster initialized.'
@@ -241,6 +275,8 @@ services:
     networks:
       - messaging-net
     restart: "no"
+
+  # Kafka brokers
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.3.0
@@ -279,12 +315,12 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
-      KAFKA_MIN_INSYNC_REPLICAS: 1
-      KAFKA_NUM_PARTITIONS: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_NUM_PARTITIONS: 3
       KAFKA_LOG_RETENTION_HOURS: 168
     volumes:
       - kafka1_data:/var/lib/kafka/data
@@ -310,17 +346,48 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:9092,PLAINTEXT_HOST://localhost:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
-      KAFKA_MIN_INSYNC_REPLICAS: 1
-      KAFKA_NUM_PARTITIONS: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_NUM_PARTITIONS: 3
       KAFKA_LOG_RETENTION_HOURS: 168
     volumes:
       - kafka2_data:/var/lib/kafka/data
     healthcheck:
       test: kafka-topics --bootstrap-server kafka2:9092 --list || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - messaging-net
+
+  kafka3:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: kafka3
+    hostname: kafka3
+    depends_on:
+      - zookeeper
+      - kafka2
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:9092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_LOG_RETENTION_HOURS: 168
+    volumes:
+      - kafka3_data:/var/lib/kafka/data
+    healthcheck:
+      test: kafka-topics --bootstrap-server kafka3:9092 --list || exit 1
       interval: 30s
       timeout: 10s
       retries: 3
@@ -336,6 +403,8 @@ services:
         condition: service_healthy
       kafka2:
         condition: service_healthy
+      kafka3:
+        condition: service_healthy
     command: >
       bash -c "
         echo 'Waiting for Kafka to be ready...'
@@ -345,7 +414,7 @@ services:
         
         if [ -z \"$TOPIC_EXISTS\" ]; then
           echo 'Creating messages topic...'
-          kafka-topics --bootstrap-server kafka1:9092 --create --topic messages --partitions 2 --replication-factor 2
+          kafka-topics --bootstrap-server kafka1:9092 --create --topic messages --partitions 3 --replication-factor 3
           RESULT=$?
           if [ \"$RESULT\" -eq 0 ]; then
             echo 'Topic created successfully'
@@ -381,9 +450,9 @@ services:
     depends_on:
       mongodb3:
         condition: service_healthy
-      redis2:
+      redis3:
         condition: service_healthy
-      kafka2:
+      kafka3:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -399,10 +468,12 @@ volumes:
   mongodb3_data:
   redis1_data:
   redis2_data:
+  redis3_data:
   zookeeper_data:
   zookeeper_log:
   kafka1_data:
   kafka2_data:
+  kafka3_data:
 
 networks:
   messaging-net:
