@@ -1,0 +1,73 @@
+messaging-app/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yaml          # GitHub Actions CI/CD pipeline
+├── charts/                     # Kubernetes Helm charts
+│   ├── app/                    # Application chart
+│   │   ├── templates/
+│   │   │   ├── deployment.yaml
+│   │   │   └── service.yaml
+│   │   └── values.yaml
+│   ├── kafka/                  # Kafka chart
+│   ├── mongodb/                # MongoDB chart
+│   └── redis/                  # Redis chart
+├── cmd/
+│   └── server/
+│       └── main.go             # Application entry point
+├── config/
+│   ├── config.go               # Configuration loader
+│   └── metrics.go              # Prometheus metrics setup
+├── deployments/                # K8s manifests (alternative to Helm)
+│   ├── kafka.yaml
+│   ├── mongodb.yaml
+│   └── redis.yaml
+├── docker/                     # Docker-related files
+│   ├── kafka/
+│   │   └── kafka-setup.sh      # Kafka topic initialization script
+│   └── mongodb/
+│       └── init.js             # MongoDB initialization script
+├── internal/
+│   ├── controllers/            # HTTP controllers
+│   │   ├── auth.go
+│   │   ├── message.go
+│   │   └── user.go
+│   ├── models/                 # Data models
+│   │   ├── message.go
+│   │   └── user.go
+│   ├── repositories/           # Database operations
+│   │   ├── message_repo.go
+│   │   └── user_repo.go
+│   ├── services/               # Business logic
+│   │   ├── auth_service.go
+│   │   ├── message_service.go
+│   │   └── user_service.go
+│   ├── kafka/                  # Kafka producers/consumers
+│   │   ├── consumer.go
+│   │   └── producer.go
+│   ├── redis/                  # Redis client
+│   │   └── client.go
+│   └── websocket/              # WebSocket hub
+│       └── hub.go
+├── pkg/
+│   ├── middleware/             # HTTP middleware
+│   │   ├── auth.go
+│   │   └── metrics.go
+│   └── utils/                  # Utility functions
+│       └── helpers.go
+├── scripts/
+│   ├── deploy.sh               # Deployment script
+│   ├── benchmark.sh            # Load testing
+│   └── wait-for.sh             # Service dependency checker
+├── test/
+│   ├── load/                   # Load test scenarios
+│   │   ├── locustfile.py
+│   │   └── test_messages.json
+│   └── integration/            # Integration tests
+│       ├── auth_test.go
+│       └── message_test.go
+├── .env.example                # Environment template
+├── docker-compose.yml          # Local development
+├── Dockerfile                  # Production image build
+├── go.mod
+├── go.sum
+└── Makefile                    # Build automation

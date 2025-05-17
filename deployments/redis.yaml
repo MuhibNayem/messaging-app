@@ -1,0 +1,245 @@
+# redis-cluster-deployment.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: messaging
+  labels:
+    app: redis
+    component: redis-cluster
+spec:
+  serviceName: redis-cluster
+  replicas: 6  # 3 masters + 3 slaves (2 slaves per master)
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        component: redis-cluster
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+    spec:
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values: ["redis"]
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: redis
+        image: redis:7.0
+        command: ["redis-server"]
+        args:
+        - "/etc/redis/redis.conf"
+        - "--cluster-enabled"
+        - "yes"
+        - "--cluster-config-file"
+        - "nodes.conf"
+        - "--cluster-node-timeout"
+        - "5000"
+        - "--appendonly"
+        - "yes"
+        - "--requirepass"
+        - "$(REDIS_PASSWORD)"
+        - "--masterauth"
+        - "$(REDIS_PASSWORD)"
+        ports:
+        - containerPort: 6379
+          name: redis
+        - containerPort: 16379
+          name: cluster
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-secrets
+              key: password
+        volumeMounts:
+        - name: config
+          mountPath: /etc/redis
+        - name: data
+          mountPath: /data
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - -a
+            - "$(REDIS_PASSWORD)"
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - -a
+            - "$(REDIS_PASSWORD)"
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 1
+      - name: redis-exporter
+        image: oliver006/redis_exporter:v1.45.0
+        ports:
+        - containerPort: 9121
+          name: metrics
+        env:
+        - name: REDIS_ADDR
+          value: "redis://localhost:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-secrets
+              key: password
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+      volumes:
+      - name: config
+        configMap:
+          name: redis-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "fast-ssd"
+      resources:
+        requests:
+          storage: 10Gi
+---
+# ConfigMap for Redis configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: messaging
+data:
+  redis.conf: |
+    cluster-enabled yes
+    cluster-require-full-coverage no
+    cluster-node-timeout 5000
+    appendonly yes
+    save 900 1
+    save 300 10
+    save 60 10000
+---
+# Headless Service for cluster discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  namespace: messaging
+  labels:
+    app: redis
+spec:
+  clusterIP: None
+  ports:
+  - port: 6379
+    name: redis
+  - port: 16379
+    name: cluster
+  selector:
+    app: redis
+---
+# Client Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-client
+  namespace: messaging
+  labels:
+    app: redis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  selector:
+    app: redis
+---
+# Secrets (should be created separately)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-secrets
+  namespace: messaging
+type: Opaque
+data:
+  password: c3VwZXJzZWNyZXQ=  # base64 encoded password
+---
+# ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: redis-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus-operator
+spec:
+  template:
+    selector:
+      matchLabels:
+        app: redis
+    endpoints:
+    - port: metrics
+      interval: 15s
+      scrapeTimeout: 10s
+---
+# Redis Cluster Initialization Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init
+  namespace: messaging
+spec:
+  template:
+    metadata:
+      name: redis-cluster-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: cluster-init
+        image: redis:7.0
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            sleep 10
+            echo "Initializing Redis Cluster..."
+            redis-cli -a $REDIS_PASSWORD --cluster create \
+              $(hostname -f | sed 's/-0/&:6379/') \
+              $(hostname -f | sed 's/-0/-1&:6379/') \
+              $(hostname -f | sed 's/-0/-2&:6379/') \
+              $(hostname -f | sed 's/-0/-3&:6379/') \
+              $(hostname -f | sed 's/-0/-4&:6379/') \
+              $(hostname -f | sed 's/-0/-5&:6379/') \
+              --cluster-replicas 1
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-secrets
+              key: password

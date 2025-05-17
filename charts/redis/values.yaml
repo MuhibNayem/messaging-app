@@ -1,0 +1,4 @@
+# charts/redis/values.yaml
+cluster:
+  enabled: true
+  slaveCount: 2

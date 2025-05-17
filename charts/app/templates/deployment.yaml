@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app: {{ .Chart.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.service.port }}
+          name: http
+        - containerPort: {{ .Values.service.wsPort }}
+          name: ws
+        env:
+        - name: MONGO_URI
+          value: {{ .Values.mongodb.uri }}
+        - name: MONGO_USER
+          value: {{ .Values.mongodb.username }}
+        - name: MONGO_PASSWORD
+          value: {{ .Values.mongodb.password }}
+        - name: REDIS_URL
+          value: {{ .Values.redis.url }}
+        - name: KAFKA_BROKERS
+          value: {{ .Values.kafka.brokers }}
+        - name: JWT_SECRET
+          value: {{ .Values.config.jwtSecret }}
+        - name: ACCESS_TOKEN_TTL
+          value: {{ .Values.config.accessTokenTTL | quote }}
+        - name: REFRESH_TOKEN_TTL
+          value: {{ .Values.config.refreshTokenTTL | quote }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Chart.Name }}-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Chart.Name }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}

@@ -1,0 +1,41 @@
+replicaCount: 10
+
+image:
+  repository: your-repo/messaging-app
+  tag: latest
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 8080
+  wsPort: 8081
+
+resources:
+  limits:
+    cpu: 2
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 5
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+
+mongodb:
+  uri: "mongodb://mongodb1:27017,mongodb2:27017"
+  username: "root"
+  password: "example"
+
+redis:
+  url: "redis1:6379,redis2:6379"
+
+kafka:
+  brokers: "kafka1:9092,kafka2:9092"
+
+config:
+  jwtSecret: "your-secret-key"
+  accessTokenTTL: 15
+  refreshTokenTTL: 168
