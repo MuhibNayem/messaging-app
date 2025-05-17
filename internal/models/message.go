@@ -42,8 +42,9 @@ type MessageQuery struct {
 }
 
 type MessageRequest struct {
+	SenderName  string   `bson:"sender_name,omitempty" json:"sender_name,omitempty"`
 	ReceiverID  string   `json:"receiver_id,omitempty"`
-	SenderID    string   `json:"sender_id,omitempty"`
+	SenderID    string   `json:"sender_id" binding:"required"`
 	GroupID     string   `json:"group_id,omitempty"`
 	Content     string   `json:"content,omitempty"`
 	ContentType string   `json:"content_type"`

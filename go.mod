@@ -1,7 +1,5 @@
 module messaging-app
 
-//module github.com/user/messaging-app/internal/models
-
 go 1.24.3
 
 require (
@@ -62,6 +60,7 @@ require (
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/redis/go-redis/v9 v9.8.0
 	github.com/rs/zerolog v1.34.0
 	github.com/segmentio/kafka-go v0.4.48
 	github.com/stretchr/testify v1.10.0

@@ -10,13 +10,12 @@ type User struct {
     ID        primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
     Username  string               `bson:"username" json:"username"`
     Email     string               `bson:"email" json:"email"`
-    Password  string               `bson:"password" json:"-"`
+    Password  string               `bson:"password" json:"password"`
 	Avatar     string              `bson:"avatar" json:"avatar"`
     Friends   []primitive.ObjectID `bson:"friends" json:"friends"`
     Blocked   []primitive.ObjectID `bson:"blocked" json:"-"`
     CreatedAt time.Time            `bson:"created_at" json:"created_at"`
 }
-
 type Friendship struct {
     ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
     RequesterID primitive.ObjectID `bson:"requester_id" json:"requester_id"`
@@ -37,9 +36,9 @@ type Group struct {
 }
 
 type AuthResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	User         User   `json:"user"`
+	AccessToken  string 			`json:"access_token"`
+	RefreshToken string 			`json:"refresh_token"`
+	User         SafeUserResponse   `json:"user"`
 }
 
 type RefreshRequest struct {
@@ -58,6 +57,26 @@ type UserListResponse struct {
 	Total int64  `json:"total"`
 	Page  int64  `json:"page"`
 	Limit int64  `json:"limit"`
+}
+
+type SafeUserResponse struct {
+    ID        primitive.ObjectID   `json:"id"`
+    Username  string              `json:"username"`
+    Email     string              `json:"email"`
+    Avatar    string              `json:"avatar,omitempty"`
+    Friends   []primitive.ObjectID `json:"friends,omitempty"`
+    CreatedAt time.Time           `json:"created_at"`
+}
+
+func (u *User) ToSafeResponse() SafeUserResponse {
+    return SafeUserResponse{
+        ID:        u.ID,
+        Username:  u.Username,
+        Email:     u.Email,
+        Avatar:    u.Avatar,
+        Friends:   u.Friends,
+        CreatedAt: u.CreatedAt,
+    }
 }
 
 const (

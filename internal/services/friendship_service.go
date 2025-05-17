@@ -64,7 +64,7 @@ func (s *FriendshipService) RespondToRequest(ctx context.Context, friendshipID p
 	}
 
 	if targetRequest.ReceiverID != receiverID {
-		return repositories.ErrFriendRequestNotFound // Don't reveal existence to non-receiver
+		return repositories.ErrFriendRequestNotFound 
 	}
 
 	status := models.FriendshipStatusRejected

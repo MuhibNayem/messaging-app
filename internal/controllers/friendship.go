@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"errors"
+	"log"
 	"messaging-app/internal/services"
 	"net/http"
 	"strconv"
@@ -129,7 +130,13 @@ func (c *FriendshipController) RespondToRequest(ctx *gin.Context) {
 // @Failure 401 {object} gin.H
 // @Router /friendships [get]
 func (c *FriendshipController) ListFriendships(ctx *gin.Context) {
-	userID := ctx.MustGet("userID").(string)
+	uid, exists := ctx.Get("userID")
+	if !exists {
+		log.Println("userID not set in context")
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	userID := uid.(string)
 	currentUserID, err := primitive.ObjectIDFromHex(userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})

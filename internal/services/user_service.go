@@ -31,9 +31,18 @@ func (s *UserService) UpdateUser(ctx context.Context, id primitive.ObjectID, upd
 	}
 
 	if update.Username != "" {
+		existingUserUsername, _ := s.userRepo.FindUserByUserName(ctx, update.Username)
+		if existingUserUsername != nil {
+			return nil, errors.New("username already exists")
+		}
 		updateData["username"] = update.Username
 	}
+
 	if update.Email != "" {
+		existingUserEmail, _ := s.userRepo.FindUserByEmail(ctx, update.Email)
+		if existingUserEmail != nil {
+			return nil, errors.New("user email already exists")
+		}
 		updateData["email"] = update.Email
 	}
 

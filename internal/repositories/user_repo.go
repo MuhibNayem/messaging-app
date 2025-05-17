@@ -56,9 +56,21 @@ func (r *UserRepository) FindUserByEmail(ctx context.Context, email string) (*mo
 	if err != nil {
 		return nil, err
 	}
-
 	return &user, nil
 }
+
+func (r *UserRepository) FindUserByUserName(ctx context.Context, username string) (*models.User, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var user models.User
+	err := r.db.Collection("users").FindOne(ctx, bson.M{"username": username}).Decode(&user)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 
 func (r *UserRepository) FindUserByID(ctx context.Context, id primitive.ObjectID) (*models.User, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

@@ -5,19 +5,19 @@ import (
 	"messaging-app/config"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
 
 // ClusterClient wraps the Redis cluster client
 type ClusterClient struct {
-	*redis.ClusterClient // Embed the redis.ClusterClient directly
+	*redis.ClusterClient 
 }
 
 func NewClusterClient(cfg *config.Config) *ClusterClient {
 	client := redis.NewClusterClient(&redis.ClusterOptions{
 		Addrs:        cfg.RedisURLs,
-		Password: 	  cfg.RedisPass			 ,
+		Password: 	  cfg.RedisPass,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,

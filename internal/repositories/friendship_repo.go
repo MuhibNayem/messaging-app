@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"messaging-app/internal/models"
 	"time"
 
@@ -144,6 +145,8 @@ func (r *FriendshipRepository) AreFriends(ctx context.Context, userID1, userID2 
 
 // GetFriendRequests retrieves pending friend requests with direction filtering
 func (r *FriendshipRepository) GetFriendRequests(ctx context.Context, userID primitive.ObjectID, direction string, page, limit int64) ([]models.Friendship, int64, error) {
+    log.Printf("[FriendshipRepository] GetFriendRequests called with userID: %s, direction: %s, page: %d, limit: %d", userID.Hex(), direction, page, limit)
+
     // Build filter based on request direction
     filter := bson.M{
         "status": models.FriendshipStatusPending,
@@ -161,31 +164,39 @@ func (r *FriendshipRepository) GetFriendRequests(ctx context.Context, userID pri
         }
     }
 
+    log.Printf("[FriendshipRepository] Using filter: %+v", filter)
+
     // Get total count for pagination
     total, err := r.db.Collection("friendships").CountDocuments(ctx, filter)
     if err != nil {
+        log.Printf("[FriendshipRepository] Error counting documents: %v", err)
         return nil, 0, fmt.Errorf("failed to count requests: %w", err)
     }
+    log.Printf("[FriendshipRepository] Total requests found: %d", total)
 
     // Apply pagination and sorting
     opts := options.Find().
         SetSkip((page - 1) * limit).
         SetLimit(limit).
-        SetSort(bson.D{{Key: "created_at", Value: -1}}) // Newest first
+        SetSort(bson.D{{Key: "created_at", Value: -1}})
 
     cursor, err := r.db.Collection("friendships").Find(ctx, filter, opts)
     if err != nil {
+        log.Printf("[FriendshipRepository] Error finding documents: %v", err)
         return nil, 0, fmt.Errorf("failed to find requests: %w", err)
     }
     defer cursor.Close(ctx)
 
     var requests []models.Friendship
     if err := cursor.All(ctx, &requests); err != nil {
+        log.Printf("[FriendshipRepository] Error decoding cursor: %v", err)
         return nil, 0, fmt.Errorf("failed to decode requests: %w", err)
     }
 
+    log.Printf("[FriendshipRepository] Successfully retrieved %d friend requests", len(requests))
     return requests, total, nil
 }
+
 
 // Unfriend removes an accepted friendship between two users after verification
 func (r *FriendshipRepository) Unfriend(ctx context.Context, userID, friendID primitive.ObjectID) error {

@@ -10,7 +10,7 @@ import (
 	"messaging-app/internal/repositories"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
