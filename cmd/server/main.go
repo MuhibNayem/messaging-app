@@ -83,7 +83,6 @@ func main() {
 
 	// Initialize WebSocket Hub
 	hub := websocket.NewHub(redisClient, groupRepo)
-	go hub.Run()
 
 	// Initialize Kafka Consumer
 	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
@@ -215,8 +214,8 @@ func main() {
 	
 
 	// WebSocket route
-	webSocketRouter.GET("/ws", func(c *gin.Context) {
-		websocket.ServeWs(c, hub, c.Writer, c.Request)
+	webSocketRouter.GET("/ws",authMiddleware, func(c *gin.Context) {
+		websocket.ServeWs(c, hub)
 	})
 
 	// Start HTTP server

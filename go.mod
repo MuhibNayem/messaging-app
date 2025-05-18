@@ -65,5 +65,6 @@ require (
 	github.com/stretchr/testify v1.10.0
 	go.mongodb.org/mongo-driver v1.17.3
 	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/time v0.11.0
 	google.golang.org/protobuf v1.36.5 // indirect
 )
