@@ -175,6 +175,7 @@ func main() {
 
 		api.POST("/messages", messageController.SendMessage)
 		api.GET("/messages/:id", messageController.GetMessages)
+		api.DELETE("/messages/:id", messageController.DeleteMessage)
 
 		// ========================= Groups ==========================
 

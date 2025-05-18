@@ -269,7 +269,7 @@ func (c *MessageController) DeleteMessage(ctx *gin.Context) {
 		return
 	}
 
-	_, err = c.messageService.DeleteMessage(ctx.Request.Context(), currentUserID.Hex(), objID)
+	_, err = c.messageService.DeleteMessage(ctx.Request.Context(), objID.Hex(), currentUserID)
 	if err != nil {
 		switch err.Error() {
 		case "message not found":

@@ -161,6 +161,7 @@ func (r *MessageRepository) DeleteMessage(
     requesterID primitive.ObjectID,
     mediaDeleter func(ctx context.Context, urls []string) error,
 ) (*models.Message, error) {
+	log.Printf("Deleting message with ID: %s by user: %s", messageID.Hex(), requesterID.Hex())
     var deletedMessage models.Message
     err := r.collection.FindOneAndUpdate(
         ctx,
