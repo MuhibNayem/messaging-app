@@ -69,6 +69,8 @@ func (c *MessageConsumer) ConsumeMessages(ctx context.Context) {
 			continue
 		}
 
+		
+
 		// Broadcast to WebSocket clients
 		c.hub.Broadcast <- message
 

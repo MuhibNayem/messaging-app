@@ -148,7 +148,8 @@ func main() {
 	router.POST("/api/auth/logout", authController.Logout)
 
 	// Protected routes
-	authMiddleware := middleware.AuthMiddleware(cfg.JWTSecret, redisClient.GetClient()) // Updated to use GetClient()
+	authMiddleware := middleware.AuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
+	// wsAuthMiddleware := middleware.WSJwtAuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
 	api := router.Group("/api", authMiddleware)
 	{
 

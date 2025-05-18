@@ -32,6 +32,30 @@ func AuthMiddleware(jwtSecret string, redisClient *redis.ClusterClient) gin.Hand
 	}
 }
 
+func WSJwtAuthMiddleware(jwtSecret string,redisClient *redis.ClusterClient) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        tokenString := c.Query("token")
+        if tokenString == "" {
+            c.AbortWithStatus(http.StatusUnauthorized)
+            return
+        }
+
+        userID, err := ValidateToken(tokenString, jwtSecret, redisClient)
+        if err != nil {
+            c.AbortWithStatus(http.StatusUnauthorized)
+            return
+        }
+        if err != nil {
+            c.AbortWithStatus(http.StatusUnauthorized)
+            return
+        }
+
+        // Store user ID in context
+        c.Set("userID", userID)
+        c.Next()
+    }
+}
+
 // ValidateToken validates a JWT token and returns the user ID if valid
 // This can be used by both HTTP middleware and WebSocket handlers
 func ValidateToken(tokenString, jwtSecret string, redisClient *redis.ClusterClient) (string, error) {

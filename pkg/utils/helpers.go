@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"golang.org/x/crypto/bcrypt"
@@ -209,4 +210,42 @@ func GetUserIDFromContext(c *gin.Context) (primitive.ObjectID, error) {
 	default:
 		return primitive.NilObjectID, fmt.Errorf("invalid user ID type")
 	}
+}
+
+
+func GetUserIDFromClaims(claims jwt.Claims) (primitive.ObjectID, error) {
+	mapClaims, ok := claims.(jwt.MapClaims)
+	if !ok {
+		return primitive.NilObjectID, errors.New("invalid claims type")
+	}
+
+	userIDKey := "id" 
+	userIDValue, ok := mapClaims[userIDKey].(string)
+	if !ok {
+		return primitive.NilObjectID, fmt.Errorf("claim '%s' not found or invalid type", userIDKey)
+	}
+
+	objectID, err := primitive.ObjectIDFromHex(userIDValue)
+	if err != nil {
+		return primitive.NilObjectID, fmt.Errorf("invalid user ID format: %v", err)
+	}
+
+	return objectID, nil
+}
+
+func getClaims(token *jwt.Token) (jwt.MapClaims, error) {
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid token")
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token")
+	}
+
+	if claims["type"] != "access" {
+		return nil, fmt.Errorf("invalid token type")
+	}
+
+	return claims, nil
 }
