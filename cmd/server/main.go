@@ -66,9 +66,12 @@ func main() {
 		log.Fatal("Failed to connect to Redis cluster")
 	}
 
-	// Initialize WebSocket Hub
-	hub := websocket.NewHub(redisClient)
-	go hub.Run()
+	// Initialize Repositories
+	userRepo := repositories.NewUserRepository(db)
+	messageRepo := repositories.NewMessageRepository(db)
+	groupRepo := repositories.NewGroupRepository(db)
+	friendshipRepo := repositories.NewFriendshipRepository(db)
+
 
 	// Initialize Kafka Producer
 	kafkaProducer := kafka.NewMessageProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -78,17 +81,15 @@ func main() {
 		}
 	}()
 
+	// Initialize WebSocket Hub
+	hub := websocket.NewHub(redisClient, groupRepo)
+	go hub.Run()
+
 	// Initialize Kafka Consumer
 	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
 	go func() {
 		kafkaConsumer.ConsumeMessages(context.Background())
-	}()
-
-	// Initialize Repositories
-	userRepo := repositories.NewUserRepository(db)
-	messageRepo := repositories.NewMessageRepository(db)
-	groupRepo := repositories.NewGroupRepository(db)
-	friendshipRepo := repositories.NewFriendshipRepository(db)
+	}()	
 
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
@@ -106,6 +107,7 @@ func main() {
 
 	// Initialize Gin Router
 	router := gin.Default()
+	webSocketRouter := gin.Default()
 
 	// Prometheus metrics endpoint
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
@@ -212,14 +214,20 @@ func main() {
 	
 
 	// WebSocket route
-	router.GET("/ws", func(c *gin.Context) {
-		websocket.ServeWs(hub, c.Writer, c.Request)
+	webSocketRouter.GET("/ws", func(c *gin.Context) {
+		websocket.ServeWs(c, hub, c.Writer, c.Request)
 	})
 
 	// Start HTTP server
 	srv := &http.Server{
 		Addr:    ":" + cfg.ServerPort,
 		Handler: router,
+	}
+
+	// start websocket hub
+	wsServer := &http.Server{
+		Addr:    ":" + cfg.WebSocketPort,
+		Handler: webSocketRouter,
 	}
 
 	// Graceful shutdown handling
@@ -230,6 +238,14 @@ func main() {
 		log.Printf("Server starting on port %s", cfg.ServerPort)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+
+	go func() {
+		log.Printf("WebSocket server listening on %s", wsServer.Addr)
+		if err := wsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("WebSocket server error: %v", err)
 		}
 	}()
 

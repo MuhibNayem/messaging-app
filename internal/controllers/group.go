@@ -2,12 +2,12 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"messaging-app/internal/models"
 	"messaging-app/internal/services"
 	"messaging-app/pkg/utils"
 	"net/http"
 	"time"
-	"fmt"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
