@@ -444,7 +444,7 @@ services:
     ports:
       - "8080:8080"  # HTTP API
       - "8081:8081"  # WebSocket
-      - "9090:9090"  # Metrics
+      - "9091:9091"  # Metrics
     env_file:
       - ".env"
     depends_on:
@@ -462,7 +462,98 @@ services:
     networks:
       - messaging-net
 
+
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    hostname: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    depends_on:
+      - app
+      - redis1
+      - mongodb1
+      - kafka1
+    networks:
+      - messaging-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    hostname: grafana
+    ports:
+      - "3030:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    networks:
+      - messaging-net
+
+  mongodb-exporter:
+    image: bitnami/mongodb-exporter:latest  
+    container_name: mongodb-exporter
+    environment:
+    - MONGODB_URI=mongodb://root:example@mongodb1:27017/admin?replicaSet=rs0&authSource=admin,mongodb://root:example@mongodb3:27017/admin?replicaSet=rs0&authSource=admin,mongodb://root:example@mongodb3:27017/admin?replicaSet=rs0&authSource=admin
+    
+    # Multi-target configuration
+    - SPLIT_CLUSTER=true  # Treat each node as separate target
+    - DIRECT_CONNECT=false  # Required for replica sets
+    
+    # Metrics collection options
+    - DISABLED_METRICS=asserts,durability
+    - COLLECT_COLLECTION=true
+    - COLLECT_DATABASE=true
+    - COLLECT_TOPSTATS=true
+    - COLLECT_INDEX_STATS=true
+    - COLLECT_CONNPOOL_STATS=true
+    
+    # Collection-level metrics (adjust with your actual collections)
+    - COLLSTATS_COLLS=messaging_app.messages,messaging_app.users,messaging_app.friendships
+    
+    # Debugging
+    - LOG_LEVEL=debug
+    - COMPATIBLE_MODE=true  
+    ports:
+      - "9216:9216"
+    user: "1000"
+    depends_on:
+      - mongodb1
+      - mongodb2
+      - mongodb3
+    networks:
+      - messaging-net
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.55.0  
+    container_name: redis-exporter
+    environment:
+      - REDIS_ADDR=redis://redis1:6379
+      - REDIS_PASSWORD=redispass
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis1
+    networks:
+      - messaging-net
+
 volumes:
+  prometheus_data:
+  grafana_data:
   mongodb1_data:
   mongodb2_data:
   mongodb3_data:

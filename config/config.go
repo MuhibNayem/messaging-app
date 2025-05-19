@@ -50,7 +50,7 @@ func LoadConfig() *Config {
 		RedisPass:      getEnv("REDIS_PASS", ""),
 		AccessTokenTTL: time.Minute * time.Duration(accessTTL),
 		RefreshTokenTTL: time.Hour * 24 * time.Duration(refreshTTL),
-		PrometheusPort: getEnv("PROMETHEUS_PORT", "9090"),
+		PrometheusPort: getEnv("PROMETHEUS_PORT", "9091"),
 	}
 }
 

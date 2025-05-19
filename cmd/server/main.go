@@ -19,7 +19,6 @@ import (
 	"messaging-app/pkg/middleware"
 
 	"github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -27,7 +26,7 @@ import (
 func main() {
 	// Load configuration
 	cfg := config.LoadConfig()
-	config.InitMetrics()
+	metrics := config.GetMetrics()
 
 	// Initialize MongoDB
 	clientOptions := options.Client().
@@ -72,7 +71,6 @@ func main() {
 	groupRepo := repositories.NewGroupRepository(db)
 	friendshipRepo := repositories.NewFriendshipRepository(db)
 
-
 	// Initialize Kafka Producer
 	kafkaProducer := kafka.NewMessageProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
 	defer func() {
@@ -88,7 +86,7 @@ func main() {
 	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
 	go func() {
 		kafkaConsumer.ConsumeMessages(context.Background())
-	}()	
+	}()
 
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
@@ -104,12 +102,28 @@ func main() {
 	groupController := controllers.NewGroupController(groupService, userService)
 	friendshipController := controllers.NewFriendshipController(friendshipService)
 
-	// Initialize Gin Router
+	// Initialize Gin Router with metrics middleware
 	router := gin.Default()
+	router.Use(config.MetricsMiddleware(metrics)) 
+
+	// WebSocket router (without metrics middleware)
 	webSocketRouter := gin.Default()
 
-	// Prometheus metrics endpoint
-	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	// Start metrics server on separate port
+	go func() {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", config.MetricsHandler())
+		
+		metricsServer := &http.Server{
+			Addr:    ":" + cfg.PrometheusPort, 
+			Handler: metricsMux,
+		}
+
+		log.Printf("Metrics server starting on port %s", cfg.PrometheusPort)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Metrics server failed: %v", err)
+		}
+	}()
 
 	// Health check endpoints
 	router.GET("/health", func(c *gin.Context) {
@@ -148,76 +162,48 @@ func main() {
 
 	// Protected routes
 	authMiddleware := middleware.AuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
-	// wsAuthMiddleware := middleware.WSJwtAuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
 	api := router.Group("/api", authMiddleware)
 	{
-
-		// ========================= User ==========================
-
-		// User Profile Endpoints
+		// User endpoints
 		api.GET("/user", userController.GetUser)          
 		api.PUT("/user", userController.UpdateUser)      
-		
-		// User Discovery Endpoints
 		api.GET("/users", userController.ListUsers)      
-		
-		// Suggested Additional Endpoints:
-		api.GET("/users/:id", userController.GetUserByID) 
+		api.GET("/users/:id", userController.GetUserByID)
 
-		//TODO: will add this features later 
-		// Delete current account
-		// api.DELETE("/user", userController.DeleteUser)  
-		
-		// Upload profile picture  
-		// api.POST("/user/avatar", userController.UploadAvatar) 
-
-		// ========================= Messages ==========================
-
+		// Message endpoints
 		api.POST("/messages", messageController.SendMessage)
 		api.GET("/messages/:id", messageController.GetMessages)
 		api.DELETE("/messages/:id", messageController.DeleteMessage)
 
-		// ========================= Groups ==========================
-
-		// Group CRUD Operations
+		// Group endpoints
 		api.POST("/groups", groupController.CreateGroup)        
 		api.GET("/groups/:id", groupController.GetGroup)         
 		api.PATCH("/groups/:id", groupController.UpdateGroup)    
-		
-		// Group Membership Management
 		api.POST("/groups/:id/members", groupController.AddMember)
 		api.DELETE("/groups/:id/members/:user_id", groupController.RemoveMember) 
-		
-		// Group Admin Management
 		api.POST("/groups/:id/admins", groupController.AddAdmin)
-		
-		// User-Centric Group Operations
-		api.GET("/users/me/groups", groupController.GetUserGroups) 
-		
-		// ========================= Friendships ==========================
+		api.GET("/users/me/groups", groupController.GetUserGroups)
 
-		// Friend requests
+		// Friendship endpoints
 		api.POST("/friendships/requests", friendshipController.SendRequest)
 		api.POST("/friendships/requests/:id/respond", friendshipController.RespondToRequest)
-		
-		// Friendship management
 		api.GET("/friendships", friendshipController.ListFriendships)
 		api.GET("/friendships/check", friendshipController.CheckFriendship)
 		api.DELETE("/friendships/:id", friendshipController.Unfriend)
-		
-		// Blocking functionality
 		api.POST("/friendships/block/:user_id", friendshipController.BlockUser)
 		api.DELETE("/friendships/block/:user_id", friendshipController.UnblockUser)
 		api.GET("/friendships/block/:user_id/status", friendshipController.IsBlocked)
 		api.GET("/friendships/blocked", friendshipController.GetBlockedUsers)
 	}
 
-	
-
-	// WebSocket route
-	webSocketRouter.GET("/ws",authMiddleware, func(c *gin.Context) {
+	webSocketRouter.GET("/ws", authMiddleware, func(c *gin.Context) {
+		// Track WebSocket connection
+		config.IncWebsocketConnections(metrics)
+		defer config.DecWebsocketConnections(metrics)
+		
 		websocket.ServeWs(c, hub)
 	})
+
 
 	// Start HTTP server
 	srv := &http.Server{
@@ -225,7 +211,7 @@ func main() {
 		Handler: router,
 	}
 
-	// start websocket hub
+	// Start WebSocket server
 	wsServer := &http.Server{
 		Addr:    ":" + cfg.WebSocketPort,
 		Handler: webSocketRouter,
@@ -236,12 +222,11 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("Server starting on port %s", cfg.ServerPort)
+		log.Printf("HTTP server starting on port %s", cfg.ServerPort)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %v", err)
+			log.Fatalf("HTTP server failed: %v", err)
 		}
 	}()
-
 
 	go func() {
 		log.Printf("WebSocket server listening on %s", wsServer.Addr)
@@ -257,7 +242,11 @@ func main() {
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("Server shutdown error: %v", err)
+		log.Printf("HTTP server shutdown error: %v", err)
+	}
+
+	if err := wsServer.Shutdown(ctx); err != nil {
+		log.Printf("WebSocket server shutdown error: %v", err)
 	}
 
 	log.Println("Server exited properly")
