@@ -302,7 +302,7 @@
             "tableColumn": "",
             "targets": [
                 {
-                    "expr": "100 * (redis_memory_used_bytes{instance=~\"$instance\"}  / redis_memory_max_bytes{instance=~\"$instance\"} )",
+                    "expr": "100 * (redis_memory_used_bytes{instance=~\"$instance\"} / (redis_memory_max_bytes{instance=~\"$instance\"} OR vector(1)))",
                     "format": "time_series",
                     "intervalFactor": 2,
                     "legendFormat": "",

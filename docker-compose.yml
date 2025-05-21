@@ -510,11 +510,9 @@ services:
     environment:
     - MONGODB_URI=mongodb://root:example@mongodb1:27017/admin?replicaSet=rs0&authSource=admin,mongodb://root:example@mongodb3:27017/admin?replicaSet=rs0&authSource=admin,mongodb://root:example@mongodb3:27017/admin?replicaSet=rs0&authSource=admin
     
-    # Multi-target configuration
-    - SPLIT_CLUSTER=true  # Treat each node as separate target
-    - DIRECT_CONNECT=false  # Required for replica sets
+    - SPLIT_CLUSTER=true  
+    - DIRECT_CONNECT=false  
     
-    # Metrics collection options
     - DISABLED_METRICS=asserts,durability
     - COLLECT_COLLECTION=true
     - COLLECT_DATABASE=true
@@ -522,10 +520,8 @@ services:
     - COLLECT_INDEX_STATS=true
     - COLLECT_CONNPOOL_STATS=true
     
-    # Collection-level metrics (adjust with your actual collections)
     - COLLSTATS_COLLS=messaging_app.messages,messaging_app.users,messaging_app.friendships
     
-    # Debugging
     - LOG_LEVEL=debug
     - COMPATIBLE_MODE=true  
     ports:
