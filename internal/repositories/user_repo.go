@@ -35,7 +35,7 @@ func NewUserRepository(db *mongo.Database) *UserRepository {
 }
 
 func (r *UserRepository) CreateUser(ctx context.Context, user *models.User) (*models.User, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	result, err := r.db.Collection("users").InsertOne(ctx, user)
@@ -48,7 +48,7 @@ func (r *UserRepository) CreateUser(ctx context.Context, user *models.User) (*mo
 }
 
 func (r *UserRepository) FindUserByEmail(ctx context.Context, email string) (*models.User, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	var user models.User
@@ -60,7 +60,7 @@ func (r *UserRepository) FindUserByEmail(ctx context.Context, email string) (*mo
 }
 
 func (r *UserRepository) FindUserByUserName(ctx context.Context, username string) (*models.User, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	var user models.User
@@ -73,7 +73,7 @@ func (r *UserRepository) FindUserByUserName(ctx context.Context, username string
 
 
 func (r *UserRepository) FindUserByID(ctx context.Context, id primitive.ObjectID) (*models.User, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	var user models.User
@@ -86,7 +86,7 @@ func (r *UserRepository) FindUserByID(ctx context.Context, id primitive.ObjectID
 }
 
 func (r *UserRepository) UpdateUser(ctx context.Context, id primitive.ObjectID, update bson.M) (*models.User, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	// Ensure updated_at is always set
@@ -109,7 +109,7 @@ func (r *UserRepository) UpdateUser(ctx context.Context, id primitive.ObjectID, 
 }
 
 func (r *UserRepository) CountUsers(ctx context.Context, filter bson.M) (int64, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	count, err := r.db.Collection("users").CountDocuments(ctx, filter)
@@ -121,7 +121,7 @@ func (r *UserRepository) CountUsers(ctx context.Context, filter bson.M) (int64, 
 }
 
 func (r *UserRepository) FindUsers(ctx context.Context, filter bson.M, opts *options.FindOptions) ([]models.User, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	cursor, err := r.db.Collection("users").Find(ctx, filter, opts)
@@ -139,7 +139,7 @@ func (r *UserRepository) FindUsers(ctx context.Context, filter bson.M, opts *opt
 }
 
 func (r *UserRepository) AddFriend(ctx context.Context, userID1, userID2 primitive.ObjectID) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	// Start a session for transaction

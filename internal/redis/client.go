@@ -21,9 +21,9 @@ func NewClusterClient(cfg *config.Config) *ClusterClient {
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
-		PoolSize:     100,
+		PoolSize:     200,
 		MinIdleConns: 20,
-		PoolTimeout:  4 * time.Second,
+		PoolTimeout:  3 * time.Second,
 	})
 
 	// Verify connection

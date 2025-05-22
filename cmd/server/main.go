@@ -59,7 +59,7 @@ func main() {
 	}()
 
 	// Verify Redis connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if !redisClient.IsAvailable(ctx) {
 		log.Fatal("Failed to connect to Redis cluster")
@@ -131,7 +131,7 @@ func main() {
 	})
 	
 	router.GET("/ready", func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
 
 		status := gin.H{"status": "ready"}
