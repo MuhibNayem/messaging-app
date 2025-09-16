@@ -92,7 +92,7 @@ func (r *FriendshipRepository) CreateRequest(ctx context.Context, requesterID, r
 }
 
 // UpdateStatus updates request status with validation
-func (r *FriendshipRepository) UpdateStatus(ctx context.Context, friendshipID primitive.ObjectID, receiverID primitive.ObjectID, status string) error {
+func (r *FriendshipRepository) UpdateStatus(ctx context.Context, friendshipID primitive.ObjectID, receiverID primitive.ObjectID, status models.FriendshipStatus) error {
 	update := bson.M{
 		"$set": bson.M{
 			"status":     status,

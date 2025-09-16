@@ -3,6 +3,7 @@ package controllers
 import (
 	"errors"
 	"log"
+	"messaging-app/internal/models"
 	"messaging-app/internal/services"
 	"net/http"
 	"strconv"
@@ -155,7 +156,7 @@ func (c *FriendshipController) ListFriendships(ctx *gin.Context) {
 		limit = 10
 	}
 
-	friendships, total, err := c.friendshipService.ListFriendships(ctx.Request.Context(), currentUserID, status, page, limit)
+	friendships, total, err := c.friendshipService.ListFriendships(ctx.Request.Context(), currentUserID, models.FriendshipStatus(status), page, limit)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

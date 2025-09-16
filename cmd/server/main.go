@@ -18,6 +18,7 @@ import (
 	"messaging-app/internal/websocket"
 	"messaging-app/pkg/middleware"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -70,6 +71,8 @@ func main() {
 	messageRepo := repositories.NewMessageRepository(db)
 	groupRepo := repositories.NewGroupRepository(db)
 	friendshipRepo := repositories.NewFriendshipRepository(db)
+	feedRepo := repositories.NewFeedRepository(db)
+	privacyRepo := repositories.NewPrivacyRepository(db)
 
 	// Initialize Kafka Producer
 	kafkaProducer := kafka.NewMessageProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -94,20 +97,26 @@ func main() {
 	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient())
 	groupService := services.NewGroupService(groupRepo, userRepo)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
+	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer)
+	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
 
 	// Initialize Controllers
 	authController := controllers.NewAuthController(authService)
 	userController := controllers.NewUserController(userService)
-	messageController := controllers.NewMessageController(messageService)
-	groupController := controllers.NewGroupController(groupService, userService)
 	friendshipController := controllers.NewFriendshipController(friendshipService)
+	groupController := controllers.NewGroupController(groupService, userService)
+	messageController := controllers.NewMessageController(messageService)
+	feedController := controllers.NewFeedController(feedService, userService, privacyService)
+	privacyController := controllers.NewPrivacyController(privacyService, userService)
 
 	// Initialize Gin Router with metrics middleware
 	router := gin.Default()
-	router.Use(config.MetricsMiddleware(metrics)) 
+	router.Use(config.MetricsMiddleware(metrics))
+	router.Use(cors.Default())
 
 	// WebSocket router (without metrics middleware)
 	webSocketRouter := gin.Default()
+	webSocketRouter.Use(cors.Default())
 
 	// Start metrics server on separate port
 	go func() {
@@ -164,16 +173,57 @@ func main() {
 	authMiddleware := middleware.AuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
 	api := router.Group("/api", authMiddleware)
 	{
-		// User endpoints
-		api.GET("/user", userController.GetUser)          
-		api.PUT("/user", userController.UpdateUser)      
-		api.GET("/users", userController.ListUsers)      
-		api.GET("/users/:id", userController.GetUserByID)
+	api.GET("/user", authMiddleware, userController.GetUser)
+	api.PUT("/user", authMiddleware, userController.UpdateUser)
+	api.PUT("/user/email", authMiddleware, userController.UpdateEmail)
+	api.PUT("/user/password", authMiddleware, userController.UpdatePassword)
+	api.PUT("/user/2fa", authMiddleware, userController.ToggleTwoFactor)
+	api.PUT("/user/deactivate", authMiddleware, userController.DeactivateAccount)
+	api.GET("/users", authMiddleware, userController.ListUsers)
+	api.GET("/users/:id", authMiddleware, userController.GetUserByID)
+	api.PUT("/user/privacy", authMiddleware, userController.UpdatePrivacySettings)
 
-		// Message endpoints
-		api.POST("/messages", messageController.SendMessage)
-		api.GET("/messages/:id", messageController.GetMessages)
-		api.DELETE("/messages/:id", messageController.DeleteMessage)
+	// Feed Routes
+	api.POST("/posts", authMiddleware, feedController.CreatePost)
+	api.GET("/posts/:id", authMiddleware, feedController.GetPostByID)
+	api.GET("/posts/:postId/comments", authMiddleware, feedController.GetCommentsByPostID)
+	api.GET("/posts/:postId/reactions", authMiddleware, feedController.GetReactionsByPostID)
+	api.PUT("/posts/:id", authMiddleware, feedController.UpdatePost)
+	api.DELETE("/posts/:id", authMiddleware, feedController.DeletePost)
+
+	api.POST("/comments", authMiddleware, feedController.CreateComment)
+	api.GET("/comments/:commentId/replies", authMiddleware, feedController.GetRepliesByCommentID)
+	api.GET("/comments/:commentId/reactions", authMiddleware, feedController.GetReactionsByCommentID)
+	api.PUT("/comments/:id", authMiddleware, feedController.UpdateComment)
+	api.DELETE("/posts/:postId/comments/:commentId", authMiddleware, feedController.DeleteComment)
+
+	api.POST("/comments/:commentId/replies", authMiddleware, feedController.CreateReply)
+	api.PUT("/comments/:commentId/replies/:replyId", authMiddleware, feedController.UpdateReply)
+	api.DELETE("/comments/:commentId/replies/:replyId", authMiddleware, feedController.DeleteReply)
+	api.GET("/replies/:replyId/reactions", authMiddleware, feedController.GetReactionsByReplyID)
+
+	api.POST("/reactions", authMiddleware, feedController.CreateReaction)
+	api.DELETE("/reactions/:reactionId", authMiddleware, feedController.DeleteReaction)
+
+	// Privacy Routes
+	api.GET("/privacy/settings", authMiddleware, privacyController.GetUserPrivacySettings)
+	api.PUT("/privacy/settings", authMiddleware, privacyController.UpdateUserPrivacySettings)
+
+	api.POST("/privacy/lists", authMiddleware, privacyController.CreateCustomPrivacyList)
+	api.GET("/privacy/lists", authMiddleware, privacyController.GetCustomPrivacyListsByUserID)
+	api.GET("/privacy/lists/:id", authMiddleware, privacyController.GetCustomPrivacyListByID)
+	api.PUT("/privacy/lists/:id", authMiddleware, privacyController.UpdateCustomPrivacyList)
+	api.DELETE("/privacy/lists/:id", authMiddleware, privacyController.DeleteCustomPrivacyList)
+
+	api.POST("/privacy/lists/:id/members", authMiddleware, privacyController.AddMemberToCustomPrivacyList)
+	api.DELETE("/privacy/lists/:id/members/:member_id", authMiddleware, privacyController.RemoveMemberFromCustomPrivacyList)
+
+	// Message Routes
+	api.POST("/messages", authMiddleware, messageController.SendMessage)
+	api.GET("/messages", authMiddleware, messageController.GetMessages)
+	api.POST("/messages/seen", authMiddleware, messageController.MarkMessagesAsSeen)
+	api.GET("/messages/unread", authMiddleware, messageController.GetUnreadCount)
+	api.DELETE("/messages/:id", authMiddleware, messageController.DeleteMessage)
 
 		// Group endpoints
 		api.POST("/groups", groupController.CreateGroup)        

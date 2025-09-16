@@ -46,7 +46,7 @@ func (s *FriendshipService) SendRequest(ctx context.Context, requesterID, receiv
 
 func (s *FriendshipService) RespondToRequest(ctx context.Context, friendshipID primitive.ObjectID, receiverID primitive.ObjectID, accept bool) error {
 	// First verify the request exists and belongs to this user
-	friendships, _, err := s.friendshipRepo.GetFriendRequests(ctx, receiverID, models.FriendshipStatusPending, 1, 1)
+	friendships, _, err := s.friendshipRepo.GetFriendRequests(ctx, receiverID, string(models.FriendshipStatusPending), 1, 1)
 	if err != nil {
 		return err
 	}
@@ -82,8 +82,8 @@ func (s *FriendshipService) RespondToRequest(ctx context.Context, friendshipID p
 	return s.friendshipRepo.UpdateStatus(ctx, friendshipID, receiverID, status)
 }
 
-func (s *FriendshipService) ListFriendships(ctx context.Context, userID primitive.ObjectID, status string, page, limit int64) ([]models.Friendship, int64, error) {
-	return s.friendshipRepo.GetFriendRequests(ctx, userID, status, page, limit)
+func (s *FriendshipService) ListFriendships(ctx context.Context, userID primitive.ObjectID, status models.FriendshipStatus, page, limit int64) ([]models.Friendship, int64, error) {
+	return s.friendshipRepo.GetFriendRequests(ctx, userID, string(status), page, limit)
 }
 
 func (s *FriendshipService) CheckFriendship(ctx context.Context, userID1, userID2 primitive.ObjectID) (bool, error) {

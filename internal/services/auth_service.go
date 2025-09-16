@@ -55,6 +55,8 @@ func (s *AuthService) Register(ctx context.Context, user *models.User) (*models.
 
 	user.Password = string(hashedPassword)
 
+	user.SetDefaultPrivacySettings()
+
 	createdUser, err := s.userRepo.CreateUser(ctx, user)
 	if err != nil {
 		return nil, err

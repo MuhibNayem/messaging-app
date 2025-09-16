@@ -152,3 +152,169 @@ func (c *UserController) ListUsers(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, response)
 }
+
+// UpdateEmail godoc
+// @Summary Update user's email address
+// @Security BearerAuth
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body models.UpdateEmailRequest true "New email address"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/user/email [put]
+func (c *UserController) UpdateEmail(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	var req models.UpdateEmailRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return	
+	}
+
+	err = c.userService.UpdateEmail(ctx.Request.Context(), objID, &req)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// UpdatePassword godoc
+// @Summary Update user's password
+// @Security BearerAuth
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body models.UpdatePasswordRequest true "Current and new password"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/user/password [put]
+func (c *UserController) UpdatePassword(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	var req models.UpdatePasswordRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = c.userService.UpdatePassword(ctx.Request.Context(), objID, &req)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// ToggleTwoFactor godoc
+// @Summary Enable or disable two-factor authentication
+// @Security BearerAuth
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body models.ToggleTwoFactorRequest true "Enable/disable 2FA"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/user/2fa [put]
+func (c *UserController) ToggleTwoFactor(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	var req models.ToggleTwoFactorRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = c.userService.ToggleTwoFactor(ctx.Request.Context(), objID, req.Enabled)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// DeactivateAccount godoc
+// @Summary Deactivate user account
+// @Security BearerAuth
+// @Tags users
+// @Produce json
+// @Success 200 {object} models.SuccessResponse
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/user/deactivate [put]
+func (c *UserController) DeactivateAccount(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	err = c.userService.DeactivateAccount(ctx.Request.Context(), objID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// UpdatePrivacySettings godoc
+// @Summary Update user privacy settings
+// @Security BearerAuth
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body models.UpdatePrivacySettingsRequest true "Privacy settings update data"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/user/privacy [put]
+func (c *UserController) UpdatePrivacySettings(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	var req models.UpdatePrivacySettingsRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = c.userService.UpdatePrivacySettings(ctx.Request.Context(), objID, &req)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
