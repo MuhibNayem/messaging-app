@@ -192,6 +192,7 @@ func (c *FeedController) ListPosts(ctx *gin.Context) {
 	limit, _ := strconv.ParseInt(ctx.DefaultQuery("limit", "20"), 10, 64)
 	sortBy := ctx.DefaultQuery("sortBy", "created_at")
 	sortOrder := ctx.DefaultQuery("sortOrder", "desc")
+	filterUserID := ctx.Query("user_id")
 
 	if page < 1 {
 		page = 1
@@ -200,7 +201,7 @@ func (c *FeedController) ListPosts(ctx *gin.Context) {
 		limit = 20
 	}
 
-	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, page, limit, sortBy, sortOrder)
+	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, filterUserID, page, limit, sortBy, sortOrder)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -477,7 +478,7 @@ func (c *FeedController) UpdateComment(ctx *gin.Context) {
 	updatedComment, err := c.feedService.UpdateComment(ctx.Request.Context(), objUserID, commentID, &req)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return	
+		return
 	}
 
 	ctx.JSON(http.StatusOK, updatedComment)

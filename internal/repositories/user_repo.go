@@ -2,9 +2,9 @@ package repositories
 
 import (
 	"context"
-	"time"
-
+	"log"
 	"messaging-app/internal/models"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -70,7 +70,6 @@ func (r *UserRepository) FindUserByUserName(ctx context.Context, username string
 	}
 	return &user, nil
 }
-
 
 func (r *UserRepository) FindUserByID(ctx context.Context, id primitive.ObjectID) (*models.User, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -141,6 +140,8 @@ func (r *UserRepository) FindUsers(ctx context.Context, filter bson.M, opts *opt
 func (r *UserRepository) AddFriend(ctx context.Context, userID1, userID2 primitive.ObjectID) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+
+	log.Printf("Adding friend relationship between user %s and user %s", userID1.Hex(), userID2.Hex())
 
 	// Start a session for transaction
 	session, err := r.db.Client().StartSession()

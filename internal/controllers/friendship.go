@@ -98,13 +98,18 @@ func (c *FriendshipController) RespondToRequest(ctx *gin.Context) {
 		return
 	}
 
-	friendshipID, err := primitive.ObjectIDFromHex(req.FriendshipID)
+	friendshipID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
 	if err != nil {
+		log.Printf("Error parsing friendship ID from path: %v", err)
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid friendship ID"})
 		return
 	}
 
+	log.Printf("Responding to friend request: FriendshipID=%s, Accept=%t", friendshipID.Hex(), req.Accept)
+
+
 	if err := c.friendshipService.RespondToRequest(ctx.Request.Context(), friendshipID, receiverID, req.Accept); err != nil {
+		log.Printf("Error from friendshipService.RespondToRequest: %v", err)
 		status := http.StatusBadRequest
 		switch err {
 		case services.ErrFriendRequestNotFound:
@@ -115,6 +120,7 @@ func (c *FriendshipController) RespondToRequest(ctx *gin.Context) {
 		ctx.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
+	log.Printf("Successfully responded to friend request %s", friendshipID.Hex())
 
 	ctx.JSON(http.StatusOK, gin.H{"status": "success"})
 }
@@ -170,14 +176,15 @@ func (c *FriendshipController) ListFriendships(ctx *gin.Context) {
 	})
 }
 
-// @Summary Check friendship status
-// @Description Check if two users are friends
+// @Summary Get detailed friendship status
+// @Description Get detailed friendship status between the current user and another user
 // @Tags friendships
 // @Produce json
 // @Param other_user_id query string true "Other user ID to check"
-// @Success 200 {object} gin.H
+// @Success 200 {object} services.FriendshipStatusResponse
 // @Failure 400 {object} gin.H
 // @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
 // @Router /friendships/check [get]
 func (c *FriendshipController) CheckFriendship(ctx *gin.Context) {
 	userID := ctx.MustGet("userID").(string)
@@ -193,13 +200,13 @@ func (c *FriendshipController) CheckFriendship(ctx *gin.Context) {
 		return
 	}
 
-	areFriends, err := c.friendshipService.CheckFriendship(ctx.Request.Context(), currentUserID, otherUserID)
+	status, err := c.friendshipService.GetDetailedFriendshipStatus(ctx.Request.Context(), currentUserID, otherUserID)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		log.Printf("Error getting detailed friendship status: %v", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	ctx.JSON(http.StatusOK, gin.H{"are_friends": areFriends})
+	ctx.JSON(http.StatusOK, status)
 }
 
 // @Summary Unfriend a user

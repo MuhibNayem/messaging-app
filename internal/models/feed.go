@@ -10,6 +10,7 @@ import (
 type Post struct {
 	ID          primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
 	UserID      primitive.ObjectID   `bson:"user_id" json:"user_id"`
+	Author      PostAuthor           `bson:"-" json:"author"` // Populated from User collection, not stored in Post
 	Content     string               `bson:"content" json:"content"`
 	MediaType   string               `bson:"media_type,omitempty" json:"media_type,omitempty"` // e.g., "image", "video", "text"
 	MediaURL    string               `bson:"media_url,omitempty" json:"media_url,omitempty"`
@@ -21,6 +22,14 @@ type Post struct {
 	Hashtags    []string             `bson:"hashtags,omitempty,sparse" json:"hashtags,omitempty"`	
 	CreatedAt   time.Time            `bson:"created_at" json:"created_at"`
 	UpdatedAt   time.Time            `bson:"updated_at" json:"updated_at"`
+}
+
+// PostAuthor represents the simplified user information for a post's author
+type PostAuthor struct {
+	ID       primitive.ObjectID `json:"id"`
+	Username string             `json:"username"`
+	Avatar   string             `json:"avatar,omitempty"`	
+	FullName string             `json:"full_name,omitempty"`
 }
 
 // Comment represents a comment on a post

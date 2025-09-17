@@ -118,6 +118,24 @@ func (s *FeedService) GetPostByID(ctx context.Context, viewerID, postID primitiv
 		return nil, errors.New("post not found")
 	}
 
+	// Populate author details
+	author, err := s.userRepo.FindUserByID(ctx, post.UserID)
+	if err != nil {
+		fmt.Printf("Failed to find author for post %s (user ID: %s): %v\n", post.ID.Hex(), post.UserID.Hex(), err)
+		post.Author = models.PostAuthor{
+			ID:       post.UserID,
+			Username: "[Deleted User]",
+			FullName: "[Deleted User]",
+		}
+	} else {
+		post.Author = models.PostAuthor{
+			ID:       author.ID,
+			Username: author.Username,
+			Avatar:   author.Avatar,
+			FullName: author.FullName,
+		}
+	}
+
 	// Check privacy
 	canView, err := s.canViewPost(ctx, viewerID, post)
 	if err != nil {
@@ -216,32 +234,42 @@ func (s *FeedService) DeletePost(ctx context.Context, userID, postID primitive.O
 	return s.feedRepo.DeletePost(ctx, postID)
 }
 
-func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID, page, limit int64, sortBy, sortOrder string) (*models.FeedResponse, error) {
+func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID, filterUserID string, page, limit int64, sortBy, sortOrder string) (*models.FeedResponse, error) {
 	// Base filter for public posts
-	filter := bson.M{
-		"$or": []bson.M{
+	filter := bson.M{}
+
+	// If a specific user's posts are requested, filter by that user ID
+	if filterUserID != "" {
+		objFilterUserID, err := primitive.ObjectIDFromHex(filterUserID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid filter user ID: %w", err)
+		}
+		filter["user_id"] = objFilterUserID
+	} else {
+		// If no specific user is requested, apply privacy filters
+		filter["$or"] = []bson.M{
 			{"privacy": models.PrivacySettingPublic},
 			{"user_id": viewerID, "privacy": models.PrivacySettingOnlyMe},
-		},
-	}
+		}
 
-	// Get viewer's friends for FRIENDS privacy
-	friends, err := s.friendshipRepo.GetFriends(ctx, viewerID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get viewer's friends: %w", err)
-	}
+		// Get viewer's friends for FRIENDS privacy
+		friends, err := s.friendshipRepo.GetFriends(ctx, viewerID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get viewer's friends: %w", err)
+		}
 
-	var friendIDs []primitive.ObjectID
-	for _, friend := range friends {
-		friendIDs = append(friendIDs, friend.ID)
-	}
+		var friendIDs []primitive.ObjectID
+		for _, friend := range friends {
+			friendIDs = append(friendIDs, friend.ID)
+		}
 
-	// Add FRIENDS privacy filter if viewer has friends
-	if len(friendIDs) > 0 {
-		filter["$or"] = append(filter["$or"].([]bson.M), bson.M{
-			"privacy": models.PrivacySettingFriends,
-			"user_id": bson.M{"$in": friendIDs},
-		})
+		// Add FRIENDS privacy filter if viewer has friends
+		if len(friendIDs) > 0 {
+			filter["$or"] = append(filter["$or"].([]bson.M), bson.M{
+				"privacy": models.PrivacySettingFriends,
+				"user_id": bson.M{"$in": friendIDs},
+			})
+		}
 	}
 
 	// TODO: Implement CUSTOM privacy logic (requires fetching custom audience lists)
@@ -276,8 +304,29 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 		return nil, err
 	}
 
-	// Populate reaction counts for each post
+	// Populate author details and reaction counts for each post
 	for i := range posts {
+		// Populate author details
+		author, err := s.userRepo.FindUserByID(ctx, posts[i].UserID)
+		if err != nil {
+			// Log error, but don't fail the entire operation.
+			// Set a default/placeholder author if not found.
+			fmt.Printf("Failed to find author for post %s (user ID: %s): %v\n", posts[i].ID.Hex(), posts[i].UserID.Hex(), err)
+			posts[i].Author = models.PostAuthor{
+				ID:       posts[i].UserID,
+				Username: "[Deleted User]",
+				FullName: "[Deleted User]",
+			}
+		} else {
+			posts[i].Author = models.PostAuthor{
+				ID:       author.ID,
+				Username: author.Username,
+				Avatar:   author.Avatar,
+				FullName: author.FullName,
+			}
+		}
+
+		// Populate reaction counts
 		reactionCounts, err := s.feedRepo.CountReactionsByType(ctx, posts[i].ID, "post")
 		if err != nil {
 			// Log the error but don't fail the entire list operation

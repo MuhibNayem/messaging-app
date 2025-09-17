@@ -17,10 +17,10 @@ import (
 )
 
 type AuthService struct {
-	userRepo     *repositories.UserRepository
-	jwtSecret    string
-	redisClient  *redis.ClusterClient
-	cfg          *config.Config
+	userRepo    *repositories.UserRepository
+	jwtSecret   string
+	redisClient *redis.ClusterClient
+	cfg         *config.Config
 }
 
 func NewAuthService(
@@ -30,10 +30,10 @@ func NewAuthService(
 	cfg *config.Config,
 ) *AuthService {
 	return &AuthService{
-		userRepo:     userRepo,
-		jwtSecret:    jwtSecret,
-		redisClient:  redisClient,
-		cfg:          cfg,
+		userRepo:    userRepo,
+		jwtSecret:   jwtSecret,
+		redisClient: redisClient,
+		cfg:         cfg,
 	}
 }
 
@@ -54,6 +54,9 @@ func (s *AuthService) Register(ctx context.Context, user *models.User) (*models.
 	}
 
 	user.Password = string(hashedPassword)
+
+	user.Friends = []primitive.ObjectID{}
+	user.Blocked = []primitive.ObjectID{}
 
 	user.SetDefaultPrivacySettings()
 
