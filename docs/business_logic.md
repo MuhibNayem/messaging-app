@@ -10,16 +10,16 @@ A new user signs up for the messaging application.
 
 ```mermaid
 graph TD
-    A[User starts registration] --> B{Provide Username, Email, Password};
-    B --> C{Validate input};
-    C -- Invalid --> D[Return error: Invalid input];
-    C -- Valid --> E{Check if Username/Email already exists};
-    E -- Exists --> F[Return error: Username/Email taken];
-    E -- Not exists --> G{Hash Password};
-    G --> H{Set Default Privacy Settings};
-    H --> I{Create User in Database};
-    I --> J{Generate JWT Access & Refresh Tokens};
-    J --> K[Return Auth Response with Tokens and User Info];
+    A["User starts registration"] --> B{"Provide Username, Email, Password"};
+    B --> C{"Validate input"};
+    C -- "Invalid" --> D["Return error: Invalid input"];
+    C -- "Valid" --> E{"Check if Username/Email already exists"};
+    E -- "Exists" --> F["Return error: Username/Email taken"];
+    E -- "Not exists" --> G{"Hash Password"};
+    G --> H{"Set Default Privacy Settings"};
+    H --> I{"Create User in Database"};
+    I --> J{"Generate JWT Access & Refresh Tokens"};
+    J --> K["Return Auth Response with Tokens and User Info"];
 ```
 
 *   **User Initiates Registration**: The user provides a unique username, a valid email address, and a strong password.
@@ -37,16 +37,16 @@ An existing user logs into the application.
 
 ```mermaid
 graph TD
-    A[User starts login] --> B{Provide Email, Password};
-    B --> C{Validate input};
-    C -- Invalid --> D[Return error: Invalid input];
-    C -- Valid --> E{Find User by Email};
-    E -- Not found --> F[Return error: Invalid credentials];
-    E -- Found --> G{Compare Hashed Password};
-    G -- Mismatch --> F;
-    G -- Match --> H{Generate JWT Access & Refresh Tokens};
-    H --> I{Store Refresh Token in Redis};
-    I --> J[Return Auth Response with Tokens and User Info];
+    A["User starts login"] --> B{"Provide Email, Password"};
+    B --> C{"Validate input"};
+    C -- "Invalid" --> D["Return error: Invalid input"];
+    C -- "Valid" --> E{"Find User by Email"};
+    E -- "Not found" --> F["Return error: Invalid credentials"];
+    E -- "Found" --> G{"Compare Hashed Password"};
+    G -- "Mismatch" --> F;
+    G -- "Match" --> H{"Generate JWT Access & Refresh Tokens"};
+    H --> I{"Store Refresh Token in Redis"};
+    I --> J["Return Auth Response with Tokens and User Info"];
 ```
 
 *   **User Initiates Login**: The user provides their registered email address and password.
@@ -63,10 +63,10 @@ A user logs out of the application.
 
 ```mermaid
 graph TD
-    A[User requests logout] --> B{Extract UserID and Access Token};
-    B --> C{Blacklist Access Token in Redis};
-    C --> D{Delete Refresh Token from Redis};
-    D --> E[Return success message];
+    A["User requests logout"] --> B{"Extract UserID and Access Token"};
+    B --> C{"Blacklist Access Token in Redis"};
+    C --> D{"Delete Refresh Token from Redis"};
+    D --> E["Return success message"];
 ```
 
 *   **User Initiates Logout**: The user sends a request to log out.
@@ -81,15 +81,15 @@ A user updates their profile information.
 
 ```mermaid
 graph TD
-    A[User requests profile update] --> B{Extract UserID from Token};
-    B --> C{Receive Update Data};
-    C --> D{Validate Update Data};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Check for Username/Email conflicts (if updated)};
-    F -- Conflict --> E;
-    F -- No conflict --> G{Hash New Password (if updated)};
-    G --> H{Update User in Database};
-    H --> I[Return Updated User Info];
+    A["User requests profile update"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive Update Data"};
+    C --> D{"Validate Update Data"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Check for Username/Email conflicts (if updated)"};
+    F -- "Conflict" --> E;
+    F -- "No conflict" --> G{"Hash New Password (if updated)"};
+    G --> H{"Update User in Database"};
+    H --> I["Return Updated User Info"];
 ```
 
 *   **User Initiates Update**: The user sends a request to update their profile, providing fields like username, full name, bio, etc.
@@ -106,12 +106,12 @@ A user configures their privacy settings.
 
 ```mermaid
 graph TD
-    A[User requests privacy settings update] --> B{Extract UserID from Token};
-    B --> C{Receive Privacy Settings Data};
-    C --> D{Validate Privacy Settings};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Update User Privacy Settings in Database};
-    F --> G[Return Updated Privacy Settings];
+    A["User requests privacy settings update"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive Privacy Settings Data"};
+    C --> D{"Validate Privacy Settings"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Update User Privacy Settings in Database"};
+    F --> G["Return Updated Privacy Settings"];
 ```
 
 *   **User Initiates Privacy Update**: The user sends a request to modify their privacy settings (e.g., default post privacy, who can see their friends list).
@@ -128,17 +128,17 @@ A user sends a friend request to another user.
 
 ```mermaid
 graph TD
-    A[User sends friend request] --> B{Extract SenderID from Token};
-    B --> C{Receive ReceiverID};
-    C --> D{Validate ReceiverID};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Check if Receiver exists};
-    F -- Not found --> E;
-    F -- Found --> G{Check for existing friendship/request};
-    G -- Exists/Blocked --> H[Return error: Already friends/request sent/blocked];
-    G -- No conflict --> I{Create Pending Friendship in Database};
-    I --> J{Send Notification to Receiver};
-    J --> K[Return Created Friendship];
+    A["User sends friend request"] --> B{"Extract SenderID from Token"};
+    B --> C{"Receive ReceiverID"};
+    C --> D{"Validate ReceiverID"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Check if Receiver exists"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Check for existing friendship/request"};
+    G -- "Exists/Blocked" --> H["Return error: Already friends/request sent/blocked"];
+    G -- "No conflict" --> I{"Create Pending Friendship in Database"};
+    I --> J{"Send Notification to Receiver"};
+    J --> K["Return Created Friendship"];
 ```
 
 *   **User Initiates Request**: The user sends a request to add another user as a friend.
@@ -155,16 +155,16 @@ A user accepts or rejects a friend request.
 
 ```mermaid
 graph TD
-    A[User responds to request] --> B{Extract ReceiverID from Token};
-    B --> C{Receive FriendshipID and Action (Accept/Reject)};
-    C --> D{Validate FriendshipID};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Find Pending Friendship by ID};
-    F -- Not found/Not for user --> G[Return error: Request not found/Unauthorized];
-    F -- Found --> H{Update Friendship Status (Accepted/Rejected)};
-    H -- Accepted --> I{Add both users to each other's friend lists};
-    I --> J{Send Notification to Requester};
-    J --> K[Return success message];
+    A["User responds to request"] --> B{"Extract ReceiverID from Token"};
+    B --> C{"Receive FriendshipID and Action (Accept/Reject)"};
+    C --> D{"Validate FriendshipID"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Find Pending Friendship by ID"};
+    F -- "Not found/Not for user" --> G["Return error: Request not found/Unauthorized"];
+    F -- "Found" --> H{"Update Friendship Status (Accepted/Rejected)"};
+    H -- "Accepted" --> I{"Add both users to each other's friend lists"};
+    I --> J{"Send Notification to Requester"};
+    J --> K["Return success message"];
 ```
 
 *   **User Initiates Response**: The user sends a request to accept or reject a pending friend request.
@@ -181,15 +181,15 @@ A user removes another user from their friend list.
 
 ```mermaid
 graph TD
-    A[User requests unfriend] --> B{Extract UserID from Token};
-    B --> C{Receive FriendID to unfriend};
-    C --> D{Validate FriendID};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Check if users are friends};
-    F -- Not friends --> G[Return error: Not friends];
-    F -- Are friends --> H{Remove from both users' friend lists};
-    H --> I{Delete Friendship record};
-    I --> J[Return success message];
+    A["User requests unfriend"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive FriendID to unfriend"};
+    C --> D{"Validate FriendID"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Check if users are friends"};
+    F -- "Not friends" --> G["Return error: Not friends"];
+    F -- "Are friends" --> H{"Remove from both users' friend lists"};
+    H --> I{"Delete Friendship record"};
+    I --> J["Return success message"];
 ```
 
 *   **User Initiates Unfriend**: The user sends a request to remove a friend.
@@ -205,15 +205,15 @@ A user blocks another user.
 
 ```mermaid
 graph TD
-    A[User requests block] --> B{Extract BlockerID from Token};
-    B --> C{Receive BlockedUserID};
-    C --> D{Validate BlockedUserID};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Check if user is already blocked};
-    F -- Already blocked --> G[Return error: User already blocked];
-    F -- Not blocked --> H{Create Block record in Database};
-    H --> I{Remove any existing friendship/requests between them};
-    I --> J[Return success message];
+    A["User requests block"] --> B{"Extract BlockerID from Token"};
+    B --> C{"Receive BlockedUserID"};
+    C --> D{"Validate BlockedUserID"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Check if user is already blocked"};
+    F -- "Already blocked" --> G["Return error: User already blocked"];
+    F -- "Not blocked" --> H{"Create Block record in Database"};
+    H --> I{"Remove any existing friendship/requests between them"};
+    I --> J["Return success message"];
 ```
 
 *   **User Initiates Block**: The user sends a request to block another user.
@@ -232,15 +232,15 @@ A user creates a new group.
 
 ```mermaid
 graph TD
-    A[User creates group] --> B{Extract CreatorID from Token};
-    B --> C{Receive Group Name and MemberIDs};
-    C --> D{Validate input};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Verify all MemberIDs exist};
-    F -- Member not found --> E;
-    F -- All members found --> G{Add Creator as Admin and Member};
-    G --> H{Create Group in Database};
-    H --> I[Return Created Group Info];
+    A["User creates group"] --> B{"Extract CreatorID from Token"};
+    B --> C{"Receive Group Name and MemberIDs"};
+    C --> D{"Validate input"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Verify all MemberIDs exist"};
+    F -- "Member not found" --> E;
+    F -- "All members found" --> G{"Add Creator as Admin and Member"};
+    G --> H{"Create Group in Database"};
+    H --> I["Return Created Group Info"];
 ```
 
 *   **User Initiates Group Creation**: The user provides a group name and a list of member IDs.
@@ -257,20 +257,20 @@ A group admin adds a new member to a group.
 
 ```mermaid
 graph TD
-    A[Admin adds member] --> B{Extract AdminID from Token};
-    B --> C{Receive GroupID and NewMemberID};
-    C --> D{Validate IDs};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Get Group Details};
-    F -- Not found --> E;
-    F -- Found --> G{Check if AdminID is an actual admin of the group};
-    G -- Not Admin --> H[Return error: Unauthorized];
-    G -- Is Admin --> I{Check if NewMemberID is already a member};
-    I -- Already member --> H;
-    I -- Not member --> J{Verify NewMemberID exists};
-    J -- Not found --> H;
-    J -- Found --> K{Add NewMemberID to Group Members in Database};
-    K --> L[Return success message];
+    A["Admin adds member"] --> B{"Extract AdminID from Token"};
+    B --> C{"Receive GroupID and NewMemberID"};
+    C --> D{"Validate IDs"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Get Group Details"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Check if AdminID is an actual admin of the group"};
+    G -- "Not Admin" --> H["Return error: Unauthorized"];
+    G -- "Is Admin" --> I{"Check if NewMemberID is already a member"};
+    I -- "Already member" --> H;
+    I -- "Not member" --> J{"Verify NewMemberID exists"};
+    J -- "Not found" --> H;
+    J -- "Found" --> K{"Add NewMemberID to Group Members in Database"};
+    K --> L["Return success message"];
 ```
 
 *   **Admin Initiates Add Member**: A group admin sends a request to add a new member.
@@ -288,20 +288,20 @@ A group admin promotes a member to an admin.
 
 ```mermaid
 graph TD
-    A[Admin promotes member] --> B{Extract AdminID from Token};
-    B --> C{Receive GroupID and MemberID to promote};
-    C --> D{Validate IDs};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Get Group Details};
-    F -- Not found --> E;
-    F -- Found --> G{Check if AdminID is an actual admin of the group};
-    G -- Not Admin --> H[Return error: Unauthorized];
-    G -- Is Admin --> I{Check if MemberID is already an admin};
-    I -- Already admin --> H;
-    I -- Not admin --> J{Check if MemberID is a group member};
-    J -- Not member --> H;
-    J -- Is member --> K{Add MemberID to Group Admins in Database};
-    K --> L[Return success message];
+    A["Admin promotes member"] --> B{"Extract AdminID from Token"};
+    B --> C{"Receive GroupID and MemberID to promote"};
+    C --> D{"Validate IDs"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Get Group Details"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Check if AdminID is an actual admin of the group"};
+    G -- "Not Admin" --> H["Return error: Unauthorized"];
+    G -- "Is Admin" --> I{"Check if MemberID is already an admin"};
+    I -- "Already admin" --> H;
+    I -- "Not admin" --> J{"Check if MemberID is a group member"};
+    J -- "Not member" --> H;
+    J -- "Is member" --> K{"Add MemberID to Group Admins in Database"};
+    K --> L["Return success message"];
 ```
 
 *   **Admin Initiates Promote**: A group admin sends a request to promote an existing member to an admin.
@@ -319,18 +319,18 @@ A group admin removes a member from a group.
 
 ```mermaid
 graph TD
-    A[Admin removes member] --> B{Extract AdminID from Token};
-    B --> C{Receive GroupID and MemberID to remove};
-    C --> D{Validate IDs};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Get Group Details};
-    F -- Not found --> E;
-    F -- Found --> G{Check if AdminID is an actual admin of the group};
-    G -- Not Admin --> H[Return error: Unauthorized];
-    G -- Is Admin --> I{Check if MemberID is the last admin (if also admin)};
-    I -- Last Admin --> H;
-    I -- Not last admin --> J{Remove MemberID from Group Members (and Admins if applicable) in Database};
-    J --> K[Return success message];
+    A["Admin removes member"] --> B{"Extract AdminID from Token"};
+    B --> C{"Receive GroupID and MemberID to remove"};
+    C --> D{"Validate IDs"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Get Group Details"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Check if AdminID is an actual admin of the group"};
+    G -- "Not Admin" --> H["Return error: Unauthorized"];
+    G -- "Is Admin" --> I{"Check if MemberID is the last admin (if also admin)"};
+    I -- "Last Admin" --> H;
+    I -- "Not last admin" --> J{"Remove MemberID from Group Members (and Admins if applicable) in Database"};
+    J --> K["Return success message"];
 ```
 
 *   **Admin Initiates Remove Member**: A group admin sends a request to remove a member.
@@ -349,16 +349,16 @@ A user sends a direct message to a friend.
 
 ```mermaid
 graph TD
-    A[User sends direct message] --> B{Extract SenderID from Token};
-    B --> C{Receive ReceiverID and Message Content};
-    C --> D{Validate input};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Check if Sender and Receiver are friends};
-    F -- Not friends --> G[Return error: Can only message friends];
-    F -- Are friends --> H{Create Message in Database};
-    H --> I{Publish Message to Kafka (for real-time delivery)};
-    I --> J{Update Last Message Cache in Redis};
-    J --> K[Return Created Message];
+    A["User sends direct message"] --> B{"Extract SenderID from Token"};
+    B --> C{"Receive ReceiverID and Message Content"};
+    C --> D{"Validate input"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Check if Sender and Receiver are friends"};
+    F -- "Not friends" --> G["Return error: Can only message friends"];
+    F -- "Are friends" --> H{"Create Message in Database"};
+    H --> I{"Publish Message to Kafka (for real-time delivery)"};
+    I --> J{"Update Last Message Cache in Redis"};
+    J --> K["Return Created Message"];
 ```
 
 *   **User Initiates Direct Message**: The user provides the receiver's ID and the message content.
@@ -376,16 +376,16 @@ A user sends a message to a group they are a member of.
 
 ```mermaid
 graph TD
-    A[User sends group message] --> B{Extract SenderID from Token};
-    B --> C{Receive GroupID and Message Content};
-    C --> D{Validate input};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Check if Sender is a member of the Group};
-    F -- Not member --> G[Return error: Not a group member];
-    F -- Is member --> H{Create Message in Database};
-    H --> I{Publish Message to Kafka (for real-time delivery to group members)};
-    I --> J{Update Last Message Cache in Redis};
-    J --> K[Return Created Message];
+    A["User sends group message"] --> B{"Extract SenderID from Token"};
+    B --> C{"Receive GroupID and Message Content"};
+    C --> D{"Validate input"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Check if Sender is a member of the Group"};
+    F -- "Not member" --> G["Return error: Not a group member"];
+    F -- "Is member" --> H{"Create Message in Database"};
+    H --> I{"Publish Message to Kafka (for real-time delivery to group members)"};
+    I --> J{"Update Last Message Cache in Redis"};
+    J --> K["Return Created Message"];
 ```
 
 *   **User Initiates Group Message**: The user provides the group ID and the message content.
@@ -403,13 +403,13 @@ A user retrieves messages for a direct conversation or a group.
 
 ```mermaid
 graph TD
-    A[User requests messages] --> B{Extract UserID from Token};
-    B --> C{Receive ConversationID (ReceiverID or GroupID) and Pagination Params};
-    C --> D{Validate input};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Retrieve Messages from Database (with pagination)};
-    F --> G{Get Total Message Count};
-    G --> H[Return Paginated Message List and Total Count];
+    A["User requests messages"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive ConversationID (ReceiverID or GroupID) and Pagination Params"};
+    C --> D{"Validate input"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Retrieve Messages from Database (with pagination)"};
+    F --> G{"Get Total Message Count"};
+    G --> H["Return Paginated Message List and Total Count"];
 ```
 
 *   **User Initiates Message Retrieval**: The user provides either a `receiverID` (for direct messages) or a `groupID` (for group messages), along with optional pagination parameters (page, limit, before timestamp).
@@ -425,13 +425,13 @@ A user marks one or more messages as seen.
 
 ```mermaid
 graph TD
-    A[User marks messages as seen] --> B{Extract UserID from Token};
-    B --> C{Receive MessageIDs to mark as seen};
-    C --> D{Validate MessageIDs};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Update Messages in Database (add UserID to SeenBy list)};
-    F --> G{Decrement Unread Count in Redis for each message};
-    G --> H[Return success message];
+    A["User marks messages as seen"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive MessageIDs to mark as seen"};
+    C --> D{"Validate MessageIDs"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Update Messages in Database (add UserID to SeenBy list)"};
+    F --> G{"Decrement Unread Count in Redis for each message"};
+    G --> H["Return success message"];
 ```
 
 *   **User Initiates Mark as Seen**: The user provides a list of message IDs to be marked as seen.
@@ -447,11 +447,11 @@ A user retrieves their total unread message count.
 
 ```mermaid
 graph TD
-    A[User requests unread count] --> B{Extract UserID from Token};
-    B --> C{Retrieve Unread Count from Redis};
-    C -- Not in Redis --> D{Calculate Unread Count from Database};
-    D --> E{Store in Redis};
-    E --> F[Return Unread Count];
+    A["User requests unread count"] --> B{"Extract UserID from Token"};
+    B --> C{"Retrieve Unread Count from Redis"};
+    C -- "Not in Redis" --> D{"Calculate Unread Count from Database"};
+    D --> E{"Store in Redis"};
+    E --> F["Return Unread Count"];
 ```
 
 *   **User Initiates Unread Count Request**: The user sends a request to get their total unread message count.
@@ -467,19 +467,19 @@ A user deletes a message they sent.
 
 ```mermaid
 graph TD
-    A[User requests message deletion] --> B{Extract UserID from Token};
-    B --> C{Receive MessageID to delete};
-    C --> D{Validate MessageID};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Find Message by ID};
-    F -- Not found --> E;
-    F -- Found --> G{Check if UserID is Sender or Admin};
-    G -- Not authorized --> H[Return error: Unauthorized];
-    G -- Authorized --> I{Perform Soft Delete in Database (mark as deleted, clear content)};
-    I --> J{Asynchronously delete associated media files};
-    J --> K{Publish MessageDeleted event to Kafka};
-    K --> L{Update relevant Redis caches (e.g., last message)};
-    L --> M[Return success message];
+    A["User requests message deletion"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive MessageID to delete"};
+    C --> D{"Validate MessageID"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Find Message by ID"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Check if UserID is Sender or Admin"};
+    G -- "Not authorized" --> H["Return error: Unauthorized"];
+    G -- "Authorized" --> I{"Perform Soft Delete in Database (mark as deleted, clear content)"};
+    I --> J{"Asynchronously delete associated media files"};
+    J --> K{"Publish MessageDeleted event to Kafka"};
+    K --> L{"Update relevant Redis caches (e.g., last message)"};
+    L --> M["Return success message"];
 ```
 
 *   **User Initiates Message Deletion**: The user provides the ID of the message to be deleted.
@@ -500,15 +500,15 @@ A user creates a new post on their feed.
 
 ```mermaid
 graph TD
-    A[User creates post] --> B{Extract UserID from Token};
-    B --> C{Receive Post Content, Media, Privacy Settings, Mentions, Hashtags};
-    C --> D{Validate input};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Extract Mentions and Hashtags from content};
-    F --> G{Create Post in Database};
-    G --> H{Send Notifications to mentioned users};
-    H --> I{Publish PostCreated event to Kafka};
-    I --> J[Return Created Post];
+    A["User creates post"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive Post Content, Media, Privacy Settings, Mentions, Hashtags"};
+    C --> D{"Validate input"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Extract Mentions and Hashtags from content"};
+    F --> G{"Create Post in Database"};
+    G --> H{"Send Notifications to mentioned users"};
+    H --> I{"Publish PostCreated event to Kafka"};
+    I --> J["Return Created Post"];
 ```
 
 *   **User Initiates Post Creation**: The user provides post content, optional media URLs, privacy settings (Public, Friends, Only Me, Custom), mentions, and hashtags.
@@ -525,16 +525,16 @@ A user retrieves a specific post by its ID.
 
 ```mermaid
 graph TD
-    A[User requests post by ID] --> B{Extract ViewerID from Token};
-    B --> C{Receive PostID};
-    C --> D{Validate PostID};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Retrieve Post from Database};
-    F -- Not found --> E;
-    F -- Found --> G{Check Viewer's Privacy Permissions};
-    G -- Unauthorized --> H[Return error: Unauthorized to view post];
-    G -- Authorized --> I{Populate Reaction Counts};
-    I --> J[Return Post Details];
+    A["User requests post by ID"] --> B{"Extract ViewerID from Token"};
+    B --> C{"Receive PostID"};
+    C --> D{"Validate PostID"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Retrieve Post from Database"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Check Viewer's Privacy Permissions"};
+    G -- "Unauthorized" --> H["Return error: Unauthorized to view post"];
+    G -- "Authorized" --> I{"Populate Reaction Counts"};
+    I --> J["Return Post Details"];
 ```
 
 *   **User Initiates Post Retrieval**: The user provides the ID of the post they want to view.
@@ -550,16 +550,16 @@ A user updates an existing post.
 
 ```mermaid
 graph TD
-    A[User requests post update] --> B{Extract UserID from Token};
-    B --> C{Receive PostID and Update Data};
-    C --> D{Validate input};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Retrieve Post from Database};
-    F -- Not found --> E;
-    F -- Found --> G{Check if UserID is Post Owner};
-    G -- Not Owner --> H[Return error: Unauthorized];
-    G -- Is Owner --> I{Update Post in Database};
-    I --> J[Return Updated Post];
+    A["User requests post update"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive PostID and Update Data"};
+    C --> D{"Validate input"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Retrieve Post from Database"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Check if UserID is Post Owner"};
+    G -- "Not Owner" --> H["Return error: Unauthorized"];
+    G -- "Is Owner" --> I{"Update Post in Database"};
+    I --> J["Return Updated Post"];
 ```
 
 *   **User Initiates Post Update**: The user provides the post ID and the fields to update (content, media, privacy).
@@ -576,16 +576,16 @@ A user deletes an existing post.
 
 ```mermaid
 graph TD
-    A[User requests post deletion] --> B{Extract UserID from Token};
-    B --> C{Receive PostID};
-    C --> D{Validate PostID};
-    D -- Invalid --> E[Return error: Invalid ID];
-    D -- Valid --> F{Retrieve Post from Database};
-    F -- Not found --> E;
-    F -- Found --> G{Check if UserID is Post Owner};
-    G -- Not Owner --> H[Return error: Unauthorized];
-    G -- Is Owner --> I{Delete Post from Database};
-    I --> J[Return success message];
+    A["User requests post deletion"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive PostID"};
+    C --> D{"Validate PostID"};
+    D -- "Invalid" --> E["Return error: Invalid ID"];
+    D -- "Valid" --> F{"Retrieve Post from Database"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Check if UserID is Post Owner"};
+    G -- "Not Owner" --> H["Return error: Unauthorized"];
+    G -- "Is Owner" --> I{"Delete Post from Database"};
+    I --> J["Return success message"];
 ```
 
 *   **User Initiates Post Deletion**: The user provides the ID of the post to be deleted.
@@ -601,17 +601,17 @@ A user creates a new comment on a post.
 
 ```mermaid
 graph TD
-    A[User creates comment] --> B{Extract UserID from Token};
-    B --> C{Receive PostID and Comment Content};
-    C --> D{Validate input};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Check if Post exists};
-    F -- Not found --> E;
-    F -- Found --> G{Extract Mentions from content};
-    G --> H{Create Comment in Database};
-    H --> I{Send Notifications to mentioned users and post owner};
-    I --> J{Publish CommentCreated event to Kafka};
-    J --> K[Return Created Comment];
+    A["User creates comment"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive PostID and Comment Content"};
+    C --> D{"Validate input"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Check if Post exists"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Extract Mentions from content"};
+    G --> H{"Create Comment in Database"};
+    H --> I{"Send Notifications to mentioned users and post owner"};
+    I --> J{"Publish CommentCreated event to Kafka"};
+    J --> K["Return Created Comment"];
 ```
 
 *   **User Initiates Comment Creation**: The user provides the post ID and the comment content.
@@ -630,17 +630,17 @@ A user creates a new reply to a comment.
 
 ```mermaid
 graph TD
-    A[User creates reply] --> B{Extract UserID from Token};
-    B --> C{Receive CommentID and Reply Content};
-    C --> D{Validate input};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Check if Comment exists};
-    F -- Not found --> E;
-    F -- Found --> G{Extract Mentions from content};
-    G --> H{Create Reply in Database};
-    H --> I{Send Notifications to mentioned users and comment owner};
-    I --> J{Publish ReplyCreated event to Kafka};
-    J --> K[Return Created Reply];
+    A["User creates reply"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive CommentID and Reply Content"};
+    C --> D{"Validate input"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Check if Comment exists"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Extract Mentions from content"};
+    G --> H{"Create Reply in Database"};
+    H --> I{"Send Notifications to mentioned users and comment owner"};
+    I --> J{"Publish ReplyCreated event to Kafka"};
+    J --> K["Return Created Reply"];
 ```
 
 *   **User Initiates Reply Creation**: The user provides the comment ID and the reply content.
@@ -659,16 +659,16 @@ A user reacts to a post, comment, or reply.
 
 ```mermaid
 graph TD
-    A[User creates reaction] --> B{Extract UserID from Token};
-    B --> C{Receive TargetID, TargetType, and ReactionType};
-    C --> D{Validate input};
-    D -- Invalid --> E[Return error: Invalid input];
-    D -- Valid --> F{Check if Target (Post/Comment/Reply) exists};
-    F -- Not found --> E;
-    F -- Found --> G{Create Reaction in Database};
-    G --> H{Send Notification to Target Owner};
-    H --> I{Publish ReactionCreated event to Kafka};
-    I --> J[Return Created Reaction];
+    A["User creates reaction"] --> B{"Extract UserID from Token"};
+    B --> C{"Receive TargetID, TargetType, and ReactionType"};
+    C --> D{"Validate input"};
+    D -- "Invalid" --> E["Return error: Invalid input"];
+    D -- "Valid" --> F{"Check if Target (Post/Comment/Reply) exists"};
+    F -- "Not found" --> E;
+    F -- "Found" --> G{"Create Reaction in Database"};
+    G --> H{"Send Notification to Target Owner"};
+    H --> I{"Publish ReactionCreated event to Kafka"};
+    I --> J["Return Created Reaction"];
 ```
 
 *   **User Initiates Reaction**: The user provides the ID of the target (post, comment, or reply), its type, and the reaction type (e.g., LIKE, LOVE).
