@@ -2,8 +2,6 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
-	"messaging-app/internal/models"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -58,24 +56,13 @@ func NewMessageProducer(brokers []string, topic string) *MessageProducer {
 	}
 }
 
-func (p *MessageProducer) ProduceMessage(ctx context.Context, message models.Message) error {
+func (p *MessageProducer) ProduceMessage(ctx context.Context, message kafka.Message) error {
 	start := time.Now()
 	defer func() {
 		produceDuration.WithLabelValues(p.topic).Observe(time.Since(start).Seconds())
 	}()
 
-	jsonMsg, err := json.Marshal(message)
-	if err != nil {
-		return err
-	}
-
-	return p.writer.WriteMessages(ctx,
-		kafka.Message{
-			Key:   []byte(message.ReceiverID.Hex()),
-			Value: jsonMsg,
-			Time:  time.Now(),
-		},
-	)
+	return p.writer.WriteMessages(ctx, message)
 }
 
 func (p *MessageProducer) Close() error {

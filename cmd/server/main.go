@@ -12,6 +12,7 @@ import (
 	"messaging-app/config"
 	"messaging-app/internal/controllers"
 	"messaging-app/internal/kafka"
+	"messaging-app/internal/notifications"
 	"messaging-app/internal/redis"
 	"messaging-app/internal/repositories"
 	"messaging-app/internal/services"
@@ -25,279 +26,321 @@ import (
 )
 
 func main() {
-	// Load configuration
-	cfg := config.LoadConfig()
-	metrics := config.GetMetrics()
+    // Load configuration
+    cfg := config.LoadConfig()
+    metrics := config.GetMetrics()
 
-	// Initialize MongoDB
-	clientOptions := options.Client().
-		ApplyURI(cfg.MongoURI).
-		SetAuth(options.Credential{
-			Username: cfg.MongoUser,
-			Password: cfg.MongoPassword,
-		}).
-		SetMaxPoolSize(100).
-		SetSocketTimeout(10 * time.Second)
+    // Initialize MongoDB
+    clientOptions := options.Client().
+        ApplyURI(cfg.MongoURI).
+        SetAuth(options.Credential{
+            Username: cfg.MongoUser,
+            Password: cfg.MongoPassword,
+        }).
+        SetMaxPoolSize(100).
+        SetSocketTimeout(10 * time.Second)
 
-	mongoClient, err := mongo.Connect(context.Background(), clientOptions)
-	if err != nil {
-		log.Fatalf("Failed to connect to MongoDB: %v", err)
-	}
-	defer func() {
-		if err := mongoClient.Disconnect(context.Background()); err != nil {
-			log.Printf("Error disconnecting MongoDB: %v", err)
-		}
-	}()
+    mongoClient, err := mongo.Connect(context.Background(), clientOptions)
+    if err != nil {
+        log.Fatalf("Failed to connect to MongoDB: %v", err)
+    }
+    defer func() {
+        if err := mongoClient.Disconnect(context.Background()); err != nil {
+            log.Printf("Error disconnecting MongoDB: %v", err)
+        }
+    }()
 
-	db := mongoClient.Database(cfg.DBName)
+    db := mongoClient.Database(cfg.DBName)
 
-	// Initialize Redis Cluster
-	redisClient := redis.NewClusterClient(cfg)
-	defer func() {
-		if err := redisClient.Close(); err != nil {
-			log.Printf("Error closing Redis connection: %v", err)
-		}
-	}()
+    // Initialize Redis Cluster
+    redisClient := redis.NewClusterClient(cfg)
+    defer func() {
+        if err := redisClient.Close(); err != nil {
+            log.Printf("Error closing Redis connection: %v", err)
+        }
+    }()
 
-	// Verify Redis connection
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if !redisClient.IsAvailable(ctx) {
-		log.Fatal("Failed to connect to Redis cluster")
-	}
+    // Verify Redis connection
+    ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+    defer cancel()
+    if !redisClient.IsAvailable(ctx) {
+        log.Fatal("Failed to connect to Redis cluster")
+    }
 
-	// Initialize Repositories
-	userRepo := repositories.NewUserRepository(db)
-	messageRepo := repositories.NewMessageRepository(db)
-	groupRepo := repositories.NewGroupRepository(db)
-	friendshipRepo := repositories.NewFriendshipRepository(db)
-	feedRepo := repositories.NewFeedRepository(db)
-	privacyRepo := repositories.NewPrivacyRepository(db)
+    // Initialize Repositories
+    userRepo := repositories.NewUserRepository(db)
+    messageRepo := repositories.NewMessageRepository(db)
+    groupRepo := repositories.NewGroupRepository(db)
+    friendshipRepo := repositories.NewFriendshipRepository(db)
+    feedRepo := repositories.NewFeedRepository(db)
+    privacyRepo := repositories.NewPrivacyRepository(db)
+    notificationRepo := repositories.NewNotificationRepository(db)
 
-	// Initialize Kafka Producer
-	kafkaProducer := kafka.NewMessageProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
-	defer func() {
-		if err := kafkaProducer.Close(); err != nil {
-			log.Printf("Error closing Kafka producer: %v", err)
-		}
-	}()
+    // Initialize Kafka Producer
+    kafkaProducer := kafka.NewMessageProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
+    defer func() {
+        if err := kafkaProducer.Close(); err != nil {
+            log.Printf("Error closing Kafka producer: %v", err)
+        }
+    }()
 
-	// Initialize WebSocket Hub
-	hub := websocket.NewHub(redisClient, groupRepo)
+    // Initialize WebSocket Hub
+    hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo)
 
-	// Initialize Kafka Consumer
-	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
-	go func() {
-		kafkaConsumer.ConsumeMessages(context.Background())
-	}()
+    // Initialize Kafka Consumer
+    kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
+    go func() {
+        kafkaConsumer.ConsumeMessages(context.Background())
+    }()
 
-	// Initialize Services
-	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
-	userService := services.NewUserService(userRepo)
-	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient())
-	groupService := services.NewGroupService(groupRepo, userRepo)
-	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
-	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer)
-	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
+    // Initialize Services
+    authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
+    userService := services.NewUserService(userRepo)
+    messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient())
+    groupService := services.NewGroupService(groupRepo, userRepo)
+    friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
+    notificationService := notifications.NewNotificationService(notificationRepo, userRepo)
+    feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService)
+    privacyService := services.NewPrivacyService(privacyRepo, userRepo)
 
-	// Initialize Controllers
-	authController := controllers.NewAuthController(authService)
-	userController := controllers.NewUserController(userService)
-	friendshipController := controllers.NewFriendshipController(friendshipService)
-	groupController := controllers.NewGroupController(groupService, userService)
-	messageController := controllers.NewMessageController(messageService)
-	feedController := controllers.NewFeedController(feedService, userService, privacyService)
-	privacyController := controllers.NewPrivacyController(privacyService, userService)
+    // Initialize Controllers
+    authController := controllers.NewAuthController(authService)
+    userController := controllers.NewUserController(userService)
+    friendshipController := controllers.NewFriendshipController(friendshipService)
+    groupController := controllers.NewGroupController(groupService, userService)
+    messageController := controllers.NewMessageController(messageService)
+    feedController := controllers.NewFeedController(feedService, userService, privacyService)
+    privacyController := controllers.NewPrivacyController(privacyService, userService)
 
-	// Initialize Gin Router with metrics middleware
-	router := gin.Default()
-	router.Use(config.MetricsMiddleware(metrics))
-	router.Use(cors.Default())
+    // Initialize Gin Router with metrics middleware
+    router := gin.Default()
+    router.Use(config.MetricsMiddleware(metrics))
+    router.Use(cors.Default())
 
-	// WebSocket router (without metrics middleware)
-	webSocketRouter := gin.Default()
-	webSocketRouter.Use(cors.Default())
+    // WebSocket router (without metrics middleware)
+    webSocketRouter := gin.Default()
+    webSocketRouter.Use(cors.Default())
 
-	// Start metrics server on separate port
-	go func() {
-		metricsMux := http.NewServeMux()
-		metricsMux.Handle("/metrics", config.MetricsHandler())
-		
-		metricsServer := &http.Server{
-			Addr:    ":" + cfg.PrometheusPort, 
-			Handler: metricsMux,
-		}
+    // Start metrics server on separate port
+    go func() {
+        metricsMux := http.NewServeMux()
+        metricsMux.Handle("/metrics", config.MetricsHandler())
+        
+        metricsServer := &http.Server{
+            Addr:    ":" + cfg.PrometheusPort, 
+            Handler: metricsMux,
+        }
 
-		log.Printf("Metrics server starting on port %s", cfg.PrometheusPort)
-		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Metrics server failed: %v", err)
-		}
-	}()
+        log.Printf("Metrics server starting on port %s", cfg.PrometheusPort)
+        if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            log.Fatalf("Metrics server failed: %v", err)
+        }
+    }()
 
-	// Health check endpoints
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
-	
-	router.GET("/ready", func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-		defer cancel()
+    // Health check endpoints
+    router.GET("/health", func(c *gin.Context) {
+        c.JSON(http.StatusOK, gin.H{"status": "ok"})
+    })
+    
+    router.GET("/ready", func(c *gin.Context) {
+        ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+        defer cancel()
 
-		status := gin.H{"status": "ready"}
-		code := http.StatusOK
+        status := gin.H{"status": "ready"}
+        code := http.StatusOK
 
-		if err := mongoClient.Ping(ctx, nil); err != nil {
-			status["mongo"] = "unavailable"
-			code = http.StatusServiceUnavailable
-		} else {
-			status["mongo"] = "available"
-		}
+        if err := mongoClient.Ping(ctx, nil); err != nil {
+            status["mongo"] = "unavailable"
+            code = http.StatusServiceUnavailable
+        } else {
+            status["mongo"] = "available"
+        }
 
-		if !redisClient.IsAvailable(ctx) {
-			status["redis"] = "unavailable"
-			code = http.StatusServiceUnavailable
-		} else {
-			status["redis"] = "available"
-		}
+        if !redisClient.IsAvailable(ctx) {
+            status["redis"] = "unavailable"
+            code = http.StatusServiceUnavailable
+        } else {
+            status["redis"] = "available"
+        }
 
-		c.JSON(code, status)
-	})
+        c.JSON(code, status)
+    })
 
-	// Auth routes
-	router.POST("/api/auth/register", authController.Register)
-	router.POST("/api/auth/login", authController.Login)
-	router.POST("/api/auth/refresh", authController.Refresh)
-	router.POST("/api/auth/logout", authController.Logout)
+    // Auth routes (public routes)
+    authRoutes := router.Group("/api/auth")
+    {
+        authRoutes.POST("/register", authController.Register)
+        authRoutes.POST("/login", authController.Login)
+        authRoutes.POST("/refresh", authController.Refresh)
+        authRoutes.POST("/logout", authController.Logout)
+    }
 
-	// Protected routes
-	authMiddleware := middleware.AuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
-	api := router.Group("/api", authMiddleware)
-	{
-	api.GET("/user", authMiddleware, userController.GetUser)
-	api.PUT("/user", authMiddleware, userController.UpdateUser)
-	api.PUT("/user/email", authMiddleware, userController.UpdateEmail)
-	api.PUT("/user/password", authMiddleware, userController.UpdatePassword)
-	api.PUT("/user/2fa", authMiddleware, userController.ToggleTwoFactor)
-	api.PUT("/user/deactivate", authMiddleware, userController.DeactivateAccount)
-	api.GET("/users", authMiddleware, userController.ListUsers)
-	api.GET("/users/:id", authMiddleware, userController.GetUserByID)
-	api.PUT("/user/privacy", authMiddleware, userController.UpdatePrivacySettings)
+    // Protected routes
+    authMiddleware := middleware.AuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
+    api := router.Group("/api", authMiddleware)
+    
+    // User Routes
+    userRoutes := api.Group("/users")
+    {
+        userRoutes.GET("/me", userController.GetUser)                    // Get current user
+        userRoutes.PUT("/me", userController.UpdateUser)                 // Update current user
+        userRoutes.PUT("/me/email", userController.UpdateEmail)          // Update current user email
+        userRoutes.PUT("/me/password", userController.UpdatePassword)    // Update current user password
+        userRoutes.PUT("/me/2fa", userController.ToggleTwoFactor)        // Toggle 2FA for current user
+        userRoutes.PUT("/me/deactivate", userController.DeactivateAccount) // Deactivate current user account
+        userRoutes.PUT("/me/privacy", userController.UpdatePrivacySettings) // Update current user privacy
+        userRoutes.GET("/me/groups", groupController.GetUserGroups)      // Get current user's groups
+        
+        userRoutes.GET("", userController.ListUsers)                     // List all users
+        userRoutes.GET("/:id", userController.GetUserByID)               // Get specific user by ID
+    }
 
-	// Feed Routes
-	api.POST("/posts", authMiddleware, feedController.CreatePost)
-	api.GET("/posts/:id", authMiddleware, feedController.GetPostByID)
-	api.GET("/posts/:postId/comments", authMiddleware, feedController.GetCommentsByPostID)
-	api.GET("/posts/:postId/reactions", authMiddleware, feedController.GetReactionsByPostID)
-	api.PUT("/posts/:id", authMiddleware, feedController.UpdatePost)
-	api.DELETE("/posts/:id", authMiddleware, feedController.DeletePost)
+    // Feed Routes
+    feedRoutes := api.Group("/feed")
+    {
+        // Post routes
+        feedRoutes.POST("/posts", feedController.CreatePost)
+        feedRoutes.GET("/posts/:postId", feedController.GetPostByID)
+        feedRoutes.PUT("/posts/:postId", feedController.UpdatePost)
+        feedRoutes.DELETE("/posts/:postId", feedController.DeletePost)
+        feedRoutes.GET("/posts/:postId/comments", feedController.GetCommentsByPostID)
+        feedRoutes.GET("/posts/:postId/reactions", feedController.GetReactionsByPostID)
 
-	api.POST("/comments", authMiddleware, feedController.CreateComment)
-	api.GET("/comments/:commentId/replies", authMiddleware, feedController.GetRepliesByCommentID)
-	api.GET("/comments/:commentId/reactions", authMiddleware, feedController.GetReactionsByCommentID)
-	api.PUT("/comments/:id", authMiddleware, feedController.UpdateComment)
-	api.DELETE("/posts/:postId/comments/:commentId", authMiddleware, feedController.DeleteComment)
+        // Hashtag routes
+        feedRoutes.GET("/hashtags/:hashtag/posts", feedController.GetPostsByHashtag)
 
-	api.POST("/comments/:commentId/replies", authMiddleware, feedController.CreateReply)
-	api.PUT("/comments/:commentId/replies/:replyId", authMiddleware, feedController.UpdateReply)
-	api.DELETE("/comments/:commentId/replies/:replyId", authMiddleware, feedController.DeleteReply)
-	api.GET("/replies/:replyId/reactions", authMiddleware, feedController.GetReactionsByReplyID)
+        // Comment routes
+        feedRoutes.POST("/comments", feedController.CreateComment)
+        feedRoutes.PUT("/comments/:commentId", feedController.UpdateComment)
+        feedRoutes.DELETE("/posts/:postId/comments/:commentId", feedController.DeleteComment)
+        feedRoutes.GET("/comments/:commentId/replies", feedController.GetRepliesByCommentID)
+        feedRoutes.GET("/comments/:commentId/reactions", feedController.GetReactionsByCommentID)
 
-	api.POST("/reactions", authMiddleware, feedController.CreateReaction)
-	api.DELETE("/reactions/:reactionId", authMiddleware, feedController.DeleteReaction)
+        // Reply routes
+        feedRoutes.POST("/comments/:commentId/replies", feedController.CreateReply)
+        feedRoutes.PUT("/comments/:commentId/replies/:replyId", feedController.UpdateReply)
+        feedRoutes.DELETE("/comments/:commentId/replies/:replyId", feedController.DeleteReply)
+        feedRoutes.GET("/replies/:replyId/reactions", feedController.GetReactionsByReplyID)
 
-	// Privacy Routes
-	api.GET("/privacy/settings", authMiddleware, privacyController.GetUserPrivacySettings)
-	api.PUT("/privacy/settings", authMiddleware, privacyController.UpdateUserPrivacySettings)
+        // Reaction routes
+        feedRoutes.POST("/reactions", feedController.CreateReaction)
+        feedRoutes.DELETE("/reactions/:reactionId", feedController.DeleteReaction)
+    }
 
-	api.POST("/privacy/lists", authMiddleware, privacyController.CreateCustomPrivacyList)
-	api.GET("/privacy/lists", authMiddleware, privacyController.GetCustomPrivacyListsByUserID)
-	api.GET("/privacy/lists/:id", authMiddleware, privacyController.GetCustomPrivacyListByID)
-	api.PUT("/privacy/lists/:id", authMiddleware, privacyController.UpdateCustomPrivacyList)
-	api.DELETE("/privacy/lists/:id", authMiddleware, privacyController.DeleteCustomPrivacyList)
+    // Privacy Routes
+    privacyRoutes := api.Group("/privacy")
+    {
+        privacyRoutes.GET("/settings", privacyController.GetUserPrivacySettings)
+        privacyRoutes.PUT("/settings", privacyController.UpdateUserPrivacySettings)
 
-	api.POST("/privacy/lists/:id/members", authMiddleware, privacyController.AddMemberToCustomPrivacyList)
-	api.DELETE("/privacy/lists/:id/members/:member_id", authMiddleware, privacyController.RemoveMemberFromCustomPrivacyList)
+        // Custom privacy lists
+        privacyRoutes.POST("/lists", privacyController.CreateCustomPrivacyList)
+        privacyRoutes.GET("/lists", privacyController.GetCustomPrivacyListsByUserID)
+        privacyRoutes.GET("/lists/:id", privacyController.GetCustomPrivacyListByID)
+        privacyRoutes.PUT("/lists/:id", privacyController.UpdateCustomPrivacyList)
+        privacyRoutes.DELETE("/lists/:id", privacyController.DeleteCustomPrivacyList)
 
-	// Message Routes
-	api.POST("/messages", authMiddleware, messageController.SendMessage)
-	api.GET("/messages", authMiddleware, messageController.GetMessages)
-	api.POST("/messages/seen", authMiddleware, messageController.MarkMessagesAsSeen)
-	api.GET("/messages/unread", authMiddleware, messageController.GetUnreadCount)
-	api.DELETE("/messages/:id", authMiddleware, messageController.DeleteMessage)
+        // Privacy list members
+        privacyRoutes.POST("/lists/:id/members", privacyController.AddMemberToCustomPrivacyList)
+        privacyRoutes.DELETE("/lists/:id/members/:memberId", privacyController.RemoveMemberFromCustomPrivacyList)
+    }
 
-		// Group endpoints
-		api.POST("/groups", groupController.CreateGroup)        
-		api.GET("/groups/:id", groupController.GetGroup)         
-		api.PATCH("/groups/:id", groupController.UpdateGroup)    
-		api.POST("/groups/:id/members", groupController.AddMember)
-		api.DELETE("/groups/:id/members/:user_id", groupController.RemoveMember) 
-		api.POST("/groups/:id/admins", groupController.AddAdmin)
-		api.GET("/users/me/groups", groupController.GetUserGroups)
+    // Message Routes
+    messageRoutes := api.Group("/messages")
+    {
+        messageRoutes.POST("", messageController.SendMessage)
+        messageRoutes.GET("", messageController.GetMessages)
+        messageRoutes.POST("/seen", messageController.MarkMessagesAsSeen)
+        messageRoutes.GET("/unread", messageController.GetUnreadCount)
+        messageRoutes.DELETE("/:id", messageController.DeleteMessage)
+    }
 
-		// Friendship endpoints
-		api.POST("/friendships/requests", friendshipController.SendRequest)
-		api.POST("/friendships/requests/:id/respond", friendshipController.RespondToRequest)
-		api.GET("/friendships", friendshipController.ListFriendships)
-		api.GET("/friendships/check", friendshipController.CheckFriendship)
-		api.DELETE("/friendships/:id", friendshipController.Unfriend)
-		api.POST("/friendships/block/:user_id", friendshipController.BlockUser)
-		api.DELETE("/friendships/block/:user_id", friendshipController.UnblockUser)
-		api.GET("/friendships/block/:user_id/status", friendshipController.IsBlocked)
-		api.GET("/friendships/blocked", friendshipController.GetBlockedUsers)
-	}
+    // Group Routes
+    groupRoutes := api.Group("/groups")
+    {
+        groupRoutes.POST("", groupController.CreateGroup)
+        groupRoutes.GET("/:id", groupController.GetGroup)
+        groupRoutes.PATCH("/:id", groupController.UpdateGroup)
+        
+        // Group members
+        groupRoutes.POST("/:id/members", groupController.AddMember)
+        groupRoutes.DELETE("/:id/members/:userId", groupController.RemoveMember)
+        
+        // Group admins
+        groupRoutes.POST("/:id/admins", groupController.AddAdmin)
+    }
 
-	webSocketRouter.GET("/ws", authMiddleware, func(c *gin.Context) {
-		// Track WebSocket connection
-		config.IncWebsocketConnections(metrics)
-		defer config.DecWebsocketConnections(metrics)
-		
-		websocket.ServeWs(c, hub)
-	})
+    // Friendship Routes
+    friendshipRoutes := api.Group("/friendships")
+    {
+        // Friend requests
+        friendshipRoutes.POST("/requests", friendshipController.SendRequest)
+        friendshipRoutes.POST("/requests/:id/respond", friendshipController.RespondToRequest)
+        
+        // Friendships management
+        friendshipRoutes.GET("", friendshipController.ListFriendships)
+        friendshipRoutes.GET("/check", friendshipController.CheckFriendship)
+        friendshipRoutes.DELETE("/:id", friendshipController.Unfriend)
+        
+        // Blocking functionality
+        friendshipRoutes.POST("/block/:userId", friendshipController.BlockUser)
+        friendshipRoutes.DELETE("/block/:userId", friendshipController.UnblockUser)
+        friendshipRoutes.GET("/block/:userId/status", friendshipController.IsBlocked)
+        friendshipRoutes.GET("/blocked", friendshipController.GetBlockedUsers)
+    }
 
+    // WebSocket endpoint
+    webSocketRouter.GET("/ws", func(c *gin.Context) {
+        // Track WebSocket connection
+        config.IncWebsocketConnections(metrics)
+        defer config.DecWebsocketConnections(metrics)
+        
+        websocket.ServeWs(c, hub)
+    })
 
-	// Start HTTP server
-	srv := &http.Server{
-		Addr:    ":" + cfg.ServerPort,
-		Handler: router,
-	}
+    // Start HTTP server
+    srv := &http.Server{
+        Addr:    ":" + cfg.ServerPort,
+        Handler: router,
+    }
 
-	// Start WebSocket server
-	wsServer := &http.Server{
-		Addr:    ":" + cfg.WebSocketPort,
-		Handler: webSocketRouter,
-	}
+    // Start WebSocket server
+    wsServer := &http.Server{
+        Addr:    ":" + cfg.WebSocketPort,
+        Handler: webSocketRouter,
+    }
 
-	// Graceful shutdown handling
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+    // Graceful shutdown handling
+    quit := make(chan os.Signal, 1)
+    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		log.Printf("HTTP server starting on port %s", cfg.ServerPort)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server failed: %v", err)
-		}
-	}()
+    go func() {
+        log.Printf("HTTP server starting on port %s", cfg.ServerPort)
+        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            log.Fatalf("HTTP server failed: %v", err)
+        }
+    }()
 
-	go func() {
-		log.Printf("WebSocket server listening on %s", wsServer.Addr)
-		if err := wsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("WebSocket server error: %v", err)
-		}
-	}()
+    go func() {
+        log.Printf("WebSocket server listening on %s", wsServer.Addr)
+        if err := wsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            log.Fatalf("WebSocket server error: %v", err)
+        }
+    }()
 
-	<-quit
-	log.Println("Shutting down server...")
+    <-quit
+    log.Println("Shutting down server...")
 
-	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+    ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
-	}
+    if err := srv.Shutdown(ctx); err != nil {
+        log.Printf("HTTP server shutdown error: %v", err)
+    }
 
-	if err := wsServer.Shutdown(ctx); err != nil {
-		log.Printf("WebSocket server shutdown error: %v", err)
-	}
+    if err := wsServer.Shutdown(ctx); err != nil {
+        log.Printf("WebSocket server shutdown error: %v", err)
+    }
 
-	log.Println("Server exited properly")
+    log.Println("Server exited properly")
 }

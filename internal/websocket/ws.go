@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -67,12 +68,15 @@ type Hub struct {
 	groupClients map[string]map[*Client]bool
 
 	groupRepo    *repositories.GroupRepository
+	feedRepo     *repositories.FeedRepository // New
+	userRepo     *repositories.UserRepository // New
 	redisClient  *redis.ClusterClient
 	messageCache *MessageCache
 
 	register     chan *Client
 	unregister   chan *Client
 	Broadcast    chan models.Message
+	FeedEvents   chan models.WebSocketEvent // New
 	typingEvents chan models.TypingEvent
 
 	ctx    context.Context
@@ -82,17 +86,20 @@ type Hub struct {
 }
 
 // NewHub creates a new Hub and starts its goroutines
-func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository) *Hub {
+func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository, feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
 		userClients:  make(map[string]map[*Client]bool),
 		groupClients: make(map[string]map[*Client]bool),
 		groupRepo:    groupRepo,
+		feedRepo:     feedRepo, // New
+		userRepo:     userRepo, // New
 		redisClient:  redisClient,
 		messageCache: NewMessageCache(redisClient),
 		register:     make(chan *Client),
 		unregister:   make(chan *Client),
 		Broadcast:    make(chan models.Message, 10000),
+		FeedEvents:   make(chan models.WebSocketEvent, 10000), // New
 		typingEvents: make(chan models.TypingEvent, 1000),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -116,14 +123,100 @@ func (h *Hub) run() {
 		case c := <-h.unregister:
 			h.removeClient(c)
 
-		case msg := <-h.Broadcast:
-			start := time.Now()
-			if err := h.messageCache.Store(h.ctx, msg); err != nil {
-				log.Printf("Failed to cache message: %v", err)
-			}
-			h.dispatchMessage(msg)
-			broadcastLatency.Observe(time.Since(start).Seconds())
+		case event := <-h.FeedEvents:
+			switch event.Type {
+			case "PostCreated":
+				var post models.Post
+				if err := json.Unmarshal(event.Data, &post); err != nil {
+					log.Printf("Error unmarshaling PostCreated data: %v", err)
+					continue
+				}
+				// For simplicity, broadcast new posts to all connected clients.
+				// In a real application, this would involve more sophisticated routing
+				// based on user's feed preferences, friendships, etc.
+				for clientID := range h.userClients { // Iterate through all users with active connections
+					for conn := range h.userClients[clientID] { // Iterate through connections for each user
+						select {
+						case conn.send <- event.Data: // Send the original event data
+						default:
+							close(conn.send)
+							delete(h.userClients[clientID], conn)
+							if len(h.userClients[clientID]) == 0 {
+								delete(h.userClients, clientID)
+							}
+						}
+					}
+				}
+				log.Printf("Broadcasted PostCreated event for post %s", post.ID.Hex())
 
+			case "CommentCreated":
+				var comment models.Comment
+				if err := json.Unmarshal(event.Data, &comment); err != nil {
+					log.Printf("Error unmarshaling CommentCreated data: %v", err)
+					continue
+				}
+				// Fetch the post to get the owner's ID
+				post, err := h.feedRepo.GetPostByID(context.Background(), comment.PostID)
+				if err != nil {
+					log.Printf("Error getting post %s for comment %s: %v", comment.PostID.Hex(), comment.ID.Hex(), err)
+					continue
+				}
+				h.sendToUser(post.UserID.Hex(), event.Data) // Send to post owner
+				log.Printf("Sent CommentCreated event for comment %s on post %s to post owner %s", comment.ID.Hex(), comment.PostID.Hex(), post.UserID.Hex())
+
+			case "ReplyCreated":
+				var reply models.Reply
+				if err := json.Unmarshal(event.Data, &reply); err != nil {
+					log.Printf("Error unmarshaling ReplyCreated data: %v", err)
+					continue
+				}
+				// Fetch the comment to get the owner's ID
+				comment, err := h.feedRepo.GetCommentByID(context.Background(), reply.CommentID)
+				if err != nil {
+					log.Printf("Error getting comment %s for reply %s: %v", reply.CommentID.Hex(), reply.ID.Hex(), err)
+					continue
+				}
+				h.sendToUser(comment.UserID.Hex(), event.Data) // Send to comment owner
+				log.Printf("Sent ReplyCreated event for reply %s on comment %s to comment owner %s", reply.ID.Hex(), reply.CommentID.Hex(), comment.UserID.Hex())
+
+			case "ReactionCreated":
+				var reaction models.Reaction
+				if err := json.Unmarshal(event.Data, &reaction); err != nil {
+					log.Printf("Error unmarshaling ReactionCreated data: %v", err)
+					continue
+				}
+				var targetOwnerID primitive.ObjectID
+				switch reaction.TargetType {
+				case "post":
+					post, err := h.feedRepo.GetPostByID(context.Background(), reaction.TargetID)
+					if err != nil {
+						log.Printf("Error getting post %s for reaction %s: %v", reaction.TargetID.Hex(), reaction.ID.Hex(), err)
+						continue
+					}
+					targetOwnerID = post.UserID
+				case "comment":
+					comment, err := h.feedRepo.GetCommentByID(context.Background(), reaction.TargetID)
+					if err != nil {
+						log.Printf("Error getting comment %s for reaction %s: %v", reaction.TargetID.Hex(), reaction.ID.Hex(), err)
+						continue
+					}
+					targetOwnerID = comment.UserID
+				case "reply":
+					reply, err := h.feedRepo.GetReplyByID(context.Background(), reaction.TargetID)
+					if err != nil {
+						log.Printf("Error getting reply %s for reaction %s: %v", reaction.TargetID.Hex(), reaction.ID.Hex(), err)
+						continue
+					}
+					targetOwnerID = reply.UserID
+				}
+				if !targetOwnerID.IsZero() {
+					h.sendToUser(targetOwnerID.Hex(), event.Data) // Send to target owner
+					log.Printf("Sent ReactionCreated event for reaction %s on target %s (type: %s) to owner %s", reaction.ID.Hex(), reaction.TargetID.Hex(), reaction.TargetType, targetOwnerID.Hex())
+				}
+
+			default:
+				log.Printf("Received unknown WebSocket event type: %s, data: %s", event.Type, string(event.Data))
+			}
 		case ev := <-h.typingEvents:
 			h.dispatchTypingEvent(ev)
 		}
@@ -171,6 +264,31 @@ func (h *Hub) removeClient(c *Client) {
 	}
 	wsConnections.Dec()
 	close(c.send)
+}
+
+func (h *Hub) removeUserClient(userID string, client *Client) {
+	if h.userClients[userID] != nil {
+		delete(h.userClients[userID], client)
+		if len(h.userClients[userID]) == 0 {
+			delete(h.userClients, userID)
+		}
+	}
+}
+
+// sendToUser sends a message to all active WebSocket connections for a specific userID.
+func (h *Hub) sendToUser(userID string, message []byte) {
+	if clients, ok := h.userClients[userID]; ok {
+		for client := range clients {
+			select {
+			case client.send <- message:
+			default:
+				close(client.send)
+				// The client is already removed from userClients by removeUserClient
+				// No need to delete from h.clients as it's not directly managed here
+				h.removeUserClient(client.userID, client)
+			}
+		}
+	}
 }
 
 func (h *Hub) dispatchMessage(msg models.Message) {

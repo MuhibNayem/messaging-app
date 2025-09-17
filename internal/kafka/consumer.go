@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"messaging-app/internal/models"
-
 	"messaging-app/internal/websocket"
 	"time"
 
@@ -53,28 +52,39 @@ func NewMessageConsumer(brokers []string, topic string, groupID string, hub *web
 }
 
 func (c *MessageConsumer) ConsumeMessages(ctx context.Context) {
-	defer c.reader.Close()
-
 	for {
-		start := time.Now()
-		msg, err := c.reader.ReadMessage(ctx)
+		m, err := c.reader.FetchMessage(ctx)
 		if err != nil {
-			log.Printf("Error reading message: %v", err)
+			log.Printf("Error fetching message: %v", err)
+			break
+		}
+
+		messagesConsumed.WithLabelValues(m.Topic).Inc()
+		start := time.Now()
+
+		var wsEvent models.WebSocketEvent
+		if err := json.Unmarshal(m.Value, &wsEvent); err != nil {
+			log.Printf("Error unmarshaling Kafka message to WebSocketEvent: %v, message: %s", err, string(m.Value))
+			// If unmarshaling fails, commit the message to avoid reprocessing
+			if err := c.reader.CommitMessages(ctx, m); err != nil {
+				log.Printf("Error committing message after unmarshaling failure: %v", err)
+			}
 			continue
 		}
 
-		var message models.Message
-		if err := json.Unmarshal(msg.Value, &message); err != nil {
-			log.Printf("Error unmarshaling message: %v", err)
-			continue
+		log.Printf("Received Kafka event of type: %s for topic %s at offset %d", wsEvent.Type, m.Topic, m.Offset)
+
+		// Send the WebSocketEvent to the Hub's FeedEvents channel
+		c.hub.FeedEvents <- wsEvent
+
+		if err := c.reader.CommitMessages(ctx, m); err != nil {
+			log.Printf("Error committing message: %v", err)
 		}
 
-		
+		consumeDuration.WithLabelValues(m.Topic).Observe(time.Since(start).Seconds())
+	}
 
-		// Broadcast to WebSocket clients
-		c.hub.Broadcast <- message
-
-		messagesConsumed.WithLabelValues(c.reader.Config().Topic).Inc()
-		consumeDuration.WithLabelValues(c.reader.Config().Topic).Observe(time.Since(start).Seconds())
+	if err := c.reader.Close(); err != nil {
+		log.Printf("Error closing Kafka reader: %v", err)
 	}
 }

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	kafkago "github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -122,9 +124,19 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 	}
 
 	// Publish to Kafka
-	if err := s.producer.ProduceMessage(ctx, *createdMsg); err != nil {
-		// Log error but don't fail the operation
-		log.Printf("Failed to produce message to Kafka: %v", err)
+	msgBytes, err := json.Marshal(createdMsg)
+	if err != nil {
+		log.Printf("Failed to marshal group message for Kafka: %v", err)
+	} else {
+		kafkaMsg := kafkago.Message{
+			Key:   []byte(createdMsg.GroupID.Hex()), 
+			Value: msgBytes,
+			Time:  time.Now(),
+		}
+		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
+			// Log error but don't fail the operation
+			log.Printf("Failed to produce message to Kafka: %v", err)
+		}
 	}
 
 	return createdMsg, nil
@@ -169,9 +181,18 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 	}
 
 	// Publish to Kafka
-	if err := s.producer.ProduceMessage(ctx, *createdMsg); err != nil {
-		// Log error but don't fail the operation
-		log.Printf("Failed to produce message to Kafka: %v", err)
+	msgBytes, err := json.Marshal(createdMsg)
+	if err != nil {
+		log.Printf("Failed to marshal direct message for Kafka: %v", err)
+	} else {
+		kafkaMsg := kafkago.Message{
+			Key:   []byte(createdMsg.ReceiverID.Hex()), 
+			Value: msgBytes,
+			Time:  time.Now(),
+		}
+		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
+			log.Printf("Failed to produce message to Kafka: %v", err)
+		}
 	}
 
 	// Update last message cache
@@ -294,15 +315,26 @@ func (s *MessageService) DeleteMessage(
     }
 
     // Publish deletion event to Kafka
-    if err := s.producer.ProduceMessage(ctx, models.Message{
+    deletionEventMsg := models.Message{
         ID:          deletedMsg.ID,
         SenderID:    deletedMsg.SenderID,
         ReceiverID:  deletedMsg.ReceiverID,
         GroupID:     deletedMsg.GroupID,
         ContentType: models.ContentTypeDeleted,
         DeletedAt:   deletedMsg.DeletedAt,
-    }); err != nil {
-        log.Printf("Failed to publish deletion event: %v", err)
+    }
+    deletionEventBytes, err := json.Marshal(deletionEventMsg)
+    if err != nil {
+        log.Printf("Failed to marshal deletion event for Kafka: %v", err)
+    } else {
+		kafkaMsg := kafkago.Message{
+			Key:   []byte(deletedMsg.ID.Hex()), 
+			Value: deletionEventBytes,
+			Time:  time.Now(),
+		}
+        if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
+            log.Printf("Failed to publish deletion event: %v", err)
+        }
     }
 
     if !deletedMsg.GroupID.IsZero() {

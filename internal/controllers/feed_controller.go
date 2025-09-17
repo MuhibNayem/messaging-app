@@ -66,13 +66,20 @@ func (c *FeedController) CreatePost(ctx *gin.Context) {
 // @Failure 404 {object} gin.H
 // @Router /api/posts/{id} [get]
 func (c *FeedController) GetPostByID(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
 	postID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid post ID"})
 		return
 	}
 
-	post, err := c.feedService.GetPostByID(ctx.Request.Context(), postID)
+	post, err := c.feedService.GetPostByID(ctx.Request.Context(), objUserID, postID)
 	if err != nil {
 		ctx.JSON(http.StatusNotFound, gin.H{"error": "post not found"})
 		return
@@ -166,6 +173,8 @@ func (c *FeedController) DeletePost(ctx *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(20)
+// @Param sortBy query string false "Sort by field (e.g., created_at, reaction_count, comment_count)" default(created_at)
+// @Param sortOrder query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} models.FeedResponse
 // @Failure 400 {object} gin.H
 // @Failure 401 {object} gin.H
@@ -181,6 +190,8 @@ func (c *FeedController) ListPosts(ctx *gin.Context) {
 
 	page, _ := strconv.ParseInt(ctx.DefaultQuery("page", "1"), 10, 64)
 	limit, _ := strconv.ParseInt(ctx.DefaultQuery("limit", "20"), 10, 64)
+	sortBy := ctx.DefaultQuery("sortBy", "created_at")
+	sortOrder := ctx.DefaultQuery("sortOrder", "desc")
 
 	if page < 1 {
 		page = 1
@@ -189,7 +200,53 @@ func (c *FeedController) ListPosts(ctx *gin.Context) {
 		limit = 20
 	}
 
-	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, page, limit)
+	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, page, limit, sortBy, sortOrder)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, response)
+}
+
+// GetPostsByHashtag godoc
+// @Summary Get posts by hashtag (paginated)
+// @Security BearerAuth
+// @Tags feed
+// @Produce json
+// @Param hashtag path string true "Hashtag to search for"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(20)
+// @Success 200 {object} models.FeedResponse
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/hashtags/{hashtag}/posts [get]
+func (c *FeedController) GetPostsByHashtag(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	hashtag := ctx.Param("hashtag")
+	if hashtag == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "hashtag cannot be empty"})
+		return
+	}
+
+	page, _ := strconv.ParseInt(ctx.DefaultQuery("page", "1"), 10, 64)
+	limit, _ := strconv.ParseInt(ctx.DefaultQuery("limit", "20"), 10, 64)
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	response, err := c.feedService.GetPostsByHashtag(ctx.Request.Context(), objUserID, hashtag, page, limit)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

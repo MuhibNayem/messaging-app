@@ -382,6 +382,39 @@ func (r *FriendshipRepository) GetBlockedUsers(ctx context.Context, userID primi
     return blockedUsers, nil
 }
 
+// GetFriends returns a list of users who are friends with the given user
+func (r *FriendshipRepository) GetFriends(ctx context.Context, userID primitive.ObjectID) ([]models.User, error) {
+	cursor, err := r.db.Collection("friendships").Find(ctx, bson.M{
+		"status": models.FriendshipStatusAccepted,
+		"$or": []bson.M{
+			{"requester_id": userID},
+			{"receiver_id": userID},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var friendships []models.Friendship
+	if err := cursor.All(ctx, &friendships); err != nil {
+		return nil, err
+	}
+
+	var friendUsers []models.User
+	for _, f := range friendships {
+		friendID := f.RequesterID
+		if f.RequesterID == userID {
+			friendID = f.ReceiverID
+		}
+		// In a real app, you'd fetch the full user object here from the user collection
+		// For now, we'll just return a dummy user with the ID
+		friendUsers = append(friendUsers, models.User{ID: friendID})
+	}
+
+	return friendUsers, nil
+}
+
 // Custom errors
 var (
 	ErrCannotFriendSelf      = errors.New("cannot send friend request to yourself")

@@ -347,33 +347,6 @@ func (r *FeedRepository) CreateReaction(ctx context.Context, reaction *models.Re
 	}
 	reaction.ID = result.InsertedID.(primitive.ObjectID)
 
-	// Update the target (post, comment, or reply) with the new reaction
-	switch reaction.TargetType {
-	case "post":
-		_, err = r.db.Collection("posts").UpdateOne(
-			ctx,
-			bson.M{"_id": reaction.TargetID},
-			bson.M{"$addToSet": bson.M{"likes": reaction.UserID}},
-		)
-	case "comment":
-		_, err = r.db.Collection("comments").UpdateOne(
-			ctx,
-			bson.M{"_id": reaction.TargetID},
-			bson.M{"$addToSet": bson.M{"likes": reaction.UserID}},
-		)
-	case "reply":
-		_, err = r.db.Collection("replies").UpdateOne(
-			ctx,
-			bson.M{"_id": reaction.TargetID},
-			bson.M{"$addToSet": bson.M{"likes": reaction.UserID}},
-		)
-	}
-
-	if err != nil {
-		// Consider rolling back reaction creation or logging a warning
-		return nil, err
-	}
-
 	return reaction, nil
 }
 
@@ -386,29 +359,7 @@ func (r *FeedRepository) DeleteReaction(ctx context.Context, reactionID, userID,
 		return err
 	}
 
-	// Remove reaction from the target (post, comment, or reply)
-	switch targetType {
-	case "post":
-		_, err = r.db.Collection("posts").UpdateOne(
-			ctx,
-			bson.M{"_id": targetID},
-			bson.M{"$pull": bson.M{"likes": userID}},
-		)
-	case "comment":
-		_, err = r.db.Collection("comments").UpdateOne(
-			ctx,
-			bson.M{"_id": targetID},
-			bson.M{"$pull": bson.M{"likes": userID}},
-		)
-	case "reply":
-		_, err = r.db.Collection("replies").UpdateOne(
-			ctx,
-			bson.M{"_id": targetID},
-			bson.M{"$pull": bson.M{"likes": userID}},
-		)
-	}
-
-	return err
+	return nil
 }
 
 func (r *FeedRepository) ListComments(ctx context.Context, filter bson.M, opts *options.FindOptions) ([]models.Comment, error) {
@@ -459,4 +410,37 @@ func (r *FeedRepository) ListReactions(ctx context.Context, filter bson.M, opts 
 		return nil, err
 	}
 	return reactions, nil
+}
+
+func (r *FeedRepository) CountReactionsByType(ctx context.Context, targetID primitive.ObjectID, targetType string) (map[models.ReactionType]int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	pipeline := []bson.M{
+		{"$match": bson.M{"target_id": targetID, "target_type": targetType}},
+		{"$group": bson.M{
+			"_id":   "$type",
+			"count": bson.M{"$sum": 1},
+		}},
+	}
+
+	cursor, err := r.db.Collection("reactions").Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	reactionCounts := make(map[models.ReactionType]int64)
+	for cursor.Next(ctx) {
+		var result struct {
+			ID    models.ReactionType `bson:"_id"`
+			Count int64               `bson:"count"`
+		}
+		if err := cursor.Decode(&result); err != nil {
+			return nil, err
+		}
+		reactionCounts[result.ID] = result.Count
+	}
+
+	return reactionCounts, nil
 }

@@ -13,12 +13,12 @@ type Post struct {
 	Content     string               `bson:"content" json:"content"`
 	MediaType   string               `bson:"media_type,omitempty" json:"media_type,omitempty"` // e.g., "image", "video", "text"
 	MediaURL    string               `bson:"media_url,omitempty" json:"media_url,omitempty"`
-	Privacy     PrivacySettingType   `bson:"privacy" json:"privacy"` // PUBLIC, FRIENDS, ONLY_ME, CUSTOM
+    Privacy     PrivacySettingType   `bson:"privacy" json:"privacy"` // PUBLIC, FRIENDS, ONLY_ME, CUSTOM
 	CustomAudience []primitive.ObjectID `bson:"custom_audience,omitempty" json:"custom_audience,omitempty"` // For CUSTOM privacy
-	Likes       []primitive.ObjectID `bson:"likes" json:"likes"` // User IDs who liked the post
 	Comments    []Comment            `bson:"comments" json:"comments"`
-	Mentions    []primitive.ObjectID `bson:"mentions,omitempty" json:"mentions,omitempty"` // User IDs mentioned in the post
-	Hashtags    []string             `bson:"hashtags,omitempty" json:"hashtags,omitempty"`
+	Mentions  []primitive.ObjectID `bson:"mentions,omitempty" json:"mentions,omitempty"`
+	ReactionCounts map[ReactionType]int64 `json:"reaction_counts,omitempty"`
+	Hashtags    []string             `bson:"hashtags,omitempty,sparse" json:"hashtags,omitempty"`	
 	CreatedAt   time.Time            `bson:"created_at" json:"created_at"`
 	UpdatedAt   time.Time            `bson:"updated_at" json:"updated_at"`
 }
@@ -29,8 +29,8 @@ type Comment struct {
 	PostID    primitive.ObjectID   `bson:"post_id" json:"post_id"`
 	UserID    primitive.ObjectID   `bson:"user_id" json:"user_id"`
 	Content   string               `bson:"content" json:"content"`
-	Likes     []primitive.ObjectID `bson:"likes" json:"likes"` // User IDs who liked the comment
 	Replies   []Reply              `bson:"replies" json:"replies"`
+	ReactionCounts map[ReactionType]int64 `json:"reaction_counts,omitempty"`
 	Mentions  []primitive.ObjectID `bson:"mentions,omitempty" json:"mentions,omitempty"` // User IDs mentioned in the comment
 	CreatedAt time.Time            `bson:"created_at" json:"created_at"`
 	UpdatedAt time.Time            `bson:"updated_at" json:"updated_at"`
@@ -40,10 +40,10 @@ type Comment struct {
 type Reply struct {
 	ID        primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
 	CommentID primitive.ObjectID   `bson:"comment_id" json:"comment_id"`
+	Mentions  []primitive.ObjectID `bson:"mentions,omitempty" json:"mentions,omitempty"`
 	UserID    primitive.ObjectID   `bson:"user_id" json:"user_id"`
 	Content   string               `bson:"content" json:"content"`
-	Likes     []primitive.ObjectID `bson:"likes" json:"likes"` // User IDs who liked the reply
-	Mentions  []primitive.ObjectID `bson:"mentions,omitempty" json:"mentions,omitempty"` // User IDs mentioned in the reply
+	ReactionCounts map[ReactionType]int64 `json:"reaction_counts,omitempty"` // User IDs mentioned in the reply
 	CreatedAt time.Time            `bson:"created_at" json:"created_at"`
 	UpdatedAt time.Time            `bson:"updated_at" json:"updated_at"`
 }
