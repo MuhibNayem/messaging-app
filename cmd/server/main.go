@@ -13,7 +13,7 @@ import (
 	"messaging-app/config"
 	"messaging-app/internal/controllers"
 	"messaging-app/internal/kafka"
-	"messaging-app/internal/notifications"
+	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/redis"
 	"messaging-app/internal/repositories"
 	"messaging-app/internal/services"
@@ -144,10 +144,20 @@ func main() {
 	// Initialize WebSocket Hub
 	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo)
 
-	// Initialize Kafka Consumer
+	// Initialize Kafka Consumers
 	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
 	go func() {
 		kafkaConsumer.ConsumeMessages(context.Background())
+	}()
+
+	notificationConsumer := kafka.NewNotificationConsumer(cfg.KafkaBrokers, "notifications_events", "notification-group", hub)
+	go func() {
+		notificationConsumer.Start(context.Background())
+	}()
+	defer func() {
+		if err := notificationConsumer.Close(); err != nil {
+			log.Printf("Error closing Notification Kafka consumer: %v", err)
+		}
 	}()
 
 	// Initialize Services
@@ -156,7 +166,7 @@ func main() {
 	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient())
 	groupService := services.NewGroupService(groupRepo, userRepo)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
-	notificationService := notifications.NewNotificationService(notificationRepo, userRepo)
+	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
 	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
 	searchService := services.NewSearchService(userRepo, feedRepo) // Initialize SearchService
@@ -169,7 +179,8 @@ func main() {
 	messageController := controllers.NewMessageController(messageService)
 	feedController := controllers.NewFeedController(feedService, userService, privacyService)
 	privacyController := controllers.NewPrivacyController(privacyService, userService)
-	searchController := controllers.NewSearchController(searchService) // Initialize SearchController
+	searchController := controllers.NewSearchController(searchService)                   // Initialize SearchController
+	notificationController := controllers.NewNotificationController(notificationService) // Initialize NotificationController
 
 	// Initialize Gin Router with metrics middleware
 	router := gin.Default()
@@ -246,6 +257,7 @@ func main() {
 
 	// Protected routes
 	authMiddleware := middleware.AuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
+	wsMiddleware := middleware.WSJwtAuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
 	api := router.Group("/api", authMiddleware)
 
 	// User Routes
@@ -365,8 +377,16 @@ func main() {
 		searchRoutes.GET("", searchController.Search)
 	}
 
+	// Notification Routes
+	notificationRoutes := api.Group("/notifications")
+	{
+		notificationRoutes.GET("", notificationController.ListNotifications)
+		notificationRoutes.PUT("/:id/read", notificationController.MarkNotificationAsRead)
+		notificationRoutes.GET("/unread", notificationController.GetUnreadNotificationCount)
+	}
+
 	// WebSocket endpoint
-	webSocketRouter.GET("/ws", func(c *gin.Context) {
+	webSocketRouter.GET("/ws", wsMiddleware, func(c *gin.Context) {
 		// Track WebSocket connection
 		config.IncWebsocketConnections(metrics)
 		defer config.DecWebsocketConnections(metrics)
@@ -391,32 +411,32 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		fmt.Printf("HTTP server starting on port %s", cfg.ServerPort)
+		log.Printf("HTTP server starting on port %s", cfg.ServerPort)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server failed: %v", err)
 		}
 	}()
 
 	go func() {
-		fmt.Printf("WebSocket server listening on %s", wsServer.Addr)
+		log.Printf("WebSocket server listening on %s", wsServer.Addr)
 		if err := wsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("WebSocket server error: %v", err)
 		}
 	}()
 
 	<-quit
-	fmt.Println("Shutting down server...")
+	log.Println("Shutting down server...")
 
 	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		fmt.Printf("HTTP server shutdown error: %v", err)
+		log.Printf("HTTP server shutdown error: %v", err)
 	}
 
 	if err := wsServer.Shutdown(ctx); err != nil {
-		fmt.Printf("WebSocket server shutdown error: %v", err)
+		log.Printf("WebSocket server shutdown error: %v", err)
 	}
 
-	fmt.Println("Server exited properly")
+	log.Println("Server exited properly")
 }

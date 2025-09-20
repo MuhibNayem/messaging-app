@@ -27,18 +27,20 @@ type Notification struct {
 	TargetID    primitive.ObjectID `bson:"target_id" json:"target_id"`     // ID of the related entity (post, comment, reply, etc.)
 	TargetType  string             `bson:"target_type" json:"target_type"` // Type of the related entity ("post", "comment", "reply", "friendship")
 	Content     string             `bson:"content" json:"content"`         // A short message for the notification
+	Data        map[string]interface{} `bson:"data,omitempty" json:"data,omitempty"` // Structured data for the notification
 	Read        bool               `bson:"read" json:"read"`
 	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
 }
 
 // DTOs for Notifications
 type CreateNotificationRequest struct {
-	RecipientID primitive.ObjectID `json:"recipient_id" binding:"required"`
-	SenderID    primitive.ObjectID `json:"sender_id" binding:"required"`
-	Type        NotificationType   `json:"type" binding:"required"`
-	TargetID    primitive.ObjectID `json:"target_id" binding:"required"`
-	TargetType  string             `json:"target_type" binding:"required"`
-	Content     string             `json:"content" binding:"required"`
+	RecipientID primitive.ObjectID     `json:"recipient_id" binding:"required"`
+	SenderID    primitive.ObjectID     `json:"sender_id" binding:"required"`
+	Type        NotificationType       `json:"type" binding:"required"`
+	TargetID    primitive.ObjectID     `json:"target_id" binding:"required"`
+	TargetType  string                 `json:"target_type" binding:"required"`
+	Content     string                 `json:"content" binding:"required"`
+	Data        map[string]interface{} `json:"data,omitempty"`
 }
 
 type UpdateNotificationRequest struct {

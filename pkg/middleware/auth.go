@@ -56,6 +56,8 @@ func WSJwtAuthMiddleware(jwtSecret string,redisClient *redis.ClusterClient) gin.
     }
 }
 
+
+
 // ValidateToken validates a JWT token and returns the user ID if valid
 // This can be used by both HTTP middleware and WebSocket handlers
 func ValidateToken(tokenString, jwtSecret string, redisClient *redis.ClusterClient) (string, error) {

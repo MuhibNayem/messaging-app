@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"messaging-app/internal/kafka"
 	"messaging-app/internal/models"
-	"messaging-app/internal/notifications"
+	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/repositories"
 	"messaging-app/pkg/utils"
 	"strings"
@@ -21,11 +21,11 @@ import (
 )
 
 type FeedService struct {
-	feedRepo        *repositories.FeedRepository
-	userRepo        *repositories.UserRepository
-	friendshipRepo  *repositories.FriendshipRepository
-	privacyRepo     repositories.PrivacyRepository
-	kafkaProducer   *kafka.MessageProducer
+	feedRepo            *repositories.FeedRepository
+	userRepo            *repositories.UserRepository
+	friendshipRepo      *repositories.FriendshipRepository
+	privacyRepo         repositories.PrivacyRepository
+	kafkaProducer       *kafka.MessageProducer
 	notificationService *notifications.NotificationService
 }
 
@@ -50,14 +50,14 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 	}
 
 	post := &models.Post{
-		UserID:      userID,
-		Content:     req.Content,
-		MediaType:   req.MediaType,
-		MediaURL:    req.MediaURL,
-		Privacy:     req.Privacy,
+		UserID:         userID,
+		Content:        req.Content,
+		MediaType:      req.MediaType,
+		MediaURL:       req.MediaURL,
+		Privacy:        req.Privacy,
 		CustomAudience: req.CustomAudience,
-		Mentions:    mentionedUserIDs,
-		Hashtags:    req.Hashtags,
+		Mentions:       mentionedUserIDs,
+		Hashtags:       req.Hashtags,
 	}
 
 	createdPost, err := s.feedRepo.CreatePost(ctx, post)
@@ -249,7 +249,7 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 		// If no specific user is requested, apply privacy filters
 		filter["$or"] = []bson.M{
 			{"privacy": models.PrivacySettingPublic},
-			{"user_id": viewerID, "privacy": models.PrivacySettingOnlyMe},
+			{"user_id": viewerID}, // Author can always see their own posts, regardless of privacy
 		}
 
 		// Get viewer's friends for FRIENDS privacy
@@ -697,15 +697,28 @@ func (s *FeedService) CreateReaction(ctx context.Context, userID primitive.Objec
 	}
 
 	if targetOwnerID != userID { // Don't notify if user reacts to their own content
+		// Fetch sender's user details
+		senderUser, err := s.userRepo.FindUserByID(ctx, userID)
+		if err != nil {
+			fmt.Printf("Failed to find sender user %s for reaction notification: %v\n", userID.Hex(), err)
+			return createdReaction, nil // Continue without notification if sender not found
+		}
+
 		notificationReq := &models.CreateNotificationRequest{
 			RecipientID: targetOwnerID,
 			SenderID:    userID,
 			Type:        models.NotificationTypeLike, // Using LIKE for all reactions for now
 			TargetID:    createdReaction.TargetID,
 			TargetType:  createdReaction.TargetType,
-			Content:     fmt.Sprintf("%s reacted to your %s with %s.", userID, createdReaction.TargetType, createdReaction.Type),
+			Content:     fmt.Sprintf("%s reacted to your %s with %s.", senderUser.Username, createdReaction.TargetType, createdReaction.Type),
+			Data: map[string]interface{}{
+				"sender_username": senderUser.Username,
+				"sender_avatar":   senderUser.Avatar,
+				"reaction_type":   createdReaction.Type,
+				"target_type":     createdReaction.TargetType,
+			},
 		}
-		_, err := s.notificationService.CreateNotification(ctx, notificationReq)
+		_, err = s.notificationService.CreateNotification(ctx, notificationReq)
 		if err != nil {
 			fmt.Printf("Failed to create reaction notification for user %s: %v\n", targetOwnerID.Hex(), err)
 		}
@@ -742,8 +755,46 @@ func (s *FeedService) CreateReaction(ctx context.Context, userID primitive.Objec
 }
 
 func (s *FeedService) DeleteReaction(ctx context.Context, userID primitive.ObjectID, reactionID, targetID primitive.ObjectID, targetType string) error {
-	// TODO: Verify if the reaction belongs to the user
-	return s.feedRepo.DeleteReaction(ctx, reactionID, userID, targetID, targetType)
+	// Verify if the reaction belongs to the user
+	reaction, err := s.feedRepo.GetReactionByID(ctx, reactionID) // Assuming GetReactionByID exists or needs to be created
+	if err != nil {
+		return errors.New("reaction not found")
+	}
+	if reaction.UserID != userID {
+		return errors.New("unauthorized to delete this reaction")
+	}
+
+	err = s.feedRepo.DeleteReaction(ctx, reactionID, userID, targetID, targetType)
+	if err != nil {
+		return err
+	}
+
+	// Publish ReactionDeleted event to Kafka
+	reactionDataBytes, err := json.Marshal(reaction) // Marshal the deleted reaction
+	if err != nil {
+		fmt.Printf("Failed to marshal deletedReaction for WebSocketEvent: %v\n", err)
+	} else {
+		wsEvent := models.WebSocketEvent{
+			Type: "ReactionDeleted", // New event type
+			Data: reactionDataBytes,
+		}
+		eventBytes, err := json.Marshal(wsEvent)
+		if err != nil {
+			fmt.Printf("Failed to marshal WebSocketEvent for ReactionDeleted: %v\n", err)
+		} else {
+			kafkaMsg := kafkago.Message{
+				Key:   []byte(reaction.TargetID.Hex()), // Key for reaction events (using target ID)
+				Value: eventBytes,
+				Time:  time.Now(),
+			}
+			err = s.kafkaProducer.ProduceMessage(ctx, kafkaMsg)
+			if err != nil {
+				fmt.Printf("Failed to produce ReactionDeleted WebSocketEvent to Kafka: %v\n", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *FeedService) GetCommentsByPostID(ctx context.Context, postID primitive.ObjectID, page, limit int64) ([]models.Comment, error) {

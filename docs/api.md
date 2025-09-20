@@ -1832,3 +1832,87 @@ Removes a member from an existing custom privacy list. Only the list owner can m
         "updated_at": "2023-10-27T10:20:00Z"
     }
     ```
+
+## 8. Notification Endpoints (`/api/notifications`)
+
+### 8.1 List Notifications
+
+Retrieves a paginated list of notifications for the authenticated user.
+
+*   **URL:** `/api/notifications`
+*   **Method:** `GET`
+*   **Authentication:** Bearer Token
+*   **Query Parameters:**
+    *   `page` (integer, optional): The page number to retrieve (default: 1).
+    *   `limit` (integer, optional): The number of notifications per page (default: 10).
+    *   `read` (boolean, optional): Filter by read status (true for read, false for unread).
+*   **Response (200 OK):**
+    ```json
+    {
+        "notifications": [
+            {
+                "id": "654321098765432109876559",
+                "recipient_id": "654321098765432109876543",
+                "sender_id": "654321098765432109876544",
+                "type": "LIKE",
+                "target_id": "654321098765432109876552",
+                "target_type": "post",
+                "content": "anotheruser liked your post.",
+                "data": {},
+                "read": false,
+                "created_at": "2023-10-27T10:00:00Z"
+            }
+        ],
+        "total": 1,
+        "page": 1,
+        "limit": 10
+    }
+    ```
+
+### 8.2 Mark Notification as Read
+
+Marks a specific notification as read for the authenticated user.
+
+*   **URL:** `/api/notifications/:id/read`
+*   **Method:** `PUT`
+*   **Authentication:** Bearer Token
+*   **Path Parameters:**
+    *   `id` (string, required): The ID of the notification to mark as read.
+*   **Response (200 OK):**
+    ```json
+    {
+        "success": true
+    }
+    ```
+*   **Error Response (404 Not Found):**
+    ```json
+    {
+        "error": "notification not found"
+    }
+    ```
+*   **Error Response (403 Forbidden):**
+    ```json
+    {
+        "error": "unauthorized to mark this notification as read"
+    }
+    ```
+
+### 8.3 Get Unread Notification Count
+
+Retrieves the total count of unread notifications for the authenticated user.
+
+*   **URL:** `/api/notifications/unread`
+*   **Method:** `GET`
+*   **Authentication:** Bearer Token
+*   **Response (200 OK):**
+    ```json
+    {
+        "count": 5
+    }
+    ```
+*   **Error Response (500 Internal Server Error):**
+    ```json
+    {
+        "error": "failed to get unread count"
+    }
+    ```

@@ -14,7 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -77,6 +76,7 @@ type Hub struct {
 	unregister   chan *Client
 	Broadcast    chan models.Message
 	FeedEvents   chan models.WebSocketEvent // New
+	NotificationEvents chan models.Notification // New for notifications
 	typingEvents chan models.TypingEvent
 
 	ctx    context.Context
@@ -100,6 +100,7 @@ func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepos
 		unregister:   make(chan *Client),
 		Broadcast:    make(chan models.Message, 10000),
 		FeedEvents:   make(chan models.WebSocketEvent, 10000), // New
+		NotificationEvents: make(chan models.Notification, 10000), // New for notifications
 		typingEvents: make(chan models.TypingEvent, 1000),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -185,38 +186,41 @@ func (h *Hub) run() {
 					log.Printf("Error unmarshaling ReactionCreated data: %v", err)
 					continue
 				}
-				var targetOwnerID primitive.ObjectID
-				switch reaction.TargetType {
-				case "post":
-					post, err := h.feedRepo.GetPostByID(context.Background(), reaction.TargetID)
-					if err != nil {
-						log.Printf("Error getting post %s for reaction %s: %v", reaction.TargetID.Hex(), reaction.ID.Hex(), err)
-						continue
-					}
-					targetOwnerID = post.UserID
-				case "comment":
-					comment, err := h.feedRepo.GetCommentByID(context.Background(), reaction.TargetID)
-					if err != nil {
-						log.Printf("Error getting comment %s for reaction %s: %v", reaction.TargetID.Hex(), reaction.ID.Hex(), err)
-						continue
-					}
-					targetOwnerID = comment.UserID
-				case "reply":
-					reply, err := h.feedRepo.GetReplyByID(context.Background(), reaction.TargetID)
-					if err != nil {
-						log.Printf("Error getting reply %s for reaction %s: %v", reaction.TargetID.Hex(), reaction.ID.Hex(), err)
-						continue
-					}
-					targetOwnerID = reply.UserID
+				// Broadcast to all users for real-time update of reaction counts
+				h.broadcastToAllUsers(event)
+				log.Printf("Broadcasted ReactionCreated event for reaction %s on target %s (type: %s)", reaction.ID.Hex(), reaction.TargetID.Hex(), reaction.TargetType)
+
+			case "ReactionDeleted": // Handle ReactionDeleted event
+				var reaction models.Reaction
+				if err := json.Unmarshal(event.Data, &reaction); err != nil {
+					log.Printf("Error unmarshaling ReactionDeleted data: %v", err)
+					continue
 				}
-				if !targetOwnerID.IsZero() {
-					h.sendToUser(targetOwnerID.Hex(), event.Data) // Send to target owner
-					log.Printf("Sent ReactionCreated event for reaction %s on target %s (type: %s) to owner %s", reaction.ID.Hex(), reaction.TargetID.Hex(), reaction.TargetType, targetOwnerID.Hex())
-				}
+				// Broadcast to all users for real-time update of reaction counts
+				h.broadcastToAllUsers(event)
+				log.Printf("Broadcasted ReactionDeleted event for reaction %s on target %s (type: %s)", reaction.ID.Hex(), reaction.TargetID.Hex(), reaction.TargetType)
 
 			default:
 				log.Printf("Received unknown WebSocket event type: %s, data: %s", event.Type, string(event.Data))
 			}
+		case notification := <-h.NotificationEvents:
+			notificationJSON, err := json.Marshal(notification)
+			if err != nil {
+				log.Printf("Error marshaling notification for WebSocket: %v", err)
+				continue
+			}
+			wsEvent := models.WebSocketEvent{
+				Type: "NOTIFICATION_CREATED",
+				Data: notificationJSON,
+			}
+			wsEventJSON, err := json.Marshal(wsEvent)
+			if err != nil {
+				log.Printf("Error marshaling WebSocketEvent for notification: %v", err)
+				continue
+			}
+			h.sendToUser(notification.RecipientID.Hex(), wsEventJSON)
+			log.Printf("Sent NOTIFICATION_CREATED event to user %s for notification %s", notification.RecipientID.Hex(), notification.ID.Hex())
+
 		case ev := <-h.typingEvents:
 			h.dispatchTypingEvent(ev)
 		}
@@ -285,6 +289,31 @@ func (h *Hub) sendToUser(userID string, message []byte) {
 				close(client.send)
 				// The client is already removed from userClients by removeUserClient
 				// No need to delete from h.clients as it's not directly managed here
+				h.removeUserClient(client.userID, client)
+			}
+		}
+	}
+}
+
+// broadcastToAllUsers sends a message to all currently connected WebSocket clients.
+func (h *Hub) broadcastToAllUsers(event models.WebSocketEvent) {
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("Error marshaling WebSocketEvent for broadcast: %v", err)
+		return
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for userID := range h.userClients {
+		for client := range h.userClients[userID] {
+			select {
+			case client.send <- eventBytes:
+				// Message sent successfully
+			default:
+				// Client's send channel is full, remove client
+				close(client.send)
 				h.removeUserClient(client.userID, client)
 			}
 		}
@@ -361,76 +390,75 @@ func (h *Hub) getClientsByGroup(gid string) []*Client {
 // sendCachedMessages pushes any pending direct and group messages
 // to the newly registered client.
 func (h *Hub) sendCachedMessages(client *Client) {
-    ctx := h.ctx
+	ctx := h.ctx
 
-    directIDs, err := h.messageCache.GetPendingDirectMessages(ctx, client.userID)
-    if err != nil {
-        log.Printf("Error fetching direct messages: %v", err)
-    } else {
-        h.sendPendingMessages(client, directIDs, "direct")
-    }
+	directIDs, err := h.messageCache.GetPendingDirectMessages(ctx, client.userID)
+	if err != nil {
+		log.Printf("Error fetching direct messages: %v", err)
+	} else {
+		h.sendPendingMessages(client, directIDs, "direct")
+	}
 
-    for groupID := range client.listeners {
-        if groupID == client.userID {
-            continue
-        }
-        groupIDs, err := h.messageCache.GetPendingGroupMessages(ctx, groupID)
-        if err != nil {
-            log.Printf("Error fetching group messages: %v", err)
-            continue
-        }
-        h.sendPendingMessages(client, groupIDs, "group")
-    }
+	for groupID := range client.listeners {
+		if groupID == client.userID {
+			continue
+		}
+		groupIDs, err := h.messageCache.GetPendingGroupMessages(ctx, groupID)
+		if err != nil {
+			log.Printf("Error fetching group messages: %v", err)
+			continue
+		}
+		h.sendPendingMessages(client, groupIDs, "group")
+	}
 }
 
 // sendPendingMessages delivers stored messages and cleans up the pending sets.
 func (h *Hub) sendPendingMessages(client *Client, msgIDs []string, msgType string) {
-    ctx := h.ctx
+	ctx := h.ctx
 
-    for _, id := range msgIDs {
-        msg, err := h.messageCache.Get(ctx, id)
-        if err != nil {
-            log.Printf("Error retrieving message %s: %v", id, err)
-            continue
-        }
+	for _, id := range msgIDs {
+		msg, err := h.messageCache.Get(ctx, id)
+		if err != nil {
+			log.Printf("Error retrieving message %s: %v", id, err)
+			continue
+		}
 
-        // 2) basic delivery check
-        if msgType == "direct" {
-            if msg.ReceiverID.Hex() != client.userID {
-                continue
-            }
-        } else { 
-            if !client.listeners[msg.GroupID.Hex()] {
-                continue
-            }
-        }
+		// 2) basic delivery check
+		if msgType == "direct" {
+			if msg.ReceiverID.Hex() != client.userID {
+				continue
+			}
+		} else {
+			if !client.listeners[msg.GroupID.Hex()] {
+				continue
+			}
+		}
 
-        // 3) marshal & send
-        data, err := json.Marshal(msg)
-        if err != nil {
-            log.Printf("Error marshaling message %s: %v", id, err)
-            continue
-        }
+		// 3) marshal & send
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("Error marshaling message %s: %v", id, err)
+			continue
+		}
 
-        select {
-        case client.send <- data:
-            if msgType == "direct" {
-                if err := h.messageCache.RemovePendingDirectMessage(ctx, client.userID, id); err == nil {
-                    pendingDirectMessages.Dec()
-                }
-            } else {
-                if err := h.messageCache.RemovePendingGroupMessage(ctx, msg.GroupID.Hex(), id); err == nil {
-                    pendingGroupMessages.Dec()
-                }
-            }
-            wsMessagesSent.WithLabelValues(msg.ContentType).Inc()
+		select {
+		case client.send <- data:
+			if msgType == "direct" {
+				if err := h.messageCache.RemovePendingDirectMessage(ctx, client.userID, id); err == nil {
+					pendingDirectMessages.Dec()
+				}
+			} else {
+				if err := h.messageCache.RemovePendingGroupMessage(ctx, msg.GroupID.Hex(), id); err == nil {
+					pendingGroupMessages.Dec()
+				}
+			}
+			wsMessagesSent.WithLabelValues(msg.ContentType).Inc()
 
-        default:
-            log.Printf("Client channel full, skipping cached message")
-        }
-    }
+		default:
+			log.Printf("Client channel full, skipping cached message")
+		}
+	}
 }
-
 
 func (h *Hub) dispatchTypingEvent(ev models.TypingEvent) {
 	clients := h.getClientsByGroup(ev.ConversationID)
@@ -509,7 +537,6 @@ func (h *Hub) getGroupMembers(groupID string) ([]string, error) {
 }
 
 // MessageCache handles storing and retrieving messages and pending queues
-
 
 type MessageCache struct {
 	redis *redis.ClusterClient
@@ -681,9 +708,13 @@ func (c *Client) writePump() {
 				return
 			}
 			w, err := c.conn.NextWriter(websocket.TextMessage)
-			if err != nil { return }
+			if err != nil {
+				return
+			}
 			w.Write(msg)
-			if err := w.Close(); err != nil { return }
+			if err := w.Close(); err != nil {
+				return
+			}
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {

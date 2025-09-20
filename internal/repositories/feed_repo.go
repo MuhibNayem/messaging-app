@@ -350,6 +350,19 @@ func (r *FeedRepository) CreateReaction(ctx context.Context, reaction *models.Re
 	return reaction, nil
 }
 
+// GetReactionByID retrieves a reaction by its ID
+func (r *FeedRepository) GetReactionByID(ctx context.Context, reactionID primitive.ObjectID) (*models.Reaction, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	var reaction models.Reaction
+	err := r.db.Collection("reactions").FindOne(ctx, bson.M{"_id": reactionID}).Decode(&reaction)
+	if err != nil {
+		return nil, err
+	}
+	return &reaction, nil
+}
+
 func (r *FeedRepository) DeleteReaction(ctx context.Context, reactionID, userID, targetID primitive.ObjectID, targetType string) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -374,7 +387,8 @@ func (r *FeedRepository) ListComments(ctx context.Context, filter bson.M, opts *
 
 	var comments []models.Comment
 	if err := cursor.All(ctx, &comments); err != nil {
-		return nil, err	}
+		return nil, err
+	}
 	return comments, nil
 }
 
