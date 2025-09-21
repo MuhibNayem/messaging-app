@@ -36,9 +36,14 @@ func (s *SearchService) Search(ctx context.Context, query string, page, limit in
 	}
 
 	var searchResult SearchResult
+	regexQuery := bson.M{"$regex": query, "$options": "i"} // i for case-insensitive
 
 	// Search Users
-	userFilter := bson.M{"$text": bson.M{"$search": query}}
+	userFilter := bson.M{"$or": []bson.M{
+		{"username": regexQuery},
+		{"email": regexQuery},
+		{"full_name": regexQuery},
+	}}
 	userFindOptions := options.Find().SetSkip((page - 1) * limit).SetLimit(limit)
 	users, err := s.userRepo.FindUsers(ctx, userFilter, userFindOptions)
 	if err != nil && err != mongo.ErrNoDocuments {
@@ -58,8 +63,14 @@ func (s *SearchService) Search(ctx context.Context, query string, page, limit in
 		}
 	}
 
-	// Search Posts
-	postFilter := bson.M{"$text": bson.M{"$search": query}}
+	// Search Posts (only public posts)
+	postFilter := bson.M{
+		"privacy": models.PrivacySettingPublic,
+		"$or": []bson.M{
+			{"content": regexQuery},
+			{"hashtags": regexQuery},
+		},
+	}
 	postFindOptions := options.Find().SetSkip((page - 1) * limit).SetLimit(limit)
 	posts, err := s.feedRepo.ListPosts(ctx, postFilter, postFindOptions)
 	if err != nil && err != mongo.ErrNoDocuments {

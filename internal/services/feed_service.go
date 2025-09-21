@@ -56,6 +56,8 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 		MediaURL:       req.MediaURL,
 		Privacy:        req.Privacy,
 		CustomAudience: req.CustomAudience,
+		Comments:       []models.Comment{},     // Initialize as empty array
+		CommentIDs:     []primitive.ObjectID{}, // Initialize as empty array
 		Mentions:       mentionedUserIDs,
 		Hashtags:       req.Hashtags,
 	}
@@ -118,24 +120,6 @@ func (s *FeedService) GetPostByID(ctx context.Context, viewerID, postID primitiv
 		return nil, errors.New("post not found")
 	}
 
-	// Populate author details
-	author, err := s.userRepo.FindUserByID(ctx, post.UserID)
-	if err != nil {
-		fmt.Printf("Failed to find author for post %s (user ID: %s): %v\n", post.ID.Hex(), post.UserID.Hex(), err)
-		post.Author = models.PostAuthor{
-			ID:       post.UserID,
-			Username: "[Deleted User]",
-			FullName: "[Deleted User]",
-		}
-	} else {
-		post.Author = models.PostAuthor{
-			ID:       author.ID,
-			Username: author.Username,
-			Avatar:   author.Avatar,
-			FullName: author.FullName,
-		}
-	}
-
 	// Check privacy
 	canView, err := s.canViewPost(ctx, viewerID, post)
 	if err != nil {
@@ -144,13 +128,6 @@ func (s *FeedService) GetPostByID(ctx context.Context, viewerID, postID primitiv
 	if !canView {
 		return nil, errors.New("unauthorized to view this post")
 	}
-
-	// Populate reaction counts
-	reactionCounts, err := s.feedRepo.CountReactionsByType(ctx, post.ID, "post")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get post reaction counts: %w", err)
-	}
-	post.ReactionCounts = reactionCounts
 
 	return post, nil
 }
@@ -304,38 +281,6 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 		return nil, err
 	}
 
-	// Populate author details and reaction counts for each post
-	for i := range posts {
-		// Populate author details
-		author, err := s.userRepo.FindUserByID(ctx, posts[i].UserID)
-		if err != nil {
-			// Log error, but don't fail the entire operation.
-			// Set a default/placeholder author if not found.
-			fmt.Printf("Failed to find author for post %s (user ID: %s): %v\n", posts[i].ID.Hex(), posts[i].UserID.Hex(), err)
-			posts[i].Author = models.PostAuthor{
-				ID:       posts[i].UserID,
-				Username: "[Deleted User]",
-				FullName: "[Deleted User]",
-			}
-		} else {
-			posts[i].Author = models.PostAuthor{
-				ID:       author.ID,
-				Username: author.Username,
-				Avatar:   author.Avatar,
-				FullName: author.FullName,
-			}
-		}
-
-		// Populate reaction counts
-		reactionCounts, err := s.feedRepo.CountReactionsByType(ctx, posts[i].ID, "post")
-		if err != nil {
-			// Log the error but don't fail the entire list operation
-			fmt.Printf("Failed to get reaction counts for post %s: %v\n", posts[i].ID.Hex(), err)
-			continue
-		}
-		posts[i].ReactionCounts = reactionCounts
-	}
-
 	total, err := s.feedRepo.CountPosts(ctx, filter)
 	if err != nil {
 		return nil, err
@@ -399,7 +344,12 @@ func (s *FeedService) GetPostsByHashtag(ctx context.Context, viewerID primitive.
 			fmt.Printf("Failed to get reaction counts for post %s: %v\n", posts[i].ID.Hex(), err)
 			continue
 		}
-		posts[i].ReactionCounts = reactionCounts
+		// Convert map[string]int64 to map[models.ReactionType]int64
+		convertedReactionCounts := make(map[models.ReactionType]int64)
+		for k, v := range reactionCounts {
+			convertedReactionCounts[models.ReactionType(k)] = v
+		}
+		posts[i].ReactionCounts = convertedReactionCounts
 	}
 
 	total, err := s.feedRepo.CountPosts(ctx, filter)
@@ -438,16 +388,54 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 	}
 
 	comment := &models.Comment{
-		PostID:   req.PostID,
-		UserID:   userID,
-		Content:  req.Content,
-		Mentions: mentionedUserIDs,
+		PostID:    req.PostID,
+		UserID:    userID,
+		Content:   req.Content,
+		MediaType: req.MediaType,
+		MediaURL:  req.MediaURL,
+		Mentions:  mentionedUserIDs,
+		Replies:   []models.Reply{}, // Initialize as empty array
 	}
 
 	createdComment, err := s.feedRepo.CreateComment(ctx, comment)
 	if err != nil {
 		return nil, err
 	}
+
+	// --- Notify Post Author ---
+	post, err := s.feedRepo.GetPostByID(ctx, req.PostID)
+	if err != nil {
+		fmt.Printf("Failed to get post %s for comment notification: %v\n", req.PostID.Hex(), err)
+	} else {
+		// Check if the commenter is not the post author
+		if post.UserID != userID {
+			// Check if the post author was already mentioned
+			alreadyMentioned := false
+			for _, mentionedID := range mentionedUserIDs {
+				if mentionedID == post.UserID {
+					alreadyMentioned = true
+					break
+				}
+			}
+
+			if !alreadyMentioned {
+				notificationReq := &models.CreateNotificationRequest{
+					RecipientID: post.UserID,
+					SenderID:    userID,
+					Type:        models.NotificationTypeComment,
+					TargetID:    createdComment.ID,
+					TargetType:  "comment",
+					Content:     fmt.Sprintf("%s commented on your post.", userID),
+				}
+				_, err := s.notificationService.CreateNotification(ctx, notificationReq)
+				if err != nil {
+					fmt.Printf("Failed to create comment notification for user %s: %v\n", post.UserID.Hex(), err)
+				}
+			}
+		}
+	}
+
+	// --- End Notify Post Author ---
 
 	// Send notifications to mentioned users
 	for _, mentionedUserID := range mentionedUserIDs {
@@ -543,6 +531,14 @@ func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID
 		return nil, errors.New("comment not found")
 	}
 
+	// Optional: Check if parent reply exists
+	if req.ParentReplyID != nil {
+		_, err := s.feedRepo.GetReplyByID(ctx, *req.ParentReplyID)
+		if err != nil {
+			return nil, errors.New("parent reply not found")
+		}
+	}
+
 	// Extract mentions from content
 	mentionedUsernames := utils.ExtractMentions(req.Content)
 	var mentionedUserIDs []primitive.ObjectID
@@ -558,16 +554,53 @@ func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID
 	}
 
 	reply := &models.Reply{
-		CommentID: req.CommentID,
-		UserID:    userID,
-		Content:   req.Content,
-		Mentions:  mentionedUserIDs,
+		CommentID:     req.CommentID,
+		ParentReplyID: req.ParentReplyID,
+		UserID:        userID,
+		Content:       req.Content,
+		MediaType:     req.MediaType,
+		MediaURL:      req.MediaURL,
+		Mentions:      mentionedUserIDs,
 	}
 
 	createdReply, err := s.feedRepo.CreateReply(ctx, reply)
 	if err != nil {
 		return nil, err
 	}
+
+	// --- Notify Comment Author ---
+	comment, err := s.feedRepo.GetCommentByID(ctx, req.CommentID)
+	if err != nil {
+		fmt.Printf("Failed to get comment %s for reply notification: %v\n", req.CommentID.Hex(), err)
+	} else {
+		// Check if the replier is not the comment author
+		if comment.UserID != userID {
+			// Check if the comment author was already mentioned
+			alreadyMentioned := false
+			for _, mentionedID := range mentionedUserIDs {
+				if mentionedID == comment.UserID {
+					alreadyMentioned = true
+					break
+				}
+			}
+
+			if !alreadyMentioned {
+				notificationReq := &models.CreateNotificationRequest{
+					RecipientID: comment.UserID,
+					SenderID:    userID,
+					Type:        models.NotificationTypeReply,
+					TargetID:    createdReply.ID,
+					TargetType:  "reply",
+					Content:     fmt.Sprintf("%s replied to your comment.", userID),
+				}
+				_, err := s.notificationService.CreateNotification(ctx, notificationReq)
+				if err != nil {
+					fmt.Printf("Failed to create reply notification for user %s: %v\n", comment.UserID.Hex(), err)
+				}
+			}
+		}
+	}
+	// --- End Notify Comment Author ---
 
 	// Send notifications to mentioned users
 	for _, mentionedUserID := range mentionedUserIDs {
@@ -797,6 +830,13 @@ func (s *FeedService) DeleteReaction(ctx context.Context, userID primitive.Objec
 	return nil
 }
 
+func (s *FeedService) GetReactionsByTargetID(ctx context.Context, targetID primitive.ObjectID, targetType string) ([]models.Reaction, error) {
+	filter := bson.M{"target_id": targetID, "target_type": targetType}
+	opts := options.Find().
+		SetSort(bson.D{{Key: "created_at", Value: 1}})
+	return s.feedRepo.ListReactions(ctx, filter, opts)
+}
+
 func (s *FeedService) GetCommentsByPostID(ctx context.Context, postID primitive.ObjectID, page, limit int64) ([]models.Comment, error) {
 	filter := bson.M{"post_id": postID}
 	opts := options.Find().
@@ -806,17 +846,6 @@ func (s *FeedService) GetCommentsByPostID(ctx context.Context, postID primitive.
 	comments, err := s.feedRepo.ListComments(ctx, filter, opts)
 	if err != nil {
 		return nil, err
-	}
-
-	// Populate reaction counts for each comment
-	for i := range comments {
-		reactionCounts, err := s.feedRepo.CountReactionsByType(ctx, comments[i].ID, "comment")
-		if err != nil {
-			// Log the error but don't fail the entire list operation
-			fmt.Printf("Failed to get reaction counts for comment %s: %v\n", comments[i].ID.Hex(), err)
-			continue
-		}
-		comments[i].ReactionCounts = reactionCounts
 	}
 
 	return comments, nil
@@ -833,23 +862,5 @@ func (s *FeedService) GetRepliesByCommentID(ctx context.Context, commentID primi
 		return nil, err
 	}
 
-	// Populate reaction counts for each reply
-	for i := range replies {
-		reactionCounts, err := s.feedRepo.CountReactionsByType(ctx, replies[i].ID, "reply")
-		if err != nil {
-			// Log the error but don't fail the entire list operation
-			fmt.Printf("Failed to get reaction counts for reply %s: %v\n", replies[i].ID.Hex(), err)
-			continue
-		}
-		replies[i].ReactionCounts = reactionCounts
-	}
-
 	return replies, nil
-}
-
-func (s *FeedService) GetReactionsByTargetID(ctx context.Context, targetID primitive.ObjectID, targetType string) ([]models.Reaction, error) {
-	filter := bson.M{"target_id": targetID, "target_type": targetType}
-	opts := options.Find().
-		SetSort(bson.D{{Key: "created_at", Value: 1}})
-	return s.feedRepo.ListReactions(ctx, filter, opts)
 }

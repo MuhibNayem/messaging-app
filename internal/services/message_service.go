@@ -279,6 +279,21 @@ func (s *MessageService) GetAllMessages(ctx context.Context, query models.Messag
     return s.messageRepo.GetMessages(ctx, query)
 }
 
+func (s *MessageService) SearchMessages(ctx context.Context, userID primitive.ObjectID, query string, page, limit int64) ([]models.Message, error) {
+	// Get all groups the user is a member of
+	groups, err := s.groupRepo.GetUserGroups(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user groups: %w", err)
+	}
+
+	var groupIDs []primitive.ObjectID
+	for _, group := range groups {
+		groupIDs = append(groupIDs, group.ID)
+	}
+
+	return s.messageRepo.SearchMessages(ctx, userID, query, groupIDs, page, limit)
+}
+
 // DeleteMessage handles message deletion with these features:
 // 1. Validates message ownership
 // 2. Performs soft-delete in database

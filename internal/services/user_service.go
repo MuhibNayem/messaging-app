@@ -2,12 +2,14 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"messaging-app/internal/models"
 	"messaging-app/internal/repositories"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -15,11 +17,31 @@ import (
 )
 
 type UserService struct {
-	userRepo *repositories.UserRepository
+	userRepo    *repositories.UserRepository
+	redisClient *redis.ClusterClient
 }
 
-func NewUserService(userRepo *repositories.UserRepository) *UserService {
-	return &UserService{userRepo: userRepo}
+func NewUserService(userRepo *repositories.UserRepository, redisClient *redis.ClusterClient) *UserService {
+	return &UserService{userRepo: userRepo, redisClient: redisClient}
+}
+
+func (s *UserService) GetUserStatus(ctx context.Context, userID primitive.ObjectID) (map[string]interface{}, error) {
+	key := fmt.Sprintf("presence:%s", userID.Hex())
+	val, err := s.redisClient.Get(ctx, key).Result()
+	if err != nil {
+		// If key not found, assume offline
+		if err == redis.Nil {
+			return map[string]interface{}{"status": "offline"}, nil
+		}
+		return nil, err
+	}
+
+	var statusData map[string]interface{}
+	if err := json.Unmarshal([]byte(val), &statusData); err != nil {
+		return nil, err
+	}
+
+	return statusData, nil
 }
 
 func (s *UserService) GetUserByID(ctx context.Context, id primitive.ObjectID) (*models.User, error) {

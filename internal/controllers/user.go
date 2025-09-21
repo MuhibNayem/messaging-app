@@ -86,6 +86,32 @@ func (c *UserController) GetUserByID(ctx *gin.Context) {
     ctx.JSON(http.StatusOK, publicUser)
 }
 
+// GetUserStatus godoc
+// @Summary Get user's online status
+// @Security BearerAuth
+// @Tags users
+// @Produce json
+// @Param id path string true "User ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/users/{id}/status [get]
+func (c *UserController) GetUserStatus(ctx *gin.Context) {
+    userID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+    if err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+        return
+    }
+
+    status, err := c.userService.GetUserStatus(ctx.Request.Context(), userID)
+    if err != nil {
+        ctx.JSON(http.StatusInternalServerError, gin.H{"error": "could not retrieve user status"})
+        return
+    }
+
+    ctx.JSON(http.StatusOK, status)
+}
+
 // UpdateUser godoc
 // @Summary Update user profile
 // @Security BearerAuth

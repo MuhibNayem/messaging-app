@@ -2,9 +2,49 @@
 
 This document provides a comprehensive overview of the messaging application's RESTful API endpoints. Each endpoint includes its HTTP method, URL, a description, request/response payloads, and authentication requirements.
 
-## 1. Authentication Endpoints (`/api/auth`)
+## 1. Health Check Endpoints
 
-### 1.1 Register User
+### 1.1 Liveness Probe
+
+Checks if the application is running.
+
+*   **URL:** `/health`
+*   **Method:** `GET`
+*   **Authentication:** None
+*   **Response (200 OK):**
+    ```json
+    {
+        "status": "ok"
+    }
+    ```
+
+### 1.2 Readiness Probe
+
+Checks if the application and its dependencies (MongoDB, Redis) are ready to handle requests.
+
+*   **URL:** `/ready`
+*   **Method:** `GET`
+*   **Authentication:** None
+*   **Response (200 OK):**
+    ```json
+    {
+        "status": "ready",
+        "mongo": "available",
+        "redis": "available"
+    }
+    ```
+*   **Error Response (503 Service Unavailable):**
+    ```json
+    {
+        "status": "not_ready",
+        "mongo": "unavailable",
+        "redis": "available"
+    }
+    ```
+
+## 2. Authentication Endpoints (`/api/auth`)
+
+### 2.1 Register User
 
 Registers a new user in the system.
 
@@ -51,7 +91,7 @@ Registers a new user in the system.
     }
     ```
 
-### 1.2 Login User
+### 2.2 Login User
 
 Authenticates a user and provides JWT tokens.
 
@@ -97,7 +137,7 @@ Authenticates a user and provides JWT tokens.
     }
     ```
 
-### 1.3 Refresh Access Token
+### 2.3 Refresh Access Token
 
 Refreshes an expired access token using a valid refresh token.
 
@@ -142,7 +182,7 @@ Refreshes an expired access token using a valid refresh token.
     }
     ```
 
-### 1.4 Logout User
+### 2.4 Logout User
 
 Logs out the current user by blacklisting their access token and deleting their refresh token.
 
@@ -163,9 +203,9 @@ Logs out the current user by blacklisting their access token and deleting their 
     }
     ```
 
-## 2. User Endpoints (`/api/users`)
+## 3. User Endpoints (`/api/users`)
 
-### 2.1 Get Current User Profile
+### 3.1 Get Current User Profile
 
 Retrieves the profile information of the authenticated user.
 
@@ -195,7 +235,7 @@ Retrieves the profile information of the authenticated user.
     }
     ```
 
-### 2.2 Get User by ID
+### 3.2 Get User by ID
 
 Retrieves the public profile information of a specific user by their ID.
 
@@ -221,7 +261,30 @@ Retrieves the public profile information of a specific user by their ID.
     }
     ```
 
-### 2.3 Update Current User Profile
+### 3.3 Get User Status
+
+Retrieves the online status of a specific user.
+
+*   **URL:** `/api/users/:id/status`
+*   **Method:** `GET`
+*   **Authentication:** Bearer Token
+*   **Path Parameters:**
+    *   `id` (string, required): The ID of the user to check.
+*   **Response (200 OK):**
+    ```json
+    {
+        "is_online": true,
+        "last_seen": "2023-10-27T10:00:00Z"
+    }
+    ```
+*   **Error Response (404 Not Found):**
+    ```json
+    {
+        "error": "user not found"
+    }
+    ```
+
+### 3.4 Update Current User Profile
 
 Updates the profile information of the authenticated user.
 
@@ -265,7 +328,7 @@ Updates the profile information of the authenticated user.
     }
     ```
 
-### 2.4 List Users
+### 3.5 List Users
 
 Retrieves a paginated list of users, with optional search functionality.
 
@@ -308,7 +371,7 @@ Retrieves a paginated list of users, with optional search functionality.
     }
     ```
 
-### 2.5 Update User Email
+### 3.6 Update User Email
 
 Updates the email address of the authenticated user.
 
@@ -334,7 +397,7 @@ Updates the email address of the authenticated user.
     }
     ```
 
-### 2.6 Update User Password
+### 3.7 Update User Password
 
 Updates the password of the authenticated user.
 
@@ -361,7 +424,7 @@ Updates the password of the authenticated user.
     }
     ```
 
-### 2.7 Toggle Two-Factor Authentication
+### 3.8 Toggle Two-Factor Authentication
 
 Enables or disables two-factor authentication for the authenticated user.
 
@@ -387,7 +450,7 @@ Enables or disables two-factor authentication for the authenticated user.
     }
     ```
 
-### 2.8 Deactivate User Account
+### 3.9 Deactivate User Account
 
 Deactivates the authenticated user's account.
 
@@ -395,7 +458,8 @@ Deactivates the authenticated user's account.
 *   **Method:** `PUT`
 *   **Authentication:** Bearer Token
 *   **Request Body:** None
-*   **Response (200 OK):n    ```json
+*   **Response (200 OK):**
+    ```json
     {
         "success": true
     }
@@ -407,7 +471,7 @@ Deactivates the authenticated user's account.
     }
     ```
 
-### 2.9 Update User Privacy Settings
+### 3.10 Update User Privacy Settings
 
 Updates the privacy settings for the authenticated user.
 
@@ -434,9 +498,9 @@ Updates the privacy settings for the authenticated user.
     }
     ```
 
-## 3. Friendship Endpoints (`/api/friendships`)
+## 4. Friendship Endpoints (`/api/friendships`)
 
-### 3.1 Send Friend Request
+### 4.1 Send Friend Request
 
 Sends a friend request to another user.
 
@@ -467,7 +531,7 @@ Sends a friend request to another user.
     }
     ```
 
-### 3.2 Respond to Friend Request
+### 4.2 Respond to Friend Request
 
 Accepts or rejects a pending friend request.
 
@@ -494,7 +558,7 @@ Accepts or rejects a pending friend request.
     }
     ```
 
-### 3.3 List Friendships
+### 4.3 List Friendships
 
 Retrieves a paginated list of friendships for the authenticated user, with optional status filtering.
 
@@ -524,7 +588,7 @@ Retrieves a paginated list of friendships for the authenticated user, with optio
     }
     ```
 
-### 3.4 Check Friendship Status
+### 4.4 Check Friendship Status
 
 Checks if the authenticated user is friends with another specified user.
 
@@ -540,15 +604,15 @@ Checks if the authenticated user is friends with another specified user.
     }
     ```
 
-### 3.5 Unfriend a User
+### 4.5 Unfriend a User
 
 Removes an existing friendship.
 
-*   **URL:** `/api/friendships/:friend_id`
+*   **URL:** `/api/friendships/:id`
 *   **Method:** `DELETE`
 *   **Authentication:** Bearer Token
 *   **Path Parameters:**
-    *   `friend_id` (string, required): The ID of the friend to unfriend.
+    *   `id` (string, required): The ID of the friendship to remove.
 *   **Response (200 OK):**
     ```json
     {
@@ -562,15 +626,15 @@ Removes an existing friendship.
     }
     ```
 
-### 3.6 Block a User
+### 4.6 Block a User
 
 Blocks a specified user.
 
-*   **URL:** `/api/friendships/block/:user_id`
+*   **URL:** `/api/friendships/block/:userId`
 *   **Method:** `POST`
 *   **Authentication:** Bearer Token
 *   **Path Parameters:**
-    *   `user_id` (string, required): The ID of the user to block.
+    *   `userId` (string, required): The ID of the user to block.
 *   **Response (200 OK):**
     ```json
     {
@@ -584,15 +648,15 @@ Blocks a specified user.
     }
     ```
 
-### 3.7 Unblock a User
+### 4.7 Unblock a User
 
 Unblocks a previously blocked user.
 
-*   **URL:** `/api/friendships/block/:user_id`
+*   **URL:** `/api/friendships/block/:userId`
 *   **Method:** `DELETE`
 *   **Authentication:** Bearer Token
 *   **Path Parameters:**
-    *   `user_id` (string, required): The ID of the user to unblock.
+    *   `userId` (string, required): The ID of the user to unblock.
 *   **Response (200 OK):**
     ```json
     {
@@ -606,15 +670,15 @@ Unblocks a previously blocked user.
     }
     ```
 
-### 3.8 Check if User is Blocked
+### 4.8 Check if User is Blocked
 
 Checks if the authenticated user has blocked another specified user, or if they are blocked by them.
 
-*   **URL:** `/api/friendships/block/:user_id/status`
+*   **URL:** `/api/friendships/block/:userId/status`
 *   **Method:** `GET`
 *   **Authentication:** Bearer Token
 *   **Path Parameters:**
-    *   `user_id` (string, required): The ID of the user to check block status with.
+    *   `userId` (string, required): The ID of the user to check block status with.
 *   **Response (200 OK):**
     ```json
     {
@@ -622,7 +686,7 @@ Checks if the authenticated user has blocked another specified user, or if they 
     }
     ```
 
-### 3.9 Get Blocked Users List
+### 4.9 Get Blocked Users List
 
 Retrieves a list of users blocked by the authenticated user.
 
@@ -645,9 +709,9 @@ Retrieves a list of users blocked by the authenticated user.
     }
     ```
 
-## 4. Group Endpoints (`/api/groups`)
+## 5. Group Endpoints (`/api/groups`)
 
-### 4.1 Create Group
+### 5.1 Create Group
 
 Creates a new chat group.
 
@@ -709,7 +773,7 @@ Creates a new chat group.
     }
     ```
 
-### 4.2 Get Group Details
+### 5.2 Get Group Details
 
 Retrieves the details of a specific chat group.
 
@@ -758,7 +822,7 @@ Retrieves the details of a specific chat group.
     }
     ```
 
-### 4.3 Update Group
+### 5.3 Update Group
 
 Updates the details of a chat group (e.g., name). Only group admins can perform this action.
 
@@ -808,7 +872,7 @@ Updates the details of a chat group (e.g., name). Only group admins can perform 
     }
     ```
 
-### 4.4 Add Member to Group
+### 5.4 Add Member to Group
 
 Adds a user as a member to a chat group. Only group admins can perform this action.
 
@@ -831,7 +895,7 @@ Adds a user as a member to a chat group. Only group admins can perform this acti
     }
     ```
 
-### 4.5 Remove Member from Group
+### 5.5 Remove Member from Group
 
 Removes a member from a chat group. Only group admins can perform this action.
 
@@ -850,7 +914,7 @@ Removes a member from a chat group. Only group admins can perform this action.
     }
     ```
 
-### 4.6 Add Admin to Group
+### 5.6 Add Admin to Group
 
 Promotes an existing group member to an admin. Only group admins can perform this action.
 
@@ -873,7 +937,7 @@ Promotes an existing group member to an admin. Only group admins can perform thi
     }
     ```
 
-### 4.7 Get User's Groups
+### 5.7 Get User's Groups
 
 Retrieves a list of all chat groups the authenticated user is a member of.
 
@@ -917,9 +981,9 @@ Retrieves a list of all chat groups the authenticated user is a member of.
     ]
     ```
 
-## 5. Messaging Endpoints (`/api/messages`)
+## 6. Messaging Endpoints (`/api/messages`)
 
-### 5.1 Send Message
+### 6.1 Send Message
 
 Sends a direct message to a user or a message to a group.
 
@@ -969,7 +1033,7 @@ Sends a direct message to a user or a message to a group.
     }
     ```
 
-### 5.2 Get Messages
+### 6.2 Get Messages
 
 Retrieves a paginated list of messages for a direct conversation or a group chat.
 
@@ -1020,7 +1084,30 @@ Retrieves a paginated list of messages for a direct conversation or a group chat
     }
     ```
 
-### 5.3 Mark Messages as Seen
+### 6.3 Search Messages
+
+Searches for messages within the user's conversations.
+
+*   **URL:** `/api/messages/search`
+*   **Method:** `GET`
+*   **Authentication:** Bearer Token
+*   **Query Parameters:**
+    *   `q` (string, required): The search query.
+    *   `page` (integer, optional): The page number (default: 1).
+    *   `limit` (integer, optional): Messages per page (default: 20).
+*   **Response (200 OK):**
+    ```json
+    [
+        {
+            "id": "654321098765432109876550",
+            "sender_id": "654321098765432109876543",
+            "content": "Hello there! This is a search result.",
+            "created_at": "2023-10-27T10:00:00Z"
+        }
+    ]
+    ```
+
+### 6.4 Mark Messages as Seen
 
 Marks a list of messages as seen by the authenticated user.
 
@@ -1047,7 +1134,7 @@ Marks a list of messages as seen by the authenticated user.
     }
     ```
 
-### 5.4 Get Unread Message Count
+### 6.5 Get Unread Message Count
 
 Retrieves the total count of unread messages for the authenticated user.
 
@@ -1068,7 +1155,7 @@ Retrieves the total count of unread messages for the authenticated user.
     }
     ```
 
-### 5.5 Delete Message
+### 6.6 Delete Message
 
 Deletes a message. Only the sender or an authorized admin can delete a message. This performs a soft delete.
 
@@ -1091,9 +1178,9 @@ Deletes a message. Only the sender or an authorized admin can delete a message. 
     }
     ```
 
-## 6. Feed Endpoints (`/api/feed`)
+## 7. Feed Endpoints (`/api/feed`)
 
-### 6.1 Create Post
+### 7.1 Create Post
 
 Creates a new post on the user's feed.
 
@@ -1131,7 +1218,30 @@ Creates a new post on the user's feed.
     }
     ```
 
-### 6.2 Get Post by ID
+### 7.2 List Posts
+
+Retrieves a paginated list of posts for the user's feed.
+
+*   **URL:** `/api/feed/posts`
+*   **Method:** `GET`
+*   **Authentication:** Bearer Token
+*   **Query Parameters:**
+    *   `page` (integer, optional): The page number (default: 1).
+    *   `limit` (integer, optional): Posts per page (default: 20).
+    *   `sortBy` (string, optional): Sort by field (`created_at`, `reaction_count`, `comment_count`). Default: `created_at`.
+    *   `sortOrder` (string, optional): Sort order (`asc`, `desc`). Default: `desc`.
+    *   `user_id` (string, optional): Filter posts by a specific user ID.
+*   **Response (200 OK):**
+    ```json
+    {
+        "posts": [...],
+        "total": 50,
+        "page": 1,
+        "limit": 20
+    }
+    ```
+
+### 7.3 Get Post by ID
 
 Retrieves a specific post by its ID.
 
@@ -1168,7 +1278,7 @@ Retrieves a specific post by its ID.
     }
     ```
 
-### 6.3 Update Post
+### 7.4 Update Post
 
 Updates an existing post. Only the post owner can update it.
 
@@ -1209,7 +1319,7 @@ Updates an existing post. Only the post owner can update it.
     }
     ```
 
-### 6.4 Delete Post
+### 7.5 Delete Post
 
 Deletes a post. Only the post owner can delete it.
 
@@ -1231,7 +1341,7 @@ Deletes a post. Only the post owner can delete it.
     }
     ```
 
-### 6.5 Get Posts by Hashtag
+### 7.6 Get Posts by Hashtag
 
 Retrieves a paginated list of posts associated with a specific hashtag.
 
@@ -1269,7 +1379,7 @@ Retrieves a paginated list of posts associated with a specific hashtag.
     }
     ```
 
-### 6.6 Get Comments by Post ID
+### 7.7 Get Comments by Post ID
 
 Retrieves a paginated list of comments for a specific post.
 
@@ -1298,7 +1408,7 @@ Retrieves a paginated list of comments for a specific post.
     ]
     ```
 
-### 6.7 Create Comment
+### 7.8 Create Comment
 
 Creates a new comment on a post.
 
@@ -1310,6 +1420,8 @@ Creates a new comment on a post.
     {
         "post_id": "654321098765432109876552",
         "content": "My comment on this post! @anotheruser",
+        "media_type": "image",
+        "media_url": "https://example.com/comment_image.jpg",
         "mentions": ["654321098765432109876544"]
     }
     ```
@@ -1328,7 +1440,7 @@ Creates a new comment on a post.
     }
     ```
 
-### 6.8 Update Comment
+### 7.9 Update Comment
 
 Updates an existing comment. Only the comment owner can update it.
 
@@ -1358,7 +1470,7 @@ Updates an existing comment. Only the comment owner can update it.
     }
     ```
 
-### 6.9 Delete Comment
+### 7.10 Delete Comment
 
 Deletes a comment. Only the comment owner can delete it.
 
@@ -1375,7 +1487,7 @@ Deletes a comment. Only the comment owner can delete it.
     }
     ```
 
-### 6.10 Get Replies by Comment ID
+### 7.11 Get Replies by Comment ID
 
 Retrieves a paginated list of replies for a specific comment.
 
@@ -1403,7 +1515,7 @@ Retrieves a paginated list of replies for a specific comment.
     ]
     ```
 
-### 6.11 Create Reply
+### 7.12 Create Reply
 
 Creates a new reply to a comment.
 
@@ -1416,6 +1528,9 @@ Creates a new reply to a comment.
     ```json
     {
         "content": "My reply to this comment! @thirduser",
+        "parent_reply_id": "654321098765432109876554",
+        "media_type": "image",
+        "media_url": "https://example.com/reply_image.jpg",
         "mentions": ["654321098765432109876545"]
     }
     ```
@@ -1433,7 +1548,7 @@ Creates a new reply to a comment.
     }
     ```
 
-### 6.12 Update Reply
+### 7.13 Update Reply
 
 Updates an existing reply. Only the reply owner can update it.
 
@@ -1463,7 +1578,7 @@ Updates an existing reply. Only the reply owner can update it.
     }
     ```
 
-### 6.13 Delete Reply
+### 7.14 Delete Reply
 
 Deletes a reply. Only the reply owner can delete it.
 
@@ -1480,7 +1595,7 @@ Deletes a reply. Only the reply owner can delete it.
     }
     ```
 
-### 6.14 Create Reaction
+### 7.15 Create Reaction
 
 Creates a new reaction on a post, comment, or reply.
 
@@ -1507,7 +1622,7 @@ Creates a new reaction on a post, comment, or reply.
     }
     ```
 
-### 6.15 Delete Reaction
+### 7.16 Delete Reaction
 
 Deletes a reaction. Only the user who created the reaction can delete it.
 
@@ -1526,7 +1641,7 @@ Deletes a reaction. Only the user who created the reaction can delete it.
     }
     ```
 
-### 6.16 Get Reactions by Post ID
+### 7.17 Get Reactions by Post ID
 
 Retrieves a list of reactions for a specific post.
 
@@ -1549,7 +1664,7 @@ Retrieves a list of reactions for a specific post.
     ]
     ```
 
-### 6.17 Get Reactions by Comment ID
+### 7.18 Get Reactions by Comment ID
 
 Retrieves a list of reactions for a specific comment.
 
@@ -1572,7 +1687,7 @@ Retrieves a list of reactions for a specific comment.
     ]
     ```
 
-### 6.18 Get Reactions by Reply ID
+### 7.19 Get Reactions by Reply ID
 
 Retrieves a list of reactions for a specific reply.
 
@@ -1595,9 +1710,9 @@ Retrieves a list of reactions for a specific reply.
     ]
     ```
 
-## 7. Privacy Endpoints (`/api/privacy`)
+## 8. Privacy Endpoints (`/api/privacy`)
 
-### 7.1 Get User Privacy Settings
+### 8.1 Get User Privacy Settings
 
 Retrieves the privacy settings for the authenticated user.
 
@@ -1617,7 +1732,7 @@ Retrieves the privacy settings for the authenticated user.
     }
     ```
 
-### 7.2 Update User Privacy Settings
+### 8.2 Update User Privacy Settings
 
 Updates the privacy settings for the authenticated user.
 
@@ -1643,7 +1758,7 @@ Updates the privacy settings for the authenticated user.
     }
     ```
 
-### 7.3 Create Custom Privacy List
+### 8.3 Create Custom Privacy List
 
 Creates a new custom privacy list for the authenticated user.
 
@@ -1675,7 +1790,7 @@ Creates a new custom privacy list for the authenticated user.
     }
     ```
 
-### 7.4 Get Custom Privacy List by ID
+### 8.4 Get Custom Privacy List by ID
 
 Retrieves a specific custom privacy list by its ID.
 
@@ -1705,7 +1820,7 @@ Retrieves a specific custom privacy list by its ID.
     }
     ```
 
-### 7.5 Get Custom Privacy Lists by User ID
+### 8.5 Get Custom Privacy Lists by User ID
 
 Retrieves all custom privacy lists created by the authenticated user.
 
@@ -1730,7 +1845,7 @@ Retrieves all custom privacy lists created by the authenticated user.
     ]
     ```
 
-### 7.6 Update Custom Privacy List
+### 8.6 Update Custom Privacy List
 
 Updates an existing custom privacy list. Only the list owner can update it.
 
@@ -1762,7 +1877,7 @@ Updates an existing custom privacy list. Only the list owner can update it.
     }
     ```
 
-### 7.7 Delete Custom Privacy List
+### 8.7 Delete Custom Privacy List
 
 Deletes a custom privacy list. Only the list owner can delete it.
 
@@ -1778,7 +1893,7 @@ Deletes a custom privacy list. Only the list owner can delete it.
     }
     ```
 
-### 7.8 Add Member to Custom Privacy List
+### 8.8 Add Member to Custom Privacy List
 
 Adds a member to an existing custom privacy list. Only the list owner can modify it.
 
@@ -1808,16 +1923,16 @@ Adds a member to an existing custom privacy list. Only the list owner can modify
     }
     ```
 
-### 7.9 Remove Member from Custom Privacy List
+### 8.9 Remove Member from Custom Privacy List
 
 Removes a member from an existing custom privacy list. Only the list owner can modify it.
 
-*   **URL:** `/api/privacy/lists/:id/members/:member_id`
+*   **URL:** `/api/privacy/lists/:id/members/:memberId`
 *   **Method:** `DELETE`
 *   **Authentication:** Bearer Token
 *   **Path Parameters:**
     *   `id` (string, required): The ID of the custom privacy list.
-    *   `member_id` (string, required): The ID of the member user to remove.
+    *   `memberId` (string, required): The ID of the member user to remove.
 *   **Request Body:** None
 *   **Response (200 OK):**
     ```json
@@ -1833,9 +1948,9 @@ Removes a member from an existing custom privacy list. Only the list owner can m
     }
     ```
 
-## 8. Notification Endpoints (`/api/notifications`)
+## 9. Notification Endpoints (`/api/notifications`)
 
-### 8.1 List Notifications
+### 9.1 List Notifications
 
 Retrieves a paginated list of notifications for the authenticated user.
 
@@ -1869,7 +1984,7 @@ Retrieves a paginated list of notifications for the authenticated user.
     }
     ```
 
-### 8.2 Mark Notification as Read
+### 9.2 Mark Notification as Read
 
 Marks a specific notification as read for the authenticated user.
 
@@ -1897,7 +2012,7 @@ Marks a specific notification as read for the authenticated user.
     }
     ```
 
-### 8.3 Get Unread Notification Count
+### 9.3 Get Unread Notification Count
 
 Retrieves the total count of unread notifications for the authenticated user.
 
@@ -1916,3 +2031,48 @@ Retrieves the total count of unread notifications for the authenticated user.
         "error": "failed to get unread count"
     }
     ```
+
+## 10. Search Endpoint (`/api/search`)
+
+### 10.1 Global Search
+
+Performs a full-text search across users and posts.
+
+*   **URL:** `/api/search`
+*   **Method:** `GET`
+*   **Authentication:** Bearer Token
+*   **Query Parameters:**
+    *   `query` (string, required): The search term.
+    *   `page` (integer, optional): The page number (default: 1).
+    *   `limit` (integer, optional): Results per page (default: 10).
+*   **Response (200 OK):**
+    ```json
+    {
+        "users": [
+            {
+                "id": "654321098765432109876543",
+                "username": "searcheduser",
+                "avatar": ""
+            }
+        ],
+        "posts": [
+            {
+                "id": "654321098765432109876552",
+                "user_id": "654321098765432109876544",
+                "content": "A post matching the search query.",
+                "created_at": "2023-10-27T10:00:00Z"
+            }
+        ]
+    }
+    ```
+
+## 11. WebSocket Endpoint
+
+### 11.1 Connect to WebSocket
+
+Establishes a real-time connection for receiving live updates.
+
+*   **URL:** `/ws`
+*   **Method:** `GET`
+*   **Authentication:** Bearer Token (sent as a query parameter `token`)
+*   **Description:** The WebSocket connection is used for real-time events like new messages, notifications, and presence updates. Clients should listen for different event types on this connection.

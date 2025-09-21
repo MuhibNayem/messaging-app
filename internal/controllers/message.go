@@ -284,3 +284,42 @@ func (c *MessageController) DeleteMessage(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
 }
+
+// @Summary Search messages
+// @Description Search messages in user's conversations
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param q query string true "Search query"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Messages per page" default(20)
+// @Success 200 {array} models.Message
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 500 {object} models.ErrorResponse
+// @Router /messages/search [get]
+func (c *MessageController) SearchMessages(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	currentUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid user ID"})
+		return
+	}
+
+	query := ctx.Query("q")
+	if query == "" {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "search query is required"})
+		return
+	}
+
+	page, _ := strconv.ParseInt(ctx.DefaultQuery("page", "1"), 10, 64)
+	limit, _ := strconv.ParseInt(ctx.DefaultQuery("limit", "20"), 10, 64)
+
+	messages, err := c.messageService.SearchMessages(ctx.Request.Context(), currentUserID, query, page, limit)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, messages)
+}

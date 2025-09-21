@@ -60,6 +60,12 @@ func createIndexes(ctx context.Context, db *mongo.Database) error {
 		}),
 	}
 
+	// Message collection text index
+	messageIndexModel := mongo.IndexModel{
+		Keys:    bson.D{{Key: "content", Value: "text"}},
+		Options: options.Index().SetName("message_text_index"),
+	}
+
 	// Create indexes for users collection
 	_, err := db.Collection("users").Indexes().CreateOne(ctx, userIndexModel)
 	if err != nil {
@@ -73,6 +79,13 @@ func createIndexes(ctx context.Context, db *mongo.Database) error {
 		return fmt.Errorf("failed to create post text index: %w", err)
 	}
 	log.Println("Post text index created successfully.")
+
+	// Create indexes for messages collection
+	_, err = db.Collection("messages").Indexes().CreateOne(ctx, messageIndexModel)
+	if err != nil {
+		return fmt.Errorf("failed to create message text index: %w", err)
+	}
+	log.Println("Message text index created successfully.")
 
 	return nil
 }
@@ -162,7 +175,7 @@ func main() {
 
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
-	userService := services.NewUserService(userRepo)
+	userService := services.NewUserService(userRepo, redisClient.GetClient())
 	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient())
 	groupService := services.NewGroupService(groupRepo, userRepo)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
@@ -196,6 +209,7 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}
 	router.Use(cors.New(corsConfig))
+	router.Use(middleware.RateLimiter(cfg))
 
 	// WebSocket router (without metrics middleware) - apply same CORS config
 	webSocketRouter := gin.Default()
@@ -274,6 +288,7 @@ func main() {
 
 		userRoutes.GET("", userController.ListUsers)       // List all users
 		userRoutes.GET("/:id", userController.GetUserByID) // Get specific user by ID
+		userRoutes.GET("/:id/status", userController.GetUserStatus) // Get user status
 	}
 
 	// Feed Routes
@@ -332,6 +347,7 @@ func main() {
 	{
 		messageRoutes.POST("", messageController.SendMessage)
 		messageRoutes.GET("", messageController.GetMessages)
+		messageRoutes.GET("/search", messageController.SearchMessages)
 		messageRoutes.POST("/seen", messageController.MarkMessagesAsSeen)
 		messageRoutes.GET("/unread", messageController.GetUnreadCount)
 		messageRoutes.DELETE("/:id", messageController.DeleteMessage)

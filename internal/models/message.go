@@ -24,13 +24,6 @@ type Message struct {
 	UpdatedAt   time.Time            `bson:"updated_at,omitempty" json:"updated_at,omitempty"`
 }
 
-type TypingEvent struct {
-    ConversationID string `json:"conversation_id"` // group_id or user_id
-    UserID        string `json:"user_id"`
-    IsTyping      bool   `json:"is_typing"`
-    Timestamp     int64  `json:"timestamp"`
-}
-
 type MessageQuery struct {
 	GroupID    string `form:"group_id"`
 	ConversationID    string `form:"group_id"`

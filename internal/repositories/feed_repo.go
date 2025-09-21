@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"messaging-app/internal/models"
@@ -13,101 +14,90 @@ import (
 )
 
 type FeedRepository struct {
-	db *mongo.Database
+	postsCollection     *mongo.Collection
+	commentsCollection  *mongo.Collection
+	repliesCollection   *mongo.Collection
+	reactionsCollection *mongo.Collection
 }
 
 func NewFeedRepository(db *mongo.Database) *FeedRepository {
-	// Create indexes for posts
-	_, err := db.Collection("posts").Indexes().CreateMany(context.Background(), []mongo.IndexModel{
-		{
-			Keys:    bson.D{{Key: "user_id", Value: 1}},
-			Options: options.Index(),
+	// posts indexes
+	_, err := db.Collection("posts").Indexes().CreateMany(
+		context.Background(),
+		[]mongo.IndexModel{
+			{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "created_at", Value: -1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "hashtags", Value: 1}}, Options: options.Index()},
 		},
-		{
-			Keys:    bson.D{{Key: "created_at", Value: -1}},
-			Options: options.Index(),
-		},
-		{
-			Keys:    bson.D{{Key: "hashtags", Value: 1}},
-			Options: options.Index(),
-		},
-	})
+	)
 	if err != nil {
 		panic("Failed to create post indexes: " + err.Error())
 	}
 
-	// Create indexes for comments
-	_, err = db.Collection("comments").Indexes().CreateMany(context.Background(), []mongo.IndexModel{
-		{
-			Keys:    bson.D{{Key: "post_id", Value: 1}},
-			Options: options.Index(),
+	// comments indexes
+	_, err = db.Collection("comments").Indexes().CreateMany(
+		context.Background(),
+		[]mongo.IndexModel{
+			{Keys: bson.D{{Key: "post_id", Value: 1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "created_at", Value: -1}}, Options: options.Index()},
 		},
-		{
-			Keys:    bson.D{{Key: "user_id", Value: 1}},
-			Options: options.Index(),
-		},
-		{
-			Keys:    bson.D{{Key: "created_at", Value: -1}},
-			Options: options.Index(),
-		},
-	})
+	)
 	if err != nil {
 		panic("Failed to create comment indexes: " + err.Error())
 	}
 
-	// Create indexes for replies
-	_, err = db.Collection("replies").Indexes().CreateMany(context.Background(), []mongo.IndexModel{
-		{
-			Keys:    bson.D{{Key: "comment_id", Value: 1}},
-			Options: options.Index(),
+	// replies indexes
+	_, err = db.Collection("replies").Indexes().CreateMany(
+		context.Background(),
+		[]mongo.IndexModel{
+			{Keys: bson.D{{Key: "comment_id", Value: 1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "created_at", Value: -1}}, Options: options.Index()},
 		},
-		{
-			Keys:    bson.D{{Key: "user_id", Value: 1}},
-			Options: options.Index(),
-		},
-		{
-			Keys:    bson.D{{Key: "created_at", Value: -1}},
-			Options: options.Index(),
-		},
-	})
+	)
 	if err != nil {
 		panic("Failed to create reply indexes: " + err.Error())
 	}
 
-	// Create indexes for reactions
-	_, err = db.Collection("reactions").Indexes().CreateMany(context.Background(), []mongo.IndexModel{
-		{
-			Keys:    bson.D{{Key: "target_id", Value: 1}, {Key: "target_type", Value: 1}},
-			Options: options.Index(),
+	// reactions indexes
+	_, err = db.Collection("reactions").Indexes().CreateMany(
+		context.Background(),
+		[]mongo.IndexModel{
+			{Keys: bson.D{{Key: "target_id", Value: 1}, {Key: "target_type", Value: 1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "created_at", Value: -1}}, Options: options.Index()},
+			// Optional: enforce one reaction per user/target/type
+			// {Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "target_id", Value: 1}, {Key: "target_type", Value: 1}, {Key: "type", Value: 1}}, Options: options.Index().SetUnique(true)},
 		},
-		{
-			Keys:    bson.D{{Key: "user_id", Value: 1}},
-			Options: options.Index(),
-		},
-		{
-			Keys:    bson.D{{Key: "created_at", Value: -1}},
-			Options: options.Index(),
-		},
-	})
+	)
 	if err != nil {
 		panic("Failed to create reaction indexes: " + err.Error())
 	}
 
-	return &FeedRepository{db: db}
+	return &FeedRepository{
+		postsCollection:     db.Collection("posts"),
+		commentsCollection:  db.Collection("comments"),
+		repliesCollection:   db.Collection("replies"),
+		reactionsCollection: db.Collection("reactions"),
+	}
 }
 
-// Post operations
+// ----------------------------- Posts -----------------------------
+
 func (r *FeedRepository) CreatePost(ctx context.Context, post *models.Post) (*models.Post, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	post.CreatedAt = time.Now()
-	post.UpdatedAt = time.Now()
-	result, err := r.db.Collection("posts").InsertOne(ctx, post)
+	now := time.Now()
+	post.CreatedAt = now
+	post.UpdatedAt = now
+
+	res, err := r.postsCollection.InsertOne(ctx, post)
 	if err != nil {
 		return nil, err
 	}
-	post.ID = result.InsertedID.(primitive.ObjectID)
+	post.ID = res.InsertedID.(primitive.ObjectID)
 	return post, nil
 }
 
@@ -115,12 +105,25 @@ func (r *FeedRepository) GetPostByID(ctx context.Context, postID primitive.Objec
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	var post models.Post
-	err := r.db.Collection("posts").FindOne(ctx, bson.M{"_id": postID}).Decode(&post)
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: bson.M{"_id": postID}}},
+	}
+	pipeline = append(pipeline, r.aggregatePostPipeline()...)
+
+	cur, err := r.postsCollection.Aggregate(ctx, pipeline)
 	if err != nil {
 		return nil, err
 	}
-	return &post, nil
+	defer cur.Close(ctx)
+
+	if cur.Next(ctx) {
+		var post models.Post
+		if err := cur.Decode(&post); err != nil {
+			return nil, err
+		}
+		return &post, nil
+	}
+	return nil, mongo.ErrNoDocuments
 }
 
 func (r *FeedRepository) UpdatePost(ctx context.Context, postID primitive.ObjectID, update bson.M) (*models.Post, error) {
@@ -129,25 +132,20 @@ func (r *FeedRepository) UpdatePost(ctx context.Context, postID primitive.Object
 
 	update["updated_at"] = time.Now()
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
-	result := r.db.Collection("posts").FindOneAndUpdate(
-		ctx,
-		bson.M{"_id": postID},
-		bson.M{"$set": update},
-		opts,
-	)
 
-	var updatedPost models.Post
-	if err := result.Decode(&updatedPost); err != nil {
+	res := r.postsCollection.FindOneAndUpdate(ctx, bson.M{"_id": postID}, bson.M{"$set": update}, opts)
+	var updated models.Post
+	if err := res.Decode(&updated); err != nil {
 		return nil, err
 	}
-	return &updatedPost, nil
+	return &updated, nil
 }
 
 func (r *FeedRepository) DeletePost(ctx context.Context, postID primitive.ObjectID) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	_, err := r.db.Collection("posts").DeleteOne(ctx, bson.M{"_id": postID})
+	_, err := r.postsCollection.DeleteOne(ctx, bson.M{"_id": postID})
 	return err
 }
 
@@ -155,14 +153,32 @@ func (r *FeedRepository) ListPosts(ctx context.Context, filter bson.M, opts *opt
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	cursor, err := r.db.Collection("posts").Find(ctx, filter, opts)
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: filter}},
+	}
+	pipeline = append(pipeline, r.aggregatePostPipeline()...)
+
+	// sort/skip/limit from opts
+	if opts != nil {
+		if opts.Sort != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$sort", Value: opts.Sort}})
+		}
+		if opts.Skip != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$skip", Value: *opts.Skip}})
+		}
+		if opts.Limit != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$limit", Value: *opts.Limit}})
+		}
+	}
+
+	cur, err := r.postsCollection.Aggregate(ctx, pipeline)
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close(ctx)
+	defer cur.Close(ctx)
 
 	var posts []models.Post
-	if err := cursor.All(ctx, &posts); err != nil {
+	if err := cur.All(ctx, &posts); err != nil {
 		return nil, err
 	}
 	return posts, nil
@@ -172,34 +188,32 @@ func (r *FeedRepository) CountPosts(ctx context.Context, filter bson.M) (int64, 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	count, err := r.db.Collection("posts").CountDocuments(ctx, filter)
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
+	return r.postsCollection.CountDocuments(ctx, filter)
 }
 
-// Comment operations
+// --------------------------- Comments ----------------------------
+
 func (r *FeedRepository) CreateComment(ctx context.Context, comment *models.Comment) (*models.Comment, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	comment.CreatedAt = time.Now()
-	comment.UpdatedAt = time.Now()
-	result, err := r.db.Collection("comments").InsertOne(ctx, comment)
+	now := time.Now()
+	comment.CreatedAt = now
+	comment.UpdatedAt = now
+
+	res, err := r.commentsCollection.InsertOne(ctx, comment)
 	if err != nil {
 		return nil, err
 	}
-	comment.ID = result.InsertedID.(primitive.ObjectID)
+	comment.ID = res.InsertedID.(primitive.ObjectID)
 
-	// Add comment ID to the post's comments array
-	_, err = r.db.Collection("posts").UpdateOne(
+	// push comment id to post
+	_, err = r.postsCollection.UpdateOne(
 		ctx,
 		bson.M{"_id": comment.PostID},
-		bson.M{"$push": bson.M{"comments": comment.ID}},
+		bson.M{"$push": bson.M{"comment_ids": comment.ID}},
 	)
 	if err != nil {
-		// Consider rolling back comment creation or logging a warning
 		return nil, err
 	}
 
@@ -210,12 +224,25 @@ func (r *FeedRepository) GetCommentByID(ctx context.Context, commentID primitive
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	var comment models.Comment
-	err := r.db.Collection("comments").FindOne(ctx, bson.M{"_id": commentID}).Decode(&comment)
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: bson.M{"_id": commentID}}},
+	}
+	pipeline = append(pipeline, r.aggregateCommentPipeline()...)
+
+	cur, err := r.commentsCollection.Aggregate(ctx, pipeline)
 	if err != nil {
 		return nil, err
 	}
-	return &comment, nil
+	defer cur.Close(ctx)
+
+	if cur.Next(ctx) {
+		var c models.Comment
+		if err := cur.Decode(&c); err != nil {
+			return nil, err
+		}
+		return &c, nil
+	}
+	return nil, mongo.ErrNoDocuments
 }
 
 func (r *FeedRepository) UpdateComment(ctx context.Context, commentID primitive.ObjectID, update bson.M) (*models.Comment, error) {
@@ -224,60 +251,49 @@ func (r *FeedRepository) UpdateComment(ctx context.Context, commentID primitive.
 
 	update["updated_at"] = time.Now()
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
-	result := r.db.Collection("comments").FindOneAndUpdate(
-		ctx,
-		bson.M{"_id": commentID},
-		bson.M{"$set": update},
-		opts,
-	)
 
-	var updatedComment models.Comment
-	if err := result.Decode(&updatedComment); err != nil {
+	res := r.commentsCollection.FindOneAndUpdate(ctx, bson.M{"_id": commentID}, bson.M{"$set": update}, opts)
+	var updated models.Comment
+	if err := res.Decode(&updated); err != nil {
 		return nil, err
 	}
-	return &updatedComment, nil
+	return &updated, nil
 }
 
 func (r *FeedRepository) DeleteComment(ctx context.Context, postID, commentID primitive.ObjectID) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	// Remove comment ID from the post's comments array
-	_, err := r.db.Collection("posts").UpdateOne(
-		ctx,
-		bson.M{"_id": postID},
-		bson.M{"$pull": bson.M{"comments": commentID}},
-	)
-	if err != nil {
+	// pull id from post
+	if _, err := r.postsCollection.UpdateOne(ctx, bson.M{"_id": postID}, bson.M{"$pull": bson.M{"comment_ids": commentID}}); err != nil {
 		return err
 	}
-
-	// Delete the comment itself
-	_, err = r.db.Collection("comments").DeleteOne(ctx, bson.M{"_id": commentID})
+	_, err := r.commentsCollection.DeleteOne(ctx, bson.M{"_id": commentID})
 	return err
 }
 
-// Reply operations
+// ---------------------------- Replies ----------------------------
+
 func (r *FeedRepository) CreateReply(ctx context.Context, reply *models.Reply) (*models.Reply, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	reply.CreatedAt = time.Now()
-	reply.UpdatedAt = time.Now()
-	result, err := r.db.Collection("replies").InsertOne(ctx, reply)
+	now := time.Now()
+	reply.CreatedAt = now
+	reply.UpdatedAt = now
+
+	res, err := r.repliesCollection.InsertOne(ctx, reply)
 	if err != nil {
 		return nil, err
 	}
-	reply.ID = result.InsertedID.(primitive.ObjectID)
+	reply.ID = res.InsertedID.(primitive.ObjectID)
 
-	// Add reply ID to the comment's replies array
-	_, err = r.db.Collection("comments").UpdateOne(
+	_, err = r.commentsCollection.UpdateOne(
 		ctx,
 		bson.M{"_id": reply.CommentID},
-		bson.M{"$push": bson.M{"replies": reply.ID}},
+		bson.M{"$push": bson.M{"replyids": reply.ID}},
 	)
 	if err != nil {
-		// Consider rolling back reply creation or logging a warning
 		return nil, err
 	}
 
@@ -288,12 +304,25 @@ func (r *FeedRepository) GetReplyByID(ctx context.Context, replyID primitive.Obj
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	var reply models.Reply
-	err := r.db.Collection("replies").FindOne(ctx, bson.M{"_id": replyID}).Decode(&reply)
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: bson.M{"_id": replyID}}},
+	}
+	pipeline = append(pipeline, r.aggregateReplyPipeline()...)
+
+	cur, err := r.repliesCollection.Aggregate(ctx, pipeline)
 	if err != nil {
 		return nil, err
 	}
-	return &reply, nil
+	defer cur.Close(ctx)
+
+	if cur.Next(ctx) {
+		var rp models.Reply
+		if err := cur.Decode(&rp); err != nil {
+			return nil, err
+		}
+		return &rp, nil
+	}
+	return nil, mongo.ErrNoDocuments
 }
 
 func (r *FeedRepository) UpdateReply(ctx context.Context, replyID primitive.ObjectID, update bson.M) (*models.Reply, error) {
@@ -302,118 +331,49 @@ func (r *FeedRepository) UpdateReply(ctx context.Context, replyID primitive.Obje
 
 	update["updated_at"] = time.Now()
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
-	result := r.db.Collection("replies").FindOneAndUpdate(
-		ctx,
-		bson.M{"_id": replyID},
-		bson.M{"$set": update},
-		opts,
-	)
 
-	var updatedReply models.Reply
-	if err := result.Decode(&updatedReply); err != nil {
+	res := r.repliesCollection.FindOneAndUpdate(ctx, bson.M{"_id": replyID}, bson.M{"$set": update}, opts)
+	var updated models.Reply
+	if err := res.Decode(&updated); err != nil {
 		return nil, err
 	}
-	return &updatedReply, nil
+	return &updated, nil
 }
 
 func (r *FeedRepository) DeleteReply(ctx context.Context, commentID, replyID primitive.ObjectID) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	// Remove reply ID from the comment's replies array
-	_, err := r.db.Collection("comments").UpdateOne(
-		ctx,
-		bson.M{"_id": commentID},
-		bson.M{"$pull": bson.M{"replies": replyID}},
-	)
-	if err != nil {
+	if _, err := r.commentsCollection.UpdateOne(ctx, bson.M{"_id": commentID}, bson.M{"$pull": bson.M{"replyids": replyID}}); err != nil {
 		return err
 	}
-
-	// Delete the reply itself
-	_, err = r.db.Collection("replies").DeleteOne(ctx, bson.M{"_id": replyID})
+	_, err := r.repliesCollection.DeleteOne(ctx, bson.M{"_id": replyID})
 	return err
 }
 
-// Reaction operations
-func (r *FeedRepository) CreateReaction(ctx context.Context, reaction *models.Reaction) (*models.Reaction, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	reaction.CreatedAt = time.Now()
-	result, err := r.db.Collection("reactions").InsertOne(ctx, reaction)
-	if err != nil {
-		return nil, err
-	}
-	reaction.ID = result.InsertedID.(primitive.ObjectID)
-
-	return reaction, nil
-}
-
-// GetReactionByID retrieves a reaction by its ID
-func (r *FeedRepository) GetReactionByID(ctx context.Context, reactionID primitive.ObjectID) (*models.Reaction, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	var reaction models.Reaction
-	err := r.db.Collection("reactions").FindOne(ctx, bson.M{"_id": reactionID}).Decode(&reaction)
-	if err != nil {
-		return nil, err
-	}
-	return &reaction, nil
-}
-
-func (r *FeedRepository) DeleteReaction(ctx context.Context, reactionID, userID, targetID primitive.ObjectID, targetType string) error {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	_, err := r.db.Collection("reactions").DeleteOne(ctx, bson.M{"_id": reactionID, "user_id": userID, "target_id": targetID, "target_type": targetType})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (r *FeedRepository) ListComments(ctx context.Context, filter bson.M, opts *options.FindOptions) ([]models.Comment, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	cursor, err := r.db.Collection("comments").Find(ctx, filter, opts)
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
-
-	var comments []models.Comment
-	if err := cursor.All(ctx, &comments); err != nil {
-		return nil, err
-	}
-	return comments, nil
-}
-
-func (r *FeedRepository) ListReplies(ctx context.Context, filter bson.M, opts *options.FindOptions) ([]models.Reply, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	cursor, err := r.db.Collection("replies").Find(ctx, filter, opts)
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
-
-	var replies []models.Reply
-	if err := cursor.All(ctx, &replies); err != nil {
-		return nil, err
-	}
-	return replies, nil
-}
+// --------------------------- Reactions ---------------------------
 
 func (r *FeedRepository) ListReactions(ctx context.Context, filter bson.M, opts *options.FindOptions) ([]models.Reaction, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	cursor, err := r.db.Collection("reactions").Find(ctx, filter, opts)
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: filter}},
+	}
+
+	if opts != nil {
+		if opts.Sort != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$sort", Value: opts.Sort}})
+		}
+		if opts.Skip != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$skip", Value: *opts.Skip}})
+		}
+		if opts.Limit != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$limit", Value: *opts.Limit}})
+		}
+	}
+
+	cursor, err := r.reactionsCollection.Aggregate(ctx, pipeline)
 	if err != nil {
 		return nil, err
 	}
@@ -423,38 +383,360 @@ func (r *FeedRepository) ListReactions(ctx context.Context, filter bson.M, opts 
 	if err := cursor.All(ctx, &reactions); err != nil {
 		return nil, err
 	}
+
 	return reactions, nil
 }
 
-func (r *FeedRepository) CountReactionsByType(ctx context.Context, targetID primitive.ObjectID, targetType string) (map[models.ReactionType]int64, error) {
+func (r *FeedRepository) CreateReaction(ctx context.Context, reaction *models.Reaction) (*models.Reaction, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	pipeline := []bson.M{
-		{"$match": bson.M{"target_id": targetID, "target_type": targetType}},
-		{"$group": bson.M{
-			"_id":   "$type",
-			"count": bson.M{"$sum": 1},
-		}},
-	}
+	reaction.CreatedAt = time.Now()
 
-	cursor, err := r.db.Collection("reactions").Aggregate(ctx, pipeline)
+	res, err := r.reactionsCollection.InsertOne(ctx, reaction)
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close(ctx)
+	reaction.ID = res.InsertedID.(primitive.ObjectID)
+	return reaction, nil
+}
 
-	reactionCounts := make(map[models.ReactionType]int64)
-	for cursor.Next(ctx) {
-		var result struct {
-			ID    models.ReactionType `bson:"_id"`
-			Count int64               `bson:"count"`
+func (r *FeedRepository) GetReactionByID(ctx context.Context, reactionID primitive.ObjectID) (*models.Reaction, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	var reaction models.Reaction
+	if err := r.reactionsCollection.FindOne(ctx, bson.M{"_id": reactionID}).Decode(&reaction); err != nil {
+		return nil, err
+	}
+	return &reaction, nil
+}
+
+func (r *FeedRepository) DeleteReaction(ctx context.Context, reactionID, userID, targetID primitive.ObjectID, targetType string) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.reactionsCollection.DeleteOne(
+		ctx,
+		bson.M{"_id": reactionID, "user_id": userID, "target_id": targetID, "target_type": targetType},
+	)
+	return err
+}
+
+// ----------------------------- Lists -----------------------------
+
+func (r *FeedRepository) ListComments(ctx context.Context, filter bson.M, opts *options.FindOptions) ([]models.Comment, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: filter}},
+	}
+	pipeline = append(pipeline, r.aggregateCommentPipeline()...)
+
+	if opts != nil {
+		if opts.Sort != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$sort", Value: opts.Sort}})
 		}
-		if err := cursor.Decode(&result); err != nil {
-			return nil, err
+		if opts.Skip != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$skip", Value: *opts.Skip}})
 		}
-		reactionCounts[result.ID] = result.Count
+		if opts.Limit != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$limit", Value: *opts.Limit}})
+		}
 	}
 
-	return reactionCounts, nil
+	cur, err := r.commentsCollection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var comments []models.Comment
+	if err := cur.All(ctx, &comments); err != nil {
+		return nil, err
+	}
+	return comments, nil
+}
+
+func (r *FeedRepository) ListReplies(ctx context.Context, filter bson.M, opts *options.FindOptions) ([]models.Reply, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: filter}},
+	}
+	pipeline = append(pipeline, r.aggregateReplyPipeline()...)
+
+	if opts != nil {
+		if opts.Sort != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$sort", Value: opts.Sort}})
+		}
+		if opts.Skip != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$skip", Value: *opts.Skip}})
+		}
+		if opts.Limit != nil {
+			pipeline = append(pipeline, bson.D{{Key: "$limit", Value: *opts.Limit}})
+		}
+	}
+
+	cur, err := r.repliesCollection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var replies []models.Reply
+	if err := cur.All(ctx, &replies); err != nil {
+		return nil, err
+	}
+	return replies, nil
+}
+
+// ------------------------ Aggregation helpers --------------------
+
+func (r *FeedRepository) aggregatePostPipeline() mongo.Pipeline {
+	return mongo.Pipeline{
+		// Lookup user for the post (author)
+		bson.D{{Key: "$lookup", Value: bson.M{
+			"from":         "users",
+			"localField":   "user_id",
+			"foreignField": "_id",
+			"as":           "author_info",
+		}}},
+		bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
+
+		// Lookup comments for the post
+		bson.D{{Key: "$lookup", Value: bson.M{
+			"from": "comments",
+			"let":  bson.M{"postId": "$_id"},
+			"pipeline": mongo.Pipeline{
+				// Match comments by post_id
+				bson.D{{Key: "$match", Value: bson.M{"$expr": bson.M{"$eq": bson.A{"$post_id", "$$postId"}}}}},
+
+				// Lookup comment author
+				bson.D{{Key: "$lookup", Value: bson.M{
+					"from":         "users",
+					"localField":   "user_id",
+					"foreignField": "_id",
+					"as":           "author_info",
+				}}},
+				bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
+
+				// Lookup replies for the comment
+				bson.D{{Key: "$lookup", Value: bson.M{
+					"from": "replies",
+					"let":  bson.M{"commentId": "$_id"},
+					"pipeline": mongo.Pipeline{
+						bson.D{{Key: "$match", Value: bson.M{"$expr": bson.M{"$eq": bson.A{"$comment_id", "$$commentId"}}}}},
+
+						// Lookup reply author
+						bson.D{{Key: "$lookup", Value: bson.M{
+							"from":         "users",
+							"localField":   "user_id",
+							"foreignField": "_id",
+							"as":           "author_info",
+						}}},
+						bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
+
+						// Project reply fields
+						bson.D{{Key: "$project", Value: bson.M{
+							"_id":             1,
+							"comment_id":      1,
+							"parent_reply_id": 1,
+							"user_id":         1,
+							"content":         1,
+							"media_type":      1,
+							"media_url":       1,
+							"mentions":        1,
+							"created_at":      1,
+							"updated_at":      1,
+							"author": bson.M{
+								"id":        bson.M{"$toString": "$author_info._id"},
+								"username":  "$author_info.username",
+								"avatar":    "$author_info.avatar",
+								"full_name": "$author_info.full_name",
+							},
+						}}},
+					},
+					"as": "replies",
+				}}},
+
+				// Project comment fields
+				bson.D{{Key: "$project", Value: bson.M{
+					"_id":        1,
+					"post_id":    1,
+					"user_id":    1,
+					"content":    1,
+					"media_type": 1,
+					"media_url":  1,
+					"mentions":   1,
+					"created_at": 1,
+					"updated_at": 1,
+					"author": bson.M{
+						"id":        "$author_info._id",
+						"username":  "$author_info.username",
+						"avatar":    "$author_info.avatar",
+						"full_name": "$author_info.full_name",
+					},
+					"replies": 1,
+				}}},
+			},
+			"as": "comments",
+		}}},
+
+		// Final projection (shape the output as needed)
+		bson.D{{Key: "$project", Value: bson.M{
+			"_id":             1,
+			"id":              "$_id",
+			"user_id":         1,
+			"content":         1,
+			"media_type":      1,
+			"media_url":       1,
+			"privacy":         1,
+			"custom_audience": 1,
+			"mentions":        1,
+			"hashtags":        1,
+			"created_at":      1,
+			"updated_at":      1,
+			"author": bson.M{
+				"id":        bson.M{"$ifNull": bson.A{bson.M{"$toString": "$author_info._id"}, nil}},
+				"username":  bson.M{"$ifNull": bson.A{"$author_info.username", "Deleted User"}},
+				"avatar":    bson.M{"$ifNull": bson.A{"$author_info.avatar", ""}},
+				"full_name": bson.M{"$ifNull": bson.A{"$author_info.full_name", "Deleted User"}},
+			},
+			"comments": 1,
+		}}},
+	}
+}
+
+func (r *FeedRepository) aggregateCommentPipeline() mongo.Pipeline {
+	return mongo.Pipeline{
+		// comment author
+		bson.D{{Key: "$lookup", Value: bson.M{
+			"from":         "users",
+			"localField":   "user_id",
+			"foreignField": "_id",
+			"as":           "author_info",
+		}}},
+		bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
+
+		// replies for comment
+		bson.D{{Key: "$lookup", Value: bson.M{
+			"from": "replies",
+			"let":  bson.M{"commentId": "$_id"},
+			"pipeline": mongo.Pipeline{
+				bson.D{{Key: "$match", Value: bson.M{"$expr": bson.M{"$eq": bson.A{"$comment_id", "$$commentId"}}}}},
+				bson.D{{Key: "$lookup", Value: bson.M{
+					"from":         "users",
+					"localField":   "user_id",
+					"foreignField": "_id",
+					"as":           "author_info",
+				}}},
+				bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
+				bson.D{{Key: "$project", Value: bson.M{
+					"_id":             1,
+					"comment_id":      1,
+					"parent_reply_id": 1,
+					"user_id":         1,
+					"content":         1,
+					"media_type":      1,
+					"media_url":       1,
+					"mentions":        1,
+					"created_at":      1,
+					"updated_at":      1,
+					"author": bson.M{
+						"id":        "$author_info._id",
+						"username":  "$author_info.username",
+						"avatar":    "$author_info.avatar",
+						"full_name": "$author_info.full_name",
+					},
+				}}},
+			},
+			"as": "replies",
+		}}},
+
+		// final shape
+		bson.D{{Key: "$project", Value: bson.M{
+			"_id":        1,
+			"id":         "$_id",
+			"post_id":    1,
+			"user_id":    1,
+			"content":    1,
+			"media_type": 1,
+			"media_url":  1,
+			"mentions":   1,
+			"created_at": 1,
+			"updated_at": 1,
+			"replies":    1,
+			"author": bson.M{
+				"id":        bson.M{"$toString": "$author_info._id"},
+				"username":  "$author_info.username",
+				"avatar":    "$author_info.avatar",
+				"full_name": "$author_info.full_name",
+			},
+		}}},
+	}
+}
+
+func (r *FeedRepository) aggregateReplyPipeline() mongo.Pipeline {
+	return mongo.Pipeline{
+		bson.D{{Key: "$lookup", Value: bson.M{
+			"from":         "users",
+			"localField":   "user_id",
+			"foreignField": "_id",
+			"as":           "author_info",
+		}}},
+		bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
+		bson.D{{Key: "$project", Value: bson.M{
+			"_id":             1,
+			"comment_id":      1,
+			"parent_reply_id": 1,
+			"user_id":         1,
+			"content":         1,
+			"media_type":      1,
+			"media_url":       1,
+			"mentions":        1,
+			"created_at":      1,
+			"updated_at":      1,
+			"author": bson.M{
+				"id":        bson.M{"$toString": "$author_info._id"},
+				"username":  "$author_info.username",
+				"avatar":    "$author_info.avatar",
+				"full_name": "$author_info.full_name",
+			},
+		}}},
+	}
+}
+
+// ----------------------- Reaction analytics ----------------------
+
+func (r *FeedRepository) CountReactionsByType(ctx context.Context, targetID primitive.ObjectID, targetType string) (map[string]int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: bson.M{"target_id": targetID, "target_type": targetType}}},
+		bson.D{{Key: "$group", Value: bson.M{"_id": "$type", "count": bson.M{"$sum": 1}}}},
+	}
+
+	cur, err := r.reactionsCollection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("failed to aggregate reaction counts: %w", err)
+	}
+	defer cur.Close(ctx)
+
+	out := make(map[string]int64)
+	for cur.Next(ctx) {
+		var row struct {
+			Type  string `bson:"_id"`
+			Count int64  `bson:"count"`
+		}
+		if err := cur.Decode(&row); err != nil {
+			return nil, fmt.Errorf("failed to decode reaction count result: %w", err)
+		}
+		out[row.Type] = row.Count
+	}
+
+	return out, nil
 }

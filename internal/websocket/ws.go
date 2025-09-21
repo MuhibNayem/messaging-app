@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"messaging-app/internal/models"
 	"messaging-app/internal/redis"
@@ -59,6 +60,7 @@ type Client struct {
 	lastSeen  time.Time
 	mu        sync.RWMutex // protects lastSeen
 	listeners map[string]bool
+	Status    string // Add this line
 }
 
 // Hub maintains the set of active clients and broadcasts messages to them.
@@ -121,8 +123,30 @@ func (h *Hub) run() {
 			h.addClient(c)
 			go h.sendCachedMessages(c)
 
+			// Set presence in Redis
+			presenceData, _ := json.Marshal(map[string]interface{}{"status": "online", "last_seen": time.Now().Unix()})
+			h.redisClient.Set(h.ctx, "presence:"+c.userID, presenceData, 24*time.Hour) // Keep presence for 24 hours
+
+			// Broadcast presence update
+			presenceEvent := models.WebSocketEvent{
+				Type: "presence_update",
+				Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "online", "last_seen": %d}`, c.userID, time.Now().Unix())),
+			}
+			h.broadcastToAllUsers(presenceEvent)
+
 		case c := <-h.unregister:
 			h.removeClient(c)
+
+			// Set presence in Redis
+			presenceData, _ := json.Marshal(map[string]interface{}{"status": "offline", "last_seen": time.Now().Unix()})
+			h.redisClient.Set(h.ctx, "presence:"+c.userID, presenceData, 24*time.Hour) // Keep presence for 24 hours
+
+			// Broadcast presence update
+			presenceEvent := models.WebSocketEvent{
+				Type: "presence_update",
+				Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "offline", "last_seen": %d}`, c.userID, time.Now().Unix())),
+			}
+			h.broadcastToAllUsers(presenceEvent)
 
 		case event := <-h.FeedEvents:
 			switch event.Type {
