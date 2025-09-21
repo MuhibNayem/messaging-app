@@ -71,6 +71,25 @@ func (r *UserRepository) FindUserByUserName(ctx context.Context, username string
 	return &user, nil
 }
 
+func (r *UserRepository) FindUsersByUserNames(ctx context.Context, usernames []string) ([]models.User, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	filter := bson.M{"username": bson.M{"$in": usernames}}
+	cursor, err := r.db.Collection("users").Find(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var users []models.User
+	if err := cursor.All(ctx, &users); err != nil {
+		return nil, err
+	}
+
+	return users, nil
+}
+
 func (r *UserRepository) FindUserByID(ctx context.Context, id primitive.ObjectID) (*models.User, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()

@@ -18,9 +18,11 @@ type Post struct {
 	CustomAudience []primitive.ObjectID   `bson:"custom_audience,omitempty" json:"custom_audience,omitempty"` // For CUSTOM privacy
 	CommentIDs     []primitive.ObjectID   `bson:"comment_ids" json:"-"`                                       // Stored as IDs in DB, not directly exposed in JSON
 	Comments       []Comment              `bson:"comments,omitempty" json:"comments"`                         // Populated full Comment objects, not stored in DB
-	Mentions       []primitive.ObjectID   `bson:"mentions,omitempty" json:"mentions,omitempty"`
-	ReactionCounts map[ReactionType]int64 `json:"reaction_counts,omitempty"`
-	Hashtags       []string               `bson:"hashtags,omitempty,sparse" json:"hashtags,omitempty"`
+	Mentions             []primitive.ObjectID   `bson:"mentions,omitempty" json:"mentions,omitempty"`
+	SpecificReactionCounts map[ReactionType]int64 `json:"specific_reaction_counts,omitempty"`
+	Hashtags             []string               `bson:"hashtags,omitempty,sparse" json:"hashtags,omitempty"`
+	TotalReactions int64                  `bson:"total_reactions" json:"total_reactions"` // Denormalized count
+	TotalComments  int64                  `bson:"total_comments" json:"total_comments"`   // Denormalized count
 	CreatedAt      time.Time              `bson:"created_at" json:"created_at"`
 	UpdatedAt      time.Time              `bson:"updated_at" json:"updated_at"`
 }

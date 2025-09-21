@@ -17,6 +17,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -37,16 +38,14 @@ func NewFeedService(feedRepo *repositories.FeedRepository, userRepo *repositorie
 func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID, req *models.CreatePostRequest) (*models.Post, error) {
 	// Extract mentions from content
 	mentionedUsernames := utils.ExtractMentions(req.Content)
+	mentionedUsers, err := s.userRepo.FindUsersByUserNames(ctx, mentionedUsernames)
+	if err != nil {
+		// Log error but don't fail post creation if mentioned users are not found
+		fmt.Printf("Failed to find mentioned users: %v\n", err)
+	}
 	var mentionedUserIDs []primitive.ObjectID
-	for _, username := range mentionedUsernames {
-		user, err := s.userRepo.FindUserByUserName(ctx, username)
-		if err != nil {
-			// Log error but don't fail post creation if a mentioned user is not found
-			continue
-		}
-		if user != nil {
-			mentionedUserIDs = append(mentionedUserIDs, user.ID)
-		}
+	for _, user := range mentionedUsers {
+		mentionedUserIDs = append(mentionedUserIDs, user.ID)
 	}
 
 	post := &models.Post{
@@ -67,6 +66,13 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 		return nil, err
 	}
 
+	// Fetch sender's user details for notification content
+	senderUser, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		fmt.Printf("Failed to find sender user %s for mention notification: %v\n", userID.Hex(), err)
+		// Continue without notification if sender not found, or handle as appropriate
+	}
+
 	// Send notifications to mentioned users
 	for _, mentionedUserID := range mentionedUserIDs {
 		notificationReq := &models.CreateNotificationRequest{
@@ -75,7 +81,7 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 			Type:        models.NotificationTypeMention,
 			TargetID:    createdPost.ID,
 			TargetType:  "post",
-			Content:     fmt.Sprintf("%s mentioned you in a post.", createdPost.UserID),
+			Content:     fmt.Sprintf("%s mentioned you in a post.", senderUser.Username),
 		}
 		_, err := s.notificationService.CreateNotification(ctx, notificationReq)
 		if err != nil {
@@ -200,15 +206,14 @@ func (s *FeedService) UpdatePost(ctx context.Context, userID, postID primitive.O
 }
 
 func (s *FeedService) DeletePost(ctx context.Context, userID, postID primitive.ObjectID) error {
-	post, err := s.feedRepo.GetPostByID(ctx, postID)
+	err := s.feedRepo.DeletePost(ctx, userID, postID)
 	if err != nil {
-		return errors.New("post not found")
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return errors.New("post not found or unauthorized to delete")
+		}
+		return err
 	}
-	if post.UserID != userID {
-		return errors.New("unauthorized to delete this post")
-	}
-
-	return s.feedRepo.DeletePost(ctx, postID)
+	return nil
 }
 
 func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID, filterUserID string, page, limit int64, sortBy, sortOrder string) (*models.FeedResponse, error) {
@@ -258,13 +263,9 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 	case "created_at":
 		sortField = "created_at"
 	case "reaction_count":
-		// Sorting by reaction_count requires aggregation, which is more complex.
-		// For now, we'll just sort by created_at if reaction_count is requested.
-		// This is a placeholder for future advanced ranking.
-		sortField = "created_at"
+		sortField = "total_reactions"
 	case "comment_count":
-		// Similar to reaction_count, requires aggregation.
-		sortField = "created_at"
+		sortField = "total_comments"
 	}
 
 	if sortOrder == "asc" {
@@ -337,21 +338,6 @@ func (s *FeedService) GetPostsByHashtag(ctx context.Context, viewerID primitive.
 		return nil, err
 	}
 
-	// Populate reaction counts for each post
-	for i := range posts {
-		reactionCounts, err := s.feedRepo.CountReactionsByType(ctx, posts[i].ID, "post")
-		if err != nil {
-			fmt.Printf("Failed to get reaction counts for post %s: %v\n", posts[i].ID.Hex(), err)
-			continue
-		}
-		// Convert map[string]int64 to map[models.ReactionType]int64
-		convertedReactionCounts := make(map[models.ReactionType]int64)
-		for k, v := range reactionCounts {
-			convertedReactionCounts[models.ReactionType(k)] = v
-		}
-		posts[i].ReactionCounts = convertedReactionCounts
-	}
-
 	total, err := s.feedRepo.CountPosts(ctx, filter)
 	if err != nil {
 		return nil, err
@@ -367,24 +353,29 @@ func (s *FeedService) GetPostsByHashtag(ctx context.Context, viewerID primitive.
 
 // Comment operations
 func (s *FeedService) CreateComment(ctx context.Context, userID primitive.ObjectID, req *models.CreateCommentRequest) (*models.Comment, error) {
-	// Check if post exists
-	_, err := s.feedRepo.GetPostByID(ctx, req.PostID)
+	// Fetch sender's user details for notification content
+	senderUser, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		fmt.Printf("Failed to find sender user %s for notification: %v\n", userID.Hex(), err)
+		// Decide how to handle: return error, or proceed with generic content
+		// For now, we'll proceed, but log the error.
+	}
+
+	post, err := s.feedRepo.GetPostByID(ctx, req.PostID)
 	if err != nil {
 		return nil, errors.New("post not found")
 	}
 
 	// Extract mentions from content
 	mentionedUsernames := utils.ExtractMentions(req.Content)
+	mentionedUsers, err := s.userRepo.FindUsersByUserNames(ctx, mentionedUsernames)
+	if err != nil {
+		// Log error but don't fail comment creation if mentioned users are not found
+		fmt.Printf("Failed to find mentioned users: %v\n", err)
+	}
 	var mentionedUserIDs []primitive.ObjectID
-	for _, username := range mentionedUsernames {
-		user, err := s.userRepo.FindUserByUserName(ctx, username)
-		if err != nil {
-			// Log error but don't fail comment creation if a mentioned user is not found
-			continue
-		}
-		if user != nil {
-			mentionedUserIDs = append(mentionedUserIDs, user.ID)
-		}
+	for _, user := range mentionedUsers {
+		mentionedUserIDs = append(mentionedUserIDs, user.ID)
 	}
 
 	comment := &models.Comment{
@@ -403,7 +394,6 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 	}
 
 	// --- Notify Post Author ---
-	post, err := s.feedRepo.GetPostByID(ctx, req.PostID)
 	if err != nil {
 		fmt.Printf("Failed to get post %s for comment notification: %v\n", req.PostID.Hex(), err)
 	} else {
@@ -425,7 +415,7 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 					Type:        models.NotificationTypeComment,
 					TargetID:    createdComment.ID,
 					TargetType:  "comment",
-					Content:     fmt.Sprintf("%s commented on your post.", userID),
+					Content:     fmt.Sprintf("%s commented on your post.", senderUser.Username),
 				}
 				_, err := s.notificationService.CreateNotification(ctx, notificationReq)
 				if err != nil {
@@ -445,7 +435,7 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 			Type:        models.NotificationTypeMention,
 			TargetID:    createdComment.ID,
 			TargetType:  "comment",
-			Content:     fmt.Sprintf("%s mentioned you in a comment.", userID),
+			Content:     fmt.Sprintf("%s mentioned you in a comment.", senderUser.Username),
 		}
 		_, err := s.notificationService.CreateNotification(ctx, notificationReq)
 		if err != nil {
@@ -479,6 +469,12 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 				// Log the error but don't block comment creation
 			}
 		}
+	}
+
+	// Increment comment count on the post
+	err = s.feedRepo.IncrementPostCommentCount(ctx, req.PostID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to increment comment count for post %s: %w", req.PostID.Hex(), err)
 	}
 
 	return createdComment, nil
@@ -520,13 +516,32 @@ func (s *FeedService) DeleteComment(ctx context.Context, userID, postID, comment
 		return errors.New("unauthorized to delete this comment")
 	}
 
-	return s.feedRepo.DeleteComment(ctx, postID, commentID)
+	err = s.feedRepo.DeleteComment(ctx, postID, commentID)
+	if err != nil {
+		return err
+	}
+
+	// Decrement comment count on the post
+	err = s.feedRepo.DecrementPostCommentCount(ctx, postID)
+	if err != nil {
+		return fmt.Errorf("failed to decrement comment count for post %s: %w", postID.Hex(), err)
+	}
+
+	return nil
 }
 
 // Reply operations
 func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID, req *models.CreateReplyRequest) (*models.Reply, error) {
+	// Fetch sender's user details for notification content
+	senderUser, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		fmt.Printf("Failed to find sender user %s for notification: %v\n", userID.Hex(), err)
+		// Decide how to handle: return error, or proceed with generic content
+		// For now, we'll proceed, but log the error.
+	}
+
 	// Check if comment exists
-	_, err := s.feedRepo.GetCommentByID(ctx, req.CommentID)
+	_, err = s.feedRepo.GetCommentByID(ctx, req.CommentID)
 	if err != nil {
 		return nil, errors.New("comment not found")
 	}
@@ -541,16 +556,14 @@ func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID
 
 	// Extract mentions from content
 	mentionedUsernames := utils.ExtractMentions(req.Content)
+	mentionedUsers, err := s.userRepo.FindUsersByUserNames(ctx, mentionedUsernames)
+	if err != nil {
+		// Log error but don't fail reply creation if mentioned users are not found
+		fmt.Printf("Failed to find mentioned users: %v\n", err)
+	}
 	var mentionedUserIDs []primitive.ObjectID
-	for _, username := range mentionedUsernames {
-		user, err := s.userRepo.FindUserByUserName(ctx, username)
-		if err != nil {
-			// Log error but don't fail reply creation if a mentioned user is not found
-			continue
-		}
-		if user != nil {
-			mentionedUserIDs = append(mentionedUserIDs, user.ID)
-		}
+	for _, user := range mentionedUsers {
+		mentionedUserIDs = append(mentionedUserIDs, user.ID)
 	}
 
 	reply := &models.Reply{
@@ -591,7 +604,7 @@ func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID
 					Type:        models.NotificationTypeReply,
 					TargetID:    createdReply.ID,
 					TargetType:  "reply",
-					Content:     fmt.Sprintf("%s replied to your comment.", userID),
+					Content:     fmt.Sprintf("%s replied to your comment.", senderUser.Username),
 				}
 				_, err := s.notificationService.CreateNotification(ctx, notificationReq)
 				if err != nil {
@@ -610,7 +623,7 @@ func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID
 			Type:        models.NotificationTypeMention,
 			TargetID:    createdReply.ID,
 			TargetType:  "reply",
-			Content:     fmt.Sprintf("%s mentioned you in a reply.", userID),
+			Content:     fmt.Sprintf("%s mentioned you in a reply.", senderUser.Username),
 		}
 		_, err := s.notificationService.CreateNotification(ctx, notificationReq)
 		if err != nil {
@@ -783,6 +796,18 @@ func (s *FeedService) CreateReaction(ctx context.Context, userID primitive.Objec
 			}
 		}
 	}
+	// Increment reaction count on the target document
+	switch req.TargetType {
+	case "post":
+		err = s.feedRepo.IncrementPostReactionCount(ctx, req.TargetID)
+	case "comment":
+		err = s.feedRepo.IncrementCommentReactionCount(ctx, req.TargetID)
+	case "reply":
+		err = s.feedRepo.IncrementReplyReactionCount(ctx, req.TargetID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to increment reaction count for target %s (%s): %w", req.TargetID.Hex(), req.TargetType, err)
+	}
 
 	return createdReaction, nil
 }
@@ -825,6 +850,18 @@ func (s *FeedService) DeleteReaction(ctx context.Context, userID primitive.Objec
 				fmt.Printf("Failed to produce ReactionDeleted WebSocketEvent to Kafka: %v\n", err)
 			}
 		}
+	}
+	// Decrement reaction count on the target document
+	switch targetType {
+	case "post":
+		err = s.feedRepo.DecrementPostReactionCount(ctx, targetID)
+	case "comment":
+		err = s.feedRepo.DecrementCommentReactionCount(ctx, targetID)
+	case "reply":
+		err = s.feedRepo.DecrementReplyReactionCount(ctx, targetID)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to decrement reaction count for target %s (%s): %w", targetID.Hex(), targetType, err)
 	}
 
 	return nil

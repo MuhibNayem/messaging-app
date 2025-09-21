@@ -141,12 +141,18 @@ func (r *FeedRepository) UpdatePost(ctx context.Context, postID primitive.Object
 	return &updated, nil
 }
 
-func (r *FeedRepository) DeletePost(ctx context.Context, postID primitive.ObjectID) error {
+func (r *FeedRepository) DeletePost(ctx context.Context, userID, postID primitive.ObjectID) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	_, err := r.postsCollection.DeleteOne(ctx, bson.M{"_id": postID})
-	return err
+	res, err := r.postsCollection.DeleteOne(ctx, bson.M{"_id": postID, "user_id": userID})
+	if err != nil {
+		return err
+	}
+	if res.DeletedCount == 0 {
+		return mongo.ErrNoDocuments
+	}
+	return nil
 }
 
 func (r *FeedRepository) ListPosts(ctx context.Context, filter bson.M, opts *options.FindOptions) ([]models.Post, error) {
@@ -506,89 +512,35 @@ func (r *FeedRepository) aggregatePostPipeline() mongo.Pipeline {
 		}}},
 		bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
 
-		// Lookup comments for the post
+
+
+		// Lookup reactions and count by type
 		bson.D{{Key: "$lookup", Value: bson.M{
-			"from": "comments",
-			"let":  bson.M{"postId": "$_id"},
+			"from":         "reactions",
+			"localField":   "_id",
+			"foreignField": "target_id",
+			"as":           "reaction_counts_array", // Temporary name for the array of {k,v} pairs
 			"pipeline": mongo.Pipeline{
-				// Match comments by post_id
-				bson.D{{Key: "$match", Value: bson.M{"$expr": bson.M{"$eq": bson.A{"$post_id", "$$postId"}}}}},
-
-				// Lookup comment author
-				bson.D{{Key: "$lookup", Value: bson.M{
-					"from":         "users",
-					"localField":   "user_id",
-					"foreignField": "_id",
-					"as":           "author_info",
+				bson.D{{Key: "$match", Value: bson.M{"target_type": "post"}}},
+				bson.D{{Key: "$group", Value: bson.M{
+					"_id":   "$type",
+					"count": bson.M{"$sum": 1},
 				}}},
-				bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
-
-				// Lookup replies for the comment
-				bson.D{{Key: "$lookup", Value: bson.M{
-					"from": "replies",
-					"let":  bson.M{"commentId": "$_id"},
-					"pipeline": mongo.Pipeline{
-						bson.D{{Key: "$match", Value: bson.M{"$expr": bson.M{"$eq": bson.A{"$comment_id", "$$commentId"}}}}},
-
-						// Lookup reply author
-						bson.D{{Key: "$lookup", Value: bson.M{
-							"from":         "users",
-							"localField":   "user_id",
-							"foreignField": "_id",
-							"as":           "author_info",
-						}}},
-						bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
-
-						// Project reply fields
-						bson.D{{Key: "$project", Value: bson.M{
-							"_id":             1,
-							"comment_id":      1,
-							"parent_reply_id": 1,
-							"user_id":         1,
-							"content":         1,
-							"media_type":      1,
-							"media_url":       1,
-							"mentions":        1,
-							"created_at":      1,
-							"updated_at":      1,
-							"author": bson.M{
-								"id":        bson.M{"$toString": "$author_info._id"},
-								"username":  "$author_info.username",
-								"avatar":    "$author_info.avatar",
-								"full_name": "$author_info.full_name",
-							},
-						}}},
-					},
-					"as": "replies",
-				}}},
-
-				// Project comment fields
 				bson.D{{Key: "$project", Value: bson.M{
-					"_id":        1,
-					"post_id":    1,
-					"user_id":    1,
-					"content":    1,
-					"media_type": 1,
-					"media_url":  1,
-					"mentions":   1,
-					"created_at": 1,
-					"updated_at": 1,
-					"author": bson.M{
-						"id":        "$author_info._id",
-						"username":  "$author_info.username",
-						"avatar":    "$author_info.avatar",
-						"full_name": "$author_info.full_name",
-					},
-					"replies": 1,
+					"_id": 0, // Exclude _id from the sub-document
+					"k":   "$_id", // Key for $arrayToObject
+					"v":   "$count", // Value for $arrayToObject
 				}}},
 			},
-			"as": "comments",
 		}}},
-
+		// Convert array of {k, v} objects into a single object
+		bson.D{{Key: "$addFields", Value: bson.M{
+			"specific_reaction_counts": bson.M{"$arrayToObject": "$reaction_counts_array"},
+		}}},
 		// Final projection (shape the output as needed)
 		bson.D{{Key: "$project", Value: bson.M{
 			"_id":             1,
-			"id":              "$_id",
+			"id":              bson.M{"$toString": "$_id"},
 			"user_id":         1,
 			"content":         1,
 			"media_type":      1,
@@ -600,12 +552,14 @@ func (r *FeedRepository) aggregatePostPipeline() mongo.Pipeline {
 			"created_at":      1,
 			"updated_at":      1,
 			"author": bson.M{
-				"id":        bson.M{"$ifNull": bson.A{bson.M{"$toString": "$author_info._id"}, nil}},
+				"id":        bson.M{"$toString": "$author_info._id"},
 				"username":  bson.M{"$ifNull": bson.A{"$author_info.username", "Deleted User"}},
 				"avatar":    bson.M{"$ifNull": bson.A{"$author_info.avatar", ""}},
 				"full_name": bson.M{"$ifNull": bson.A{"$author_info.full_name", "Deleted User"}},
 			},
-			"comments": 1,
+			"specific_reaction_counts": "$specific_reaction_counts",
+			"total_reactions": "$total_reactions",
+			"total_comments":  "$total_comments",
 		}}},
 	}
 }
@@ -659,7 +613,7 @@ func (r *FeedRepository) aggregateCommentPipeline() mongo.Pipeline {
 		// final shape
 		bson.D{{Key: "$project", Value: bson.M{
 			"_id":        1,
-			"id":         "$_id",
+			"id":         bson.M{"$toString": "$_id"},
 			"post_id":    1,
 			"user_id":    1,
 			"content":    1,
@@ -690,6 +644,7 @@ func (r *FeedRepository) aggregateReplyPipeline() mongo.Pipeline {
 		bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
 		bson.D{{Key: "$project", Value: bson.M{
 			"_id":             1,
+			"id":              bson.M{"$toString": "$_id"},
 			"comment_id":      1,
 			"parent_reply_id": 1,
 			"user_id":         1,
@@ -740,3 +695,100 @@ func (r *FeedRepository) CountReactionsByType(ctx context.Context, targetID prim
 
 	return out, nil
 }
+
+func (r *FeedRepository) IncrementPostReactionCount(ctx context.Context, postID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.postsCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": postID},
+		bson.M{"$inc": bson.M{"total_reactions": 1}},
+	)
+	return err
+}
+
+func (r *FeedRepository) DecrementPostReactionCount(ctx context.Context, postID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.postsCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": postID},
+		bson.M{"$inc": bson.M{"total_reactions": -1}},
+	)
+	return err
+}
+
+func (r *FeedRepository) IncrementCommentReactionCount(ctx context.Context, commentID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.commentsCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": commentID},
+		bson.M{"$inc": bson.M{"total_reactions": 1}},
+	)
+	return err
+}
+
+func (r *FeedRepository) DecrementCommentReactionCount(ctx context.Context, commentID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.commentsCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": commentID},
+		bson.M{"$inc": bson.M{"total_reactions": -1}},
+	)
+	return err
+}
+
+func (r *FeedRepository) IncrementReplyReactionCount(ctx context.Context, replyID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.repliesCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": replyID},
+		bson.M{"$inc": bson.M{"total_reactions": 1}},
+	)
+	return err
+}
+
+func (r *FeedRepository) DecrementReplyReactionCount(ctx context.Context, replyID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.repliesCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": replyID},
+		bson.M{"$inc": bson.M{"total_reactions": -1}},
+	)
+	return err
+}
+
+func (r *FeedRepository) IncrementPostCommentCount(ctx context.Context, postID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.postsCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": postID},
+		bson.M{"$inc": bson.M{"total_comments": 1}},
+	)
+	return err
+}
+
+func (r *FeedRepository) DecrementPostCommentCount(ctx context.Context, postID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.postsCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": postID},
+		bson.M{"$inc": bson.M{"total_comments": -1}},
+	)
+	return err
+}
+
