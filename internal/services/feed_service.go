@@ -546,12 +546,9 @@ func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID
 		return nil, errors.New("comment not found")
 	}
 
-	// Optional: Check if parent reply exists
-	if req.ParentReplyID != nil {
-		_, err := s.feedRepo.GetReplyByID(ctx, *req.ParentReplyID)
-		if err != nil {
-			return nil, errors.New("parent reply not found")
-		}
+	// Disallow replies to replies
+	if req.ParentReplyID != nil && !req.ParentReplyID.IsZero() {
+		return nil, errors.New("replies to replies are not allowed")
 	}
 
 	// Extract mentions from content
@@ -568,7 +565,6 @@ func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID
 
 	reply := &models.Reply{
 		CommentID:     req.CommentID,
-		ParentReplyID: req.ParentReplyID,
 		UserID:        userID,
 		Content:       req.Content,
 		MediaType:     req.MediaType,
