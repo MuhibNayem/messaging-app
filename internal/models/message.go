@@ -24,6 +24,7 @@ type Message struct {
 	ContentType     string               `bson:"content_type" json:"content_type"`
 	MediaURLs       []string             `bson:"media_urls,omitempty" json:"media_urls,omitempty"`
 	SeenBy          []primitive.ObjectID `bson:"seen_by" json:"seen_by"`
+	DeliveredTo     []primitive.ObjectID `bson:"delivered_to" json:"delivered_to"`
 	IsDeleted       bool                 `bson:"is_deleted" json:"is_deleted"`
 	DeletedAt       *time.Time           `bson:"deleted_at,omitempty" json:"deleted_at,omitempty"`
 	OriginalContent string               `bson:"original_content,omitempty" json:"-"`

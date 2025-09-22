@@ -2,6 +2,9 @@ package models
 
 import (
 	"encoding/json"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // WebSocketEvent is a generic structure for events sent over WebSocket.
@@ -17,4 +20,11 @@ type TypingEvent struct {
 	ConversationID string `json:"conversation_id"`
 	IsTyping       bool   `json:"is_typing"`
 	Timestamp      int64  `json:"timestamp"`
+}
+
+// DeliveredEvent represents a message delivery event
+type DeliveredEvent struct {
+	MessageIDs  []primitive.ObjectID `json:"message_ids"`
+	DelivererID primitive.ObjectID   `json:"deliverer_id"` // The user who received the message
+	Timestamp   time.Time            `json:"timestamp"`
 }

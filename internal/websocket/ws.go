@@ -64,6 +64,11 @@ type Client struct {
 	Status    string // Add this line
 }
 
+// MessageUpdater defines the interface for updating message statuses
+type MessageUpdater interface {
+	MarkMessagesAsDelivered(ctx context.Context, userID primitive.ObjectID, messageIDs []primitive.ObjectID) error
+}
+
 // Hub maintains the set of active clients and broadcasts messages to them.
 type Hub struct {
 	userClients  map[string]map[*Client]bool
@@ -85,15 +90,18 @@ type Hub struct {
 	ReactionEvents      chan models.ReactionEvent      // New channel for reaction events
 	ReadReceiptEvents   chan models.ReadReceiptEvent   // New channel for read receipt events
 	MessageEditedEvents chan models.MessageEditedEvent // New channel for message edited events
+	DeliveredEvents     chan models.DeliveredEvent     // New channel for delivered events
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	mu sync.RWMutex
+
+	messageUpdater MessageUpdater // Use interface instead of concrete type
 }
 
 // NewHub creates a new Hub and starts its goroutines
-func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository, feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, messageRepo *repositories.MessageRepository) *Hub {
+func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository, feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, messageRepo *repositories.MessageRepository, messageUpdater MessageUpdater) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
 		userClients:         make(map[string]map[*Client]bool),
@@ -113,8 +121,10 @@ func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepos
 		ReactionEvents:      make(chan models.ReactionEvent, 10000),      // Initialize new channel
 		ReadReceiptEvents:   make(chan models.ReadReceiptEvent, 10000),   // Initialize new channel
 		MessageEditedEvents: make(chan models.MessageEditedEvent, 10000), // Initialize new channel
+		DeliveredEvents:     make(chan models.DeliveredEvent, 10000),     // Initialize new channel
 		ctx:                 ctx,
 		cancel:              cancel,
+		messageUpdater:      messageUpdater, // Assign MessageUpdater
 	}
 	go h.run()
 	go h.subscribeToRedis()
@@ -292,6 +302,9 @@ func (h *Hub) run() {
 		case ev := <-h.typingEvents:
 			h.dispatchTypingEvent(ev)
 
+		case m := <-h.Broadcast:
+			h.dispatchMessage(m)
+
 		case reactionEvent := <-h.ReactionEvents:
 			reactionEventJSON, err := json.Marshal(reactionEvent)
 			if err != nil {
@@ -336,17 +349,64 @@ func (h *Hub) run() {
 				}
 			}
 
-		case messageEditedEvent := <-h.MessageEditedEvents:
-			messageEditedEventJSON, err := json.Marshal(messageEditedEvent)
+		case ev := <-h.MessageEditedEvents:
+			h.broadcastToParticipants(ev.MessageID, models.WebSocketEvent{Type: "MESSAGE_EDITED_UPDATE", Data: json.RawMessage(fmt.Sprintf(`{"message_id": "%s", "new_content": "%s"}`, ev.MessageID.Hex(), ev.NewContent))})
+
+		case dev := <-h.DeliveredEvents:
+			// Mark messages as delivered in the database
+			err := h.messageUpdater.MarkMessagesAsDelivered(h.ctx, dev.DelivererID, dev.MessageIDs)
 			if err != nil {
-				log.Printf("Error marshaling MessageEditedEvent for WebSocket: %v", err)
+				log.Printf("Error marking messages as delivered: %v", err)
+			}
+
+			// Notify relevant clients about the delivery update
+			deliveredEventJSON, err := json.Marshal(dev)
+			if err != nil {
+				log.Printf("Error marshaling DeliveredEvent for WebSocket: %v", err)
 				continue
 			}
 			wsEvent := models.WebSocketEvent{
-				Type: "MESSAGE_EDITED_UPDATE",
-				Data: messageEditedEventJSON,
+				Type: "MESSAGE_DELIVERED_UPDATE",
+				Data: deliveredEventJSON,
 			}
-			h.broadcastToParticipants(messageEditedEvent.MessageID, wsEvent)
+			// Find the message to get its conversation context for targeted broadcast
+			if len(dev.MessageIDs) > 0 {
+				msg, err := h.messageRepo.GetMessageByID(h.ctx, dev.MessageIDs[0])
+				if err != nil {
+					log.Printf("Error getting message %s for delivered event broadcast: %v", dev.MessageIDs[0].Hex(), err)
+					continue
+				}
+				// Determine conversation type and ID
+				conversationID := ""
+				var clients []*Client
+				if !msg.GroupID.IsZero() {
+					conversationID = msg.GroupID.Hex()
+					clients = h.getClientsByGroup(conversationID)
+				} else if !msg.ReceiverID.IsZero() {
+					// For direct messages, send to sender and receiver
+					clients = append(h.getClientsByUser(msg.SenderID.Hex()), h.getClientsByUser(msg.ReceiverID.Hex())...)
+					conversationID = msg.ReceiverID.Hex() // Use receiver ID as conversation ID for direct messages
+				}
+
+				wsEventJSON, err := json.Marshal(wsEvent)
+				if err != nil {
+					log.Printf("Error marshaling WebSocketEvent for delivered update: %v", err)
+					continue
+				}
+
+				for _, c := range clients {
+					// Don't send delivered update to the deliverer themselves
+					if c.userID == dev.DelivererID.Hex() {
+						continue
+					}
+					select {
+					case c.send <- wsEventJSON:
+						log.Printf("Sent MESSAGE_DELIVERED_UPDATE for message %s to user %s", dev.MessageIDs[0].Hex(), c.userID)
+					default:
+						h.removeClient(c)
+					}
+				}
+			}
 		}
 	}
 }
@@ -458,16 +518,40 @@ func (h *Hub) dispatchMessage(msg models.Message) {
 }
 
 func (h *Hub) sendToClients(clients []*Client, msg models.Message) {
-	data, err := json.Marshal(msg)
+	msgData, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("Error marshaling message: %v", err)
 		return
 	}
+
+	wsEvent := models.WebSocketEvent{
+		Type: "MESSAGE_CREATED",
+		Data: msgData,
+	}
+
+	wsEventJSON, err := json.Marshal(wsEvent)
+	if err != nil {
+		log.Printf("Error marshaling WebSocketEvent for message: %v", err)
+		return
+	}
+
 	for _, c := range clients {
 		select {
-		case c.send <- data:
+		case c.send <- wsEventJSON:
 			c.setLastSeen(time.Now())
 			wsMessagesSent.WithLabelValues(msg.ContentType).Inc()
+
+			// Send a delivered event to the hub for processing
+			delivererObjectID, err := primitive.ObjectIDFromHex(c.userID)
+			if err != nil {
+				log.Printf("Error converting deliverer ID to ObjectID: %v", err)
+				return
+			}
+			h.DeliveredEvents <- models.DeliveredEvent{
+				MessageIDs:  []primitive.ObjectID{msg.ID},
+				DelivererID: delivererObjectID,
+				Timestamp:   time.Now(),
+			}
 		default:
 			h.removeClient(c)
 		}
@@ -585,18 +669,51 @@ func (h *Hub) sendPendingMessages(client *Client, msgIDs []string, msgType strin
 }
 
 func (h *Hub) dispatchTypingEvent(ev models.TypingEvent) {
-	clients := h.getClientsByGroup(ev.ConversationID)
+	conversationType := ""
+	conversationID := ev.ConversationID
+
+	if len(conversationID) > 5 && conversationID[:5] == "user-" {
+		conversationType = "user"
+		conversationID = conversationID[5:] // Extract actual user ID
+	} else if len(conversationID) > 6 && conversationID[:6] == "group-" {
+		conversationType = "group"
+		conversationID = conversationID[6:] // Extract actual group ID
+	} else {
+		log.Printf("Invalid conversation ID format for typing event: %s", ev.ConversationID)
+		return
+	}
+
+	var clients []*Client
+	if conversationType == "user" {
+		clients = h.getClientsByUser(conversationID)
+	} else if conversationType == "group" {
+		clients = h.getClientsByGroup(conversationID)
+	}
+
 	data, err := json.Marshal(ev)
 	if err != nil {
 		log.Printf("Error marshaling typing event: %v", err)
 		return
 	}
+	// Create a WebSocketEvent to send to the client
+	wsEvent := models.WebSocketEvent{
+		Type: "TYPING",
+		Data: data, // The marshaled TypingEvent is the data payload
+	}
+
+	wsEventJSON, err := json.Marshal(wsEvent)
+	if err != nil {
+		log.Printf("Error marshaling WebSocketEvent for typing: %v", err)
+		return
+	}
+
+	log.Printf("Dispatching typing event: %+v to %d clients", ev, len(clients))
 	for _, c := range clients {
 		if c.userID == ev.UserID {
 			continue
 		}
 		select {
-		case c.send <- data:
+		case c.send <- wsEventJSON:
 			c.setLastSeen(time.Now())
 		default:
 			h.removeClient(c)
@@ -801,10 +918,15 @@ func (c *Client) readPump(h *Hub) {
 		}
 		switch env.Type {
 		case "typing":
-			var e models.TypingEvent
-			if err := json.Unmarshal(env.Payload, &e); err == nil && e.ConversationID != "" {
-				h.typingEvents <- models.TypingEvent{UserID: c.userID, ConversationID: e.ConversationID, IsTyping: e.IsTyping, Timestamp: time.Now().Unix()}
+			var typingData struct {
+				ConversationID string `json:"conversation_id"`
+				IsTyping       bool   `json:"isTyping"`
 			}
+			if err := json.Unmarshal(env.Payload, &typingData); err != nil {
+				log.Printf("Error unmarshaling typing data: %v", err)
+				return
+			}
+			h.typingEvents <- models.TypingEvent{UserID: c.userID, ConversationID: typingData.ConversationID, IsTyping: typingData.IsTyping, Timestamp: time.Now().Unix()}
 		case "message":
 			var m models.Message
 			if err := json.Unmarshal(env.Payload, &m); err == nil && m.Content != "" && m.SenderID.Hex() == c.userID {

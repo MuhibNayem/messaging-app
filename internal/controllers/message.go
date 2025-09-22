@@ -443,3 +443,53 @@ func (c *MessageController) RemoveReactionFromMessage(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
 }
+
+// @Summary Mark messages as delivered
+// @Description Mark messages as delivered to the current user
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param messageIDs body []string true "Array of message IDs to mark as delivered"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 500 {object} models.ErrorResponse
+// @Router /messages/delivered [post]
+func (c *MessageController) MarkMessagesAsDelivered(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	currentUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid user ID"})
+		return
+	}
+
+	var messageIDs []string
+	if err := ctx.ShouldBindJSON(&messageIDs); err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if len(messageIDs) == 0 {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "at least one message ID required"})
+		return
+	}
+
+	// Convert string IDs to ObjectIDs
+	var objectIDs []primitive.ObjectID
+	for _, id := range messageIDs {
+		objID, err := primitive.ObjectIDFromHex(id)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid message ID: " + id})
+			return
+		}
+		objectIDs = append(objectIDs, objID)
+	}
+
+	err = c.messageService.MarkMessagesAsDelivered(ctx.Request.Context(), currentUserID, objectIDs)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}

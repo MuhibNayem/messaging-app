@@ -158,25 +158,6 @@ func main() {
 		}
 	}()
 
-	// Initialize WebSocket Hub
-	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, messageRepo)
-
-	// Initialize Kafka Consumers
-	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
-	go func() {
-		kafkaConsumer.ConsumeMessages(context.Background())
-	}()
-
-	notificationConsumer := kafka.NewNotificationConsumer(cfg.KafkaBrokers, "notifications_events", "notification-group", hub)
-	go func() {
-		notificationConsumer.Start(context.Background())
-	}()
-	defer func() {
-		if err := notificationConsumer.Close(); err != nil {
-			log.Printf("Error closing Notification Kafka consumer: %v", err)
-		}
-	}()
-
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
 	userService := services.NewUserService(userRepo, redisClient.GetClient())
@@ -200,6 +181,25 @@ func main() {
 	searchController := controllers.NewSearchController(searchService)                   // Initialize SearchController
 	notificationController := controllers.NewNotificationController(notificationService) // Initialize NotificationController
 	conversationController := conversationControllers.NewConversationController(conversationService)
+
+	// Initialize WebSocket Hub
+	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, messageRepo, messageService)
+
+	// Initialize Kafka Consumers
+	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
+	go func() {
+		kafkaConsumer.ConsumeMessages(context.Background())
+	}()
+
+	notificationConsumer := kafka.NewNotificationConsumer(cfg.KafkaBrokers, "notifications_events", "notification-group", hub)
+	go func() {
+		notificationConsumer.Start(context.Background())
+	}()
+	defer func() {
+		if err := notificationConsumer.Close(); err != nil {
+			log.Printf("Error closing Notification Kafka consumer: %v", err)
+		}
+	}()
 
 	// Initialize Gin Router with metrics middleware
 	router := gin.Default()
@@ -359,6 +359,7 @@ func main() {
 		messageRoutes.GET("", messageController.GetMessages)
 		messageRoutes.GET("/search", messageController.SearchMessages)
 		messageRoutes.POST("/seen", messageController.MarkMessagesAsSeen)
+		messageRoutes.POST("/delivered", messageController.MarkMessagesAsDelivered)
 		messageRoutes.GET("/unread", messageController.GetUnreadCount)
 		messageRoutes.DELETE("/:id", messageController.DeleteMessage)
 		messageRoutes.POST("/:id/react", messageController.AddReactionToMessage)

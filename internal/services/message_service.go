@@ -267,6 +267,18 @@ func (s *MessageService) MarkMessagesAsSeen(ctx context.Context, userID primitiv
 	return nil
 }
 
+func (s *MessageService) MarkMessagesAsDelivered(ctx context.Context, userID primitive.ObjectID, messageIDs []primitive.ObjectID) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+
+	err := s.messageRepo.MarkMessagesAsDelivered(ctx, userID, messageIDs)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *MessageService) GetUnreadCount(ctx context.Context, userID primitive.ObjectID) (int64, error) {
 	// Try Redis first
 	count, err := s.redisClient.Get(ctx, "unread:"+userID.Hex()).Int64()

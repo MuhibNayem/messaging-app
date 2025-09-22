@@ -142,6 +142,13 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 func (r *MessageRepository) CreateMessage(ctx context.Context, msg *models.Message) (*models.Message, error) {
 	msg.CreatedAt = time.Now()
 	msg.UpdatedAt = time.Now()
+	// Ensure SeenBy and DeliveredTo are initialized as empty slices
+	if msg.SeenBy == nil {
+		msg.SeenBy = []primitive.ObjectID{}
+	}
+	if msg.DeliveredTo == nil {
+		msg.DeliveredTo = []primitive.ObjectID{}
+	}
 
 	res, err := r.collection.InsertOne(ctx, msg)
 	if err != nil {
@@ -158,6 +165,18 @@ func (r *MessageRepository) MarkMessagesAsSeen(ctx context.Context, userID primi
 		bson.M{"_id": bson.M{"$in": messageIDs}},
 		bson.M{
 			"$addToSet": bson.M{"seen_by": userID},
+			"$set":      bson.M{"updated_at": time.Now()},
+		},
+	)
+	return err
+}
+
+func (r *MessageRepository) MarkMessagesAsDelivered(ctx context.Context, userID primitive.ObjectID, messageIDs []primitive.ObjectID) error {
+	_, err := r.collection.UpdateMany(
+		ctx,
+		bson.M{"_id": bson.M{"$in": messageIDs}},
+		bson.M{
+			"$addToSet": bson.M{"delivered_to": userID},
 			"$set":      bson.M{"updated_at": time.Now()},
 		},
 	)
