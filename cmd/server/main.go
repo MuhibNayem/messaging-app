@@ -293,6 +293,7 @@ func main() {
 		userRoutes.GET("/me/groups", groupController.GetUserGroups)         // Get current user's groups
 
 		userRoutes.GET("", userController.ListUsers)                // List all users
+		userRoutes.GET("/presence", userController.GetUsersPresence) // Get presence status for multiple users
 		userRoutes.GET("/:id", userController.GetUserByID)          // Get specific user by ID
 		userRoutes.GET("/:id/status", userController.GetUserStatus) // Get user status
 	}

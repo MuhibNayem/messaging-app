@@ -1,12 +1,13 @@
 package controllers
 
 import (
+	"github.com/gin-gonic/gin"
 	"messaging-app/internal/models"
 	"messaging-app/internal/services"
 	"net/http"
 	"strconv"
+	"strings"
 
-	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -29,7 +30,7 @@ func NewUserController(userService *services.UserService) *UserController {
 // @Router /api/user [get]
 func (c *UserController) GetUser(ctx *gin.Context) {
 	userID := ctx.MustGet("userID").(string)
-	
+
 	objID, err := primitive.ObjectIDFromHex(userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
@@ -43,14 +44,14 @@ func (c *UserController) GetUser(ctx *gin.Context) {
 	}
 
 	userDTO := models.User{
-        ID:        user.ID,
-        Username:  user.Username,
-		Email: 	   user.Email,
-        Avatar:    user.Avatar,
-        CreatedAt: user.CreatedAt,
+		ID:        user.ID,
+		Username:  user.Username,
+		Email:     user.Email,
+		Avatar:    user.Avatar,
+		CreatedAt: user.CreatedAt,
 		Friends:   user.Friends,
 		Blocked:   user.Blocked,
-    }
+	}
 	ctx.JSON(http.StatusOK, userDTO)
 }
 
@@ -65,25 +66,25 @@ func (c *UserController) GetUser(ctx *gin.Context) {
 // @Failure 404 {object} gin.H
 // @Router /api/users/{id} [get]
 func (c *UserController) GetUserByID(ctx *gin.Context) {
-    userID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
-        return
-    }
+	userID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
 
-    user, err := c.userService.GetUserByID(ctx.Request.Context(), userID)
-    if err != nil {
-        ctx.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-        return
-    }
+	user, err := c.userService.GetUserByID(ctx.Request.Context(), userID)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
 
-    publicUser := models.User{
-        ID:        user.ID,
-        Username:  user.Username,
-        Avatar:    user.Avatar,
-        CreatedAt: user.CreatedAt,
-    }
-    ctx.JSON(http.StatusOK, publicUser)
+	publicUser := models.User{
+		ID:        user.ID,
+		Username:  user.Username,
+		Avatar:    user.Avatar,
+		CreatedAt: user.CreatedAt,
+	}
+	ctx.JSON(http.StatusOK, publicUser)
 }
 
 // GetUserStatus godoc
@@ -97,23 +98,72 @@ func (c *UserController) GetUserByID(ctx *gin.Context) {
 // @Failure 500 {object} gin.H
 // @Router /api/users/{id}/status [get]
 func (c *UserController) GetUserStatus(ctx *gin.Context) {
-    userID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
-        return
-    }
+	userID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
 
-    status, err := c.userService.GetUserStatus(ctx.Request.Context(), userID)
-    if err != nil {
-        ctx.JSON(http.StatusInternalServerError, gin.H{"error": "could not retrieve user status"})
-        return
-    }
+	status, err := c.userService.GetUserStatus(ctx.Request.Context(), userID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "could not retrieve user status"})
+		return
+	}
 
-    ctx.JSON(http.StatusOK, status)
+	ctx.JSON(http.StatusOK, status)
 }
 
-// UpdateUser godoc
-// @Summary Update user profile
+// GetUsersPresence godoc
+// @Summary Get presence status for multiple users
+// @Security BearerAuth
+// @Tags users
+// @Produce json
+// @Param ids query string true "Comma-separated list of user IDs"
+// @Success 200 {object} map[string]map[string]interface{}
+// @Failure 400 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/users/presence [get]
+func (c *UserController) GetUsersPresence(ctx *gin.Context) {
+	idsParam := ctx.Query("ids")
+	if idsParam == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "user IDs are required"})
+		return
+	}
+
+	stringIDs := splitAndTrim(idsParam)
+	var objectIDs []primitive.ObjectID
+	for _, id := range stringIDs {
+		objID, err := primitive.ObjectIDFromHex(id)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID format: " + id})
+			return
+		}
+		objectIDs = append(objectIDs, objID)
+	}
+
+	presenceMap, err := c.userService.GetUsersPresence(ctx.Request.Context(), objectIDs)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "could not retrieve users presence"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, presenceMap)
+}
+
+// Helper function to split and trim a comma-separated string
+func splitAndTrim(s string) []string {
+	var result []string
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+// UpdateUser godoc// @Summary Update user profile
 // @Security BearerAuth
 // @Tags users
 // @Accept json
@@ -125,7 +175,7 @@ func (c *UserController) GetUserStatus(ctx *gin.Context) {
 // @Router /api/user [put]
 func (c *UserController) UpdateUser(ctx *gin.Context) {
 	userID := ctx.MustGet("userID").(string)
-	
+
 	var updateReq models.UserUpdateRequest
 	if err := ctx.ShouldBindJSON(&updateReq); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -202,7 +252,7 @@ func (c *UserController) UpdateEmail(ctx *gin.Context) {
 	var req models.UpdateEmailRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return	
+		return
 	}
 
 	err = c.userService.UpdateEmail(ctx.Request.Context(), objID, &req)

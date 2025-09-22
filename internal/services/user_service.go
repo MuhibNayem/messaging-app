@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"messaging-app/internal/models"
 	"messaging-app/internal/repositories"
 	"time"
@@ -276,6 +277,41 @@ func (s *UserService) DeactivateAccount(ctx context.Context, userID primitive.Ob
 	// TODO: Invalidate user sessions, log out user, etc.
 
 	return nil
+}
+
+// GetUsersPresence retrieves the presence status for a list of user IDs
+func (s *UserService) GetUsersPresence(ctx context.Context, userIDs []primitive.ObjectID) (map[string]map[string]interface{}, error) {
+	presenceMap := make(map[string]map[string]interface{})
+
+	keys := make([]string, len(userIDs))
+	for i, userID := range userIDs {
+		keys[i] = fmt.Sprintf("presence:%s", userID.Hex())
+	}
+
+	// MGET all presence keys from Redis
+	vals, err := s.redisClient.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get presence from Redis: %w", err)
+	}
+
+	for i, userID := range userIDs {
+		var statusData map[string]interface{}
+		val := vals[i]
+
+		if val == nil {
+			// Key not found, assume offline
+			statusData = map[string]interface{}{"status": "offline", "last_seen": time.Now().Unix()}
+		} else {
+			if err := json.Unmarshal([]byte(val.(string)), &statusData); err != nil {
+				// Error unmarshaling, assume offline and log error
+				log.Printf("Error unmarshaling presence data for user %s: %v", userID.Hex(), err)
+				statusData = map[string]interface{}{"status": "offline", "last_seen": time.Now().Unix()}
+			}
+		}
+		presenceMap[userID.Hex()] = statusData
+	}
+
+	return presenceMap, nil
 }
 
 // UpdatePrivacySettings updates a user's privacy settings
