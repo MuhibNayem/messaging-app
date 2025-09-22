@@ -62,20 +62,46 @@ func (c *MessageConsumer) ConsumeMessages(ctx context.Context) {
 		messagesConsumed.WithLabelValues(m.Topic).Inc()
 		start := time.Now()
 
-		var wsEvent models.WebSocketEvent
-		if err := json.Unmarshal(m.Value, &wsEvent); err != nil {
-			log.Printf("Error unmarshaling Kafka message to WebSocketEvent: %v, message: %s", err, string(m.Value))
-			// If unmarshaling fails, commit the message to avoid reprocessing
-			if err := c.reader.CommitMessages(ctx, m); err != nil {
-				log.Printf("Error committing message after unmarshaling failure: %v", err)
+		// Attempt to unmarshal as a Message
+		var msg models.Message
+		if err := json.Unmarshal(m.Value, &msg); err == nil && !msg.ID.IsZero() {
+			log.Printf("Received Kafka message of type: Message for topic %s at offset %d", m.Topic, m.Offset)
+			c.hub.Broadcast <- msg
+		} else {
+			// If not a Message, attempt to unmarshal as a ReactionEvent
+			var reactionEvent models.ReactionEvent
+			if err := json.Unmarshal(m.Value, &reactionEvent); err == nil && !reactionEvent.MessageID.IsZero() {
+				log.Printf("Received Kafka message of type: ReactionEvent for topic %s at offset %d", m.Topic, m.Offset)
+				c.hub.ReactionEvents <- reactionEvent
+			} else {
+				// If not a ReactionEvent, attempt to unmarshal as a ReadReceiptEvent
+				var readReceiptEvent models.ReadReceiptEvent
+				if err := json.Unmarshal(m.Value, &readReceiptEvent); err == nil && len(readReceiptEvent.MessageIDs) > 0 {
+					log.Printf("Received Kafka message of type: ReadReceiptEvent for topic %s at offset %d", m.Topic, m.Offset)
+					c.hub.ReadReceiptEvents <- readReceiptEvent
+				} else {
+					// If not a ReadReceiptEvent, attempt to unmarshal as a MessageEditedEvent
+					var messageEditedEvent models.MessageEditedEvent
+					if err := json.Unmarshal(m.Value, &messageEditedEvent); err == nil && !messageEditedEvent.MessageID.IsZero() {
+						log.Printf("Received Kafka message of type: MessageEditedEvent for topic %s at offset %d", m.Topic, m.Offset)
+						c.hub.MessageEditedEvents <- messageEditedEvent
+					} else {
+						// Fallback to WebSocketEvent (for feed events)
+						var wsEvent models.WebSocketEvent
+						if err := json.Unmarshal(m.Value, &wsEvent); err != nil {
+							log.Printf("Error unmarshaling Kafka message to Message, ReactionEvent, ReadReceiptEvent, MessageEditedEvent, or WebSocketEvent: %v, message: %s", err, string(m.Value))
+							// If unmarshaling fails, commit the message to avoid reprocessing
+							if err := c.reader.CommitMessages(ctx, m); err != nil {
+								log.Printf("Error committing message after unmarshaling failure: %v", err)
+							}
+							continue
+						}
+						log.Printf("Received Kafka event of type: %s for topic %s at offset %d", wsEvent.Type, m.Topic, m.Offset)
+						c.hub.FeedEvents <- wsEvent
+					}
+				}
 			}
-			continue
 		}
-
-		log.Printf("Received Kafka event of type: %s for topic %s at offset %d", wsEvent.Type, m.Topic, m.Offset)
-
-		// Send the WebSocketEvent to the Hub's FeedEvents channel
-		c.hub.FeedEvents <- wsEvent
 
 		if err := c.reader.CommitMessages(ctx, m); err != nil {
 			log.Printf("Error committing message: %v", err)

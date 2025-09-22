@@ -160,39 +160,71 @@ func (r *FriendshipRepository) GetPendingRequest(ctx context.Context, requesterI
 	return &friendship, nil
 }
 
-// GetFriendRequests retrieves friend requests with status filtering
-func (r *FriendshipRepository) GetFriendRequests(ctx context.Context, userID primitive.ObjectID, direction string, page, limit int64) ([]models.Friendship, int64, error) {
-	log.Printf("[FriendshipRepository] GetFriendRequests called with userID: %s, direction: %s, page: %d, limit: %d", userID.Hex(), direction, page, limit)
+// GetFriendRequests retrieves friend requests with status filtering and populated user data
+func (r *FriendshipRepository) GetFriendRequests(ctx context.Context, userID primitive.ObjectID, status models.FriendshipStatus, page, limit int64) ([]models.PopulatedFriendship, int64, error) {
+	log.Printf("[FriendshipRepository] GetFriendRequests called with userID: %s, status: %s, page: %d, limit: %d", userID.Hex(), status, page, limit)
 
-	// Build filter based on request direction
-	filter := bson.M{
-		"status": direction,
+	// Match stage to filter friendships by the current user and status
+	matchFilter := bson.M{
+		"status": status,
+		"$or": []bson.M{
+			{"requester_id": userID},
+			{"receiver_id": userID},
+		},
 	}
+	matchStage := bson.D{{"$match", matchFilter}}
 
-	log.Printf("[FriendshipRepository] Using filter: %+v", filter)
-
-	// Get total count for pagination
-	total, err := r.db.Collection("friendships").CountDocuments(ctx, filter)
+	// Use CountDocuments for a robust total count
+	total, err := r.db.Collection("friendships").CountDocuments(ctx, matchFilter)
 	if err != nil {
-		log.Printf("[FriendshipRepository] Error counting documents: %v", err)
-		return nil, 0, fmt.Errorf("failed to count requests: %w", err)
+		return nil, 0, fmt.Errorf("failed to count documents: %w", err)
 	}
-	log.Printf("[FriendshipRepository] Total requests found: %d", total)
 
-	// Apply pagination and sorting
-	opts := options.Find().
-		SetSkip((page - 1) * limit).
-		SetLimit(limit).
-		SetSort(bson.D{{Key: "created_at", Value: -1}})
+	// Main aggregation pipeline
+	pipeline := mongo.Pipeline{
+		matchStage,
+		// Lookup requester info
+		bson.D{{"$lookup", bson.M{
+			"from":         "users",
+			"localField":   "requester_id",
+			"foreignField": "_id",
+			"as":           "requester_info",
+		}}},
+		// Lookup receiver info
+		bson.D{{"$lookup", bson.M{
+			"from":         "users",
+			"localField":   "receiver_id",
+			"foreignField": "_id",
+			"as":           "receiver_info",
+		}}},
+		// Unwind the arrays created by lookup
+		bson.D{{"$unwind", "$requester_info"}},
+		bson.D{{"$unwind", "$receiver_info"}},
+		// Project the final structure
+		bson.D{{"$project", bson.M{
+			"_id":            1,
+			"status":         1,
+			"created_at":     1,
+			"updated_at":     1,
+			"requester_id":   1,
+			"receiver_id":    1,
+			"requester_info": "$requester_info",
+			"receiver_info":  "$receiver_info",
+		}}},
+		// Sorting and pagination
+		bson.D{{"$sort", bson.D{{"updated_at", -1}}}},
+		bson.D{{"$skip", (page - 1) * limit}},
+		bson.D{{"$limit", limit}},
+	}
 
-	cursor, err := r.db.Collection("friendships").Find(ctx, filter, opts)
+	cursor, err := r.db.Collection("friendships").Aggregate(ctx, pipeline)
 	if err != nil {
 		log.Printf("[FriendshipRepository] Error finding documents: %v", err)
 		return nil, 0, fmt.Errorf("failed to find requests: %w", err)
 	}
 	defer cursor.Close(ctx)
 
-	var requests []models.Friendship
+	var requests []models.PopulatedFriendship
 	if err := cursor.All(ctx, &requests); err != nil {
 		log.Printf("[FriendshipRepository] Error decoding cursor: %v", err)
 		return nil, 0, fmt.Errorf("failed to decode requests: %w", err)
@@ -417,6 +449,24 @@ func (r *FriendshipRepository) GetFriends(ctx context.Context, userID primitive.
 	}
 
 	return friendUsers, nil
+}
+
+// GetPendingFriendshipByID finds a pending friendship by its ID for a specific receiver
+func (r *FriendshipRepository) GetPendingFriendshipByID(ctx context.Context, friendshipID, receiverID primitive.ObjectID) (*models.Friendship, error) {
+    var friendship models.Friendship
+    err := r.db.Collection("friendships").FindOne(ctx, bson.M{
+        "_id":         friendshipID,
+        "receiver_id": receiverID,
+        "status":      models.FriendshipStatusPending,
+    }).Decode(&friendship)
+
+    if err != nil {
+        if errors.Is(err, mongo.ErrNoDocuments) {
+            return nil, ErrFriendRequestNotFound
+        }
+        return nil, err
+    }
+    return &friendship, nil
 }
 
 // Custom errors

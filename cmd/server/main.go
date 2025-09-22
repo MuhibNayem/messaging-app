@@ -12,11 +12,14 @@ import (
 
 	"messaging-app/config"
 	"messaging-app/internal/controllers"
+	conversationControllers "messaging-app/internal/controllers"
 	"messaging-app/internal/kafka"
 	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/redis"
 	"messaging-app/internal/repositories"
+	conversationRepositories "messaging-app/internal/repositories"
 	"messaging-app/internal/services"
+	conversationServices "messaging-app/internal/services"
 	"messaging-app/internal/websocket"
 	"messaging-app/pkg/middleware"
 
@@ -145,6 +148,7 @@ func main() {
 	feedRepo := repositories.NewFeedRepository(db)
 	privacyRepo := repositories.NewPrivacyRepository(db)
 	notificationRepo := repositories.NewNotificationRepository(db)
+	conversationRepo := conversationRepositories.NewConversationRepository(db, userRepo, groupRepo)
 
 	// Initialize Kafka Producer
 	kafkaProducer := kafka.NewMessageProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -155,7 +159,7 @@ func main() {
 	}()
 
 	// Initialize WebSocket Hub
-	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo)
+	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, messageRepo)
 
 	// Initialize Kafka Consumers
 	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
@@ -176,13 +180,14 @@ func main() {
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
 	userService := services.NewUserService(userRepo, redisClient.GetClient())
-	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient())
+	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo)
 	groupService := services.NewGroupService(groupRepo, userRepo)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
 	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
 	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
 	searchService := services.NewSearchService(userRepo, feedRepo) // Initialize SearchService
+	conversationService := conversationServices.NewConversationService(conversationRepo)
 
 	// Initialize Controllers
 	authController := controllers.NewAuthController(authService)
@@ -194,6 +199,7 @@ func main() {
 	privacyController := controllers.NewPrivacyController(privacyService, userService)
 	searchController := controllers.NewSearchController(searchService)                   // Initialize SearchController
 	notificationController := controllers.NewNotificationController(notificationService) // Initialize NotificationController
+	conversationController := conversationControllers.NewConversationController(conversationService)
 
 	// Initialize Gin Router with metrics middleware
 	router := gin.Default()
@@ -286,8 +292,8 @@ func main() {
 		userRoutes.PUT("/me/privacy", userController.UpdatePrivacySettings) // Update current user privacy
 		userRoutes.GET("/me/groups", groupController.GetUserGroups)         // Get current user's groups
 
-		userRoutes.GET("", userController.ListUsers)       // List all users
-		userRoutes.GET("/:id", userController.GetUserByID) // Get specific user by ID
+		userRoutes.GET("", userController.ListUsers)                // List all users
+		userRoutes.GET("/:id", userController.GetUserByID)          // Get specific user by ID
 		userRoutes.GET("/:id/status", userController.GetUserStatus) // Get user status
 	}
 
@@ -342,7 +348,11 @@ func main() {
 		privacyRoutes.DELETE("/lists/:id/members/:memberId", privacyController.RemoveMemberFromCustomPrivacyList)
 	}
 
-	// Message Routes
+	// Conversation Routes
+	conversationRoutes := api.Group("/conversations")
+	{
+		conversationRoutes.GET("", conversationController.GetConversationSummaries)
+	}
 	messageRoutes := api.Group("/messages")
 	{
 		messageRoutes.POST("", messageController.SendMessage)
@@ -351,6 +361,9 @@ func main() {
 		messageRoutes.POST("/seen", messageController.MarkMessagesAsSeen)
 		messageRoutes.GET("/unread", messageController.GetUnreadCount)
 		messageRoutes.DELETE("/:id", messageController.DeleteMessage)
+		messageRoutes.POST("/:id/react", messageController.AddReactionToMessage)
+		messageRoutes.DELETE("/:id/react", messageController.RemoveReactionFromMessage)
+		messageRoutes.PUT("/:id", messageController.EditMessage)
 	}
 
 	// Group Routes

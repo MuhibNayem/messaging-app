@@ -1,2078 +1,657 @@
 # API Documentation
 
-This document provides a comprehensive overview of the messaging application's RESTful API endpoints. Each endpoint includes its HTTP method, URL, a description, request/response payloads, and authentication requirements.
-
-## 1. Health Check Endpoints
-
-### 1.1 Liveness Probe
-
-Checks if the application is running.
-
-*   **URL:** `/health`
-*   **Method:** `GET`
-*   **Authentication:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "status": "ok"
-    }
-    ```
-
-### 1.2 Readiness Probe
-
-Checks if the application and its dependencies (MongoDB, Redis) are ready to handle requests.
-
-*   **URL:** `/ready`
-*   **Method:** `GET`
-*   **Authentication:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "status": "ready",
-        "mongo": "available",
-        "redis": "available"
-    }
-    ```
-*   **Error Response (503 Service Unavailable):**
-    ```json
-    {
-        "status": "not_ready",
-        "mongo": "unavailable",
-        "redis": "available"
-    }
-    ```
-
-## 2. Authentication Endpoints (`/api/auth`)
-
-### 2.1 Register User
-
-Registers a new user in the system.
-
-*   **URL:** `/api/auth/register`
-*   **Method:** `POST`
-*   **Authentication:** None
-*   **Request Body:**
-    ```json
-    {
-        "username": "newuser",
-        "email": "newuser@example.com",
-        "password": "StrongPassword123!"
-    }
-    ```
-*   **Response (201 Created):**
-    ```json
-    {
-        "access_token": "eyJhbGciOiJIUzI1Ni...",
-        "refresh_token": "eyJhbGciOiJIUzI1Ni...",
-        "user": {
-            "id": "654321098765432109876543",
-            "username": "newuser",
-            "email": "newuser@example.com",
-            "avatar": "",
-            "full_name": "",
-            "bio": "",
-            "date_of_birth": null,
-            "gender": "",
-            "location": "",
-            "phone_number": "",
-            "friends": [],
-            "two_factor_enabled": false,
-            "email_verified": false,
-            "is_active": true,
-            "last_login": null,
-            "created_at": "2023-10-27T10:00:00Z"
-        }
-    }
-    ```
-*   **Error Response (400 Bad Request):**
-    ```json
-    {
-        "error": "username already exists"
-    }
-    ```
-
-### 2.2 Login User
-
-Authenticates a user and provides JWT tokens.
-
-*   **URL:** `/api/auth/login`
-*   **Method:** `POST`
-*   **Authentication:** None
-*   **Request Body:**
-    ```json
-    {
-        "email": "user@example.com",
-        "password": "UserPassword123"
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "access_token": "eyJhbGciOiJIUzI1Ni...",
-        "refresh_token": "eyJhbGciOiJIUzI1Ni...",
-        "user": {
-            "id": "654321098765432109876543",
-            "username": "existinguser",
-            "email": "user@example.com",
-            "avatar": "",
-            "full_name": "",
-            "bio": "",
-            "date_of_birth": null,
-            "gender": "",
-            "location": "",
-            "phone_number": "",
-            "friends": [],
-            "two_factor_enabled": false,
-            "email_verified": true,
-            "is_active": true,
-            "last_login": "2023-10-27T10:00:00Z",
-            "created_at": "2023-09-01T00:00:00Z"
-        }
-    }
-    ```
-*   **Error Response (401 Unauthorized):**
-    ```json
-    {
-        "error": "invalid credentials: please check email"
-    }
-    ```
-
-### 2.3 Refresh Access Token
-
-Refreshes an expired access token using a valid refresh token.
-
-*   **URL:** `/api/auth/refresh`
-*   **Method:** `POST`
-*   **Authentication:** Refresh Token in Request Body
-*   **Request Body:**
-    ```json
-    {
-        "refresh_token": "eyJhbGciOiJIUzI1Ni..."
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "access_token": "eyJhbGciOiJIUzI1Ni...",
-        "refresh_token": "eyJhbGciOiJIUzI1Ni...",
-        "user": {
-            "id": "654321098765432109876543",
-            "username": "existinguser",
-            "email": "user@example.com",
-            "avatar": "",
-            "full_name": "",
-            "bio": "",
-            "date_of_birth": null,
-            "gender": "",
-            "location": "",
-            "phone_number": "",
-            "friends": [],
-            "two_factor_enabled": false,
-            "email_verified": true,
-            "is_active": true,
-            "last_login": "2023-10-27T10:00:00Z",
-            "created_at": "2023-09-01T00:00:00Z"
-        }
-    }
-    ```
-*   **Error Response (401 Unauthorized):**
-    ```json
-    {
-        "error": "invalid refresh token"
-    }
-    ```
-
-### 2.4 Logout User
-
-Logs out the current user by blacklisting their access token and deleting their refresh token.
-
-*   **URL:** `/api/auth/logout`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "message": "Successfully logged out"
-    }
-    ```
-*   **Error Response (500 Internal Server Error):**
-    ```json
-    {
-        "error": "failed to delete refresh token"
-    }
-    ```
-
-## 3. User Endpoints (`/api/users`)
-
-### 3.1 Get Current User Profile
-
-Retrieves the profile information of the authenticated user.
-
-*   **URL:** `/api/users/me`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876543",
-        "username": "currentuser",
-        "email": "current@example.com",
-        "avatar": "https://example.com/avatar.jpg",
-        "created_at": "2023-09-01T00:00:00Z",
-        "friends": [
-            "654321098765432109876544",
-            "654321098765432109876545"
-        ],
-        "blocked": []
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "user not found"
-    }
-    ```
-
-### 3.2 Get User by ID
-
-Retrieves the public profile information of a specific user by their ID.
-
-*   **URL:** `/api/users/:id`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the user to retrieve.
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876544",
-        "username": "anotheruser",
-        "avatar": "https://example.com/another_avatar.jpg",
-        "created_at": "2023-09-02T00:00:00Z"
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "user not found"
-    }
-    ```
-
-### 3.3 Get User Status
-
-Retrieves the online status of a specific user.
-
-*   **URL:** `/api/users/:id/status`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the user to check.
-*   **Response (200 OK):**
-    ```json
-    {
-        "is_online": true,
-        "last_seen": "2023-10-27T10:00:00Z"
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "user not found"
-    }
-    ```
-
-### 3.4 Update Current User Profile
-
-Updates the profile information of the authenticated user.
-
-*   **URL:** `/api/users/me`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "username": "updatedusername",
-        "full_name": "Updated Name",
-        "bio": "A new bio for my profile.",
-        "avatar": "https://example.com/new_avatar.jpg"
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876543",
-        "username": "updatedusername",
-        "email": "current@example.com",
-        "avatar": "https://example.com/new_avatar.jpg",
-        "full_name": "Updated Name",
-        "bio": "A new bio for my profile.",
-        "date_of_birth": null,
-        "gender": "",
-        "location": "",
-        "phone_number": "",
-        "friends": [],
-        "two_factor_enabled": false,
-        "email_verified": true,
-        "is_active": true,
-        "last_login": "2023-10-27T10:00:00Z",
-        "created_at": "2023-09-01T00:00:00Z"
-    }
-    ```
-*   **Error Response (400 Bad Request):**
-    ```json
-    {
-        "error": "username already exists"
-    }
-    ```
-
-### 3.5 List Users
-
-Retrieves a paginated list of users, with optional search functionality.
-
-*   **URL:** `/api/users`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Query Parameters:**
-    *   `page` (integer, optional): The page number to retrieve (default: 1).
-    *   `limit` (integer, optional): The number of users per page (default: 20, max: 100).
-    *   `search` (string, optional): A search query to filter users by username or email.
-*   **Response (200 OK):**
-    ```json
-    {
-        "users": [
-            {
-                "id": "654321098765432109876543",
-                "username": "userone",
-                "email": "userone@example.com",
-                "avatar": "",
-                "created_at": "2023-09-01T00:00:00Z"
-            },
-            {
-                "id": "654321098765432109876544",
-                "username": "usertwo",
-                "email": "usertwo@example.com",
-                "avatar": "",
-                "created_at": "2023-09-02T00:00:00Z"
-            }
-        ],
-        "total": 2,
-        "page": 1,
-        "limit": 20
-    }
-    ```
-*   **Error Response (400 Bad Request):**
-    ```json
-    {
-        "error": "invalid page number"
-    }
-    ```
-
-### 3.6 Update User Email
-
-Updates the email address of the authenticated user.
-
-*   **URL:** `/api/users/me/email`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "new_email": "newemail@example.com"
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-*   **Error Response (400 Bad Request):**
-    ```json
-    {
-        "error": "email already in use by another account"
-    }
-    ```
-
-### 3.7 Update User Password
-
-Updates the password of the authenticated user.
-
-*   **URL:** `/api/users/me/password`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "current_password": "OldPassword123!",
-        "new_password": "NewStrongPassword456!"
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-*   **Error Response (400 Bad Request):**
-    ```json
-    {
-        "error": "current password is incorrect"
-    }
-    ```
-
-### 3.8 Toggle Two-Factor Authentication
-
-Enables or disables two-factor authentication for the authenticated user.
-
-*   **URL:** `/api/users/me/2fa`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "enabled": true
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-*   **Error Response (500 Internal Server Error):**
-    ```json
-    {
-        "error": "failed to toggle two-factor authentication"
-    }
-    ```
-
-### 3.9 Deactivate User Account
-
-Deactivates the authenticated user's account.
-
-*   **URL:** `/api/users/me/deactivate`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-*   **Error Response (500 Internal Server Error):**
-    ```json
-    {
-        "error": "failed to deactivate account"
-    }
-    ```
-
-### 3.10 Update User Privacy Settings
-
-Updates the privacy settings for the authenticated user.
-
-*   **URL:** `/api/users/me/privacy`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "default_post_privacy": "FRIENDS",
-        "can_see_my_friends_list": "ONLY_ME"
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-*   **Error Response (500 Internal Server Error):**
-    ```json
-    {
-        "error": "failed to update privacy settings"
-    }
-    ```
-
-## 4. Friendship Endpoints (`/api/friendships`)
-
-### 4.1 Send Friend Request
-
-Sends a friend request to another user.
-
-*   **URL:** `/api/friendships/requests`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "receiver_id": "654321098765432109876544"
-    }
-    ```
-*   **Response (201 Created):**
-    ```json
-    {
-        "id": "654321098765432109876546",
-        "requester_id": "654321098765432109876543",
-        "receiver_id": "654321098765432109876544",
-        "status": "pending",
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-*   **Error Response (409 Conflict):**
-    ```json
-    {
-        "error": "friend request already exists"
-    }
-    ```
-
-### 4.2 Respond to Friend Request
-
-Accepts or rejects a pending friend request.
-
-*   **URL:** `/api/friendships/requests/:id/respond`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "friendship_id": "654321098765432109876546",
-        "accept": true
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "status": "success"
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "friend request not found"
-    }
-    ```
-
-### 4.3 List Friendships
-
-Retrieves a paginated list of friendships for the authenticated user, with optional status filtering.
-
-*   **URL:** `/api/friendships`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Query Parameters:**
-    *   `status` (string, optional): Filter by friendship status (`pending`, `accepted`, `rejected`).
-    *   `page` (integer, optional): The page number to retrieve (default: 1).
-    *   `limit` (integer, optional): The number of items per page (default: 10).
-*   **Response (200 OK):**
-    ```json
-    {
-        "data": [
-            {
-                "id": "654321098765432109876546",
-                "requester_id": "654321098765432109876543",
-                "receiver_id": "654321098765432109876544",
-                "status": "accepted",
-                "created_at": "2023-10-27T10:00:00Z",
-                "updated_at": "2023-10-27T10:00:00Z"
-            }
-        ],
-        "total": 1,
-        "page": 1,
-        "totalPages": 1
-    }
-    ```
-
-### 4.4 Check Friendship Status
-
-Checks if the authenticated user is friends with another specified user.
-
-*   **URL:** `/api/friendships/check`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Query Parameters:**
-    *   `other_user_id` (string, required): The ID of the other user to check friendship status with.
-*   **Response (200 OK):**
-    ```json
-    {
-        "are_friends": true
-    }
-    ```
-
-### 4.5 Unfriend a User
-
-Removes an existing friendship.
-
-*   **URL:** `/api/friendships/:id`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the friendship to remove.
-*   **Response (200 OK):**
-    ```json
-    {
-        "status": "success"
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "not friends"
-    }
-    ```
-
-### 4.6 Block a User
-
-Blocks a specified user.
-
-*   **URL:** `/api/friendships/block/:userId`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `userId` (string, required): The ID of the user to block.
-*   **Response (200 OK):**
-    ```json
-    {
-        "status": "success"
-    }
-    ```
-*   **Error Response (409 Conflict):**
-    ```json
-    {
-        "error": "user already blocked"
-    }
-    ```
-
-### 4.7 Unblock a User
-
-Unblocks a previously blocked user.
-
-*   **URL:** `/api/friendships/block/:userId`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `userId` (string, required): The ID of the user to unblock.
-*   **Response (200 OK):**
-    ```json
-    {
-        "status": "success"
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "block not found"
-    }
-    ```
-
-### 4.8 Check if User is Blocked
-
-Checks if the authenticated user has blocked another specified user, or if they are blocked by them.
-
-*   **URL:** `/api/friendships/block/:userId/status`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `userId` (string, required): The ID of the user to check block status with.
-*   **Response (200 OK):**
-    ```json
-    {
-        "is_blocked": true
-    }
-    ```
-
-### 4.9 Get Blocked Users List
-
-Retrieves a list of users blocked by the authenticated user.
-
-*   **URL:** `/api/friendships/blocked`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "blocked_users": [
-            {
-                "id": "654321098765432109876547",
-                "username": "blockeduser",
-                "email": "blocked@example.com",
-                "avatar": "",
-                "created_at": "2023-09-03T00:00:00Z"
-            }
-        ]
-    }
-    ```
-
-## 5. Group Endpoints (`/api/groups`)
-
-### 5.1 Create Group
-
-Creates a new chat group.
-
-*   **URL:** `/api/groups`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "name": "My Awesome Group",
-        "member_ids": [
-            "654321098765432109876544",
-            "654321098765432109876545"
-        ]
-    }
-    ```
-*   **Response (201 Created):**
-    ```json
-    {
-        "id": "654321098765432109876548",
-        "name": "My Awesome Group",
-        "creator": {
-            "id": "654321098765432109876543",
-            "username": "currentuser",
-            "email": "current@example.com"
-        },
-        "members": [
-            {
-                "id": "654321098765432109876543",
-                "username": "currentuser",
-                "email": "current@example.com"
-            },
-            {
-                "id": "654321098765432109876544",
-                "username": "anotheruser",
-                "email": "another@example.com"
-            },
-            {
-                "id": "654321098765432109876545",
-                "username": "thirduser",
-                "email": "third@example.com"
-            }
-        ],
-        "admins": [
-            {
-                "id": "654321098765432109876543",
-                "username": "currentuser",
-                "email": "current@example.com"
-            }
-        ],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-*   **Error Response (400 Bad Request):**
-    ```json
-    {
-        "error": "member 654321098765432109876599 not found"
-    }
-    ```
-
-### 5.2 Get Group Details
-
-Retrieves the details of a specific chat group.
-
-*   **URL:** `/api/groups/:id`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the group to retrieve.
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876548",
-        "name": "My Awesome Group",
-        "creator": {
-            "id": "654321098765432109876543",
-            "username": "currentuser",
-            "email": "current@example.com"
-        },
-        "members": [
-            {
-                "id": "654321098765432109876543",
-                "username": "currentuser",
-                "email": "current@example.com"
-            },
-            {
-                "id": "654321098765432109876544",
-                "username": "anotheruser",
-                "email": "another@example.com"
-            }
-        ],
-        "admins": [
-            {
-                "id": "654321098765432109876543",
-                "username": "currentuser",
-                "email": "current@example.com"
-            }
-        ],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "group not found"
-    }
-    ```
-
-### 5.3 Update Group
-
-Updates the details of a chat group (e.g., name). Only group admins can perform this action.
-
-*   **URL:** `/api/groups/:id`
-*   **Method:** `PATCH`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the group to update.
-*   **Request Body:**
-    ```json
-    {
-        "name": "My Renamed Group"
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876548",
-        "name": "My Renamed Group",
-        "creator": {
-            "id": "654321098765432109876543",
-            "username": "currentuser",
-            "email": "current@example.com"
-        },
-        "members": [
-            {
-                "id": "654321098765432109876543",
-                "username": "currentuser",
-                "email": "current@example.com"
-            }
-        ],
-        "admins": [
-            {
-                "id": "654321098765432109876543",
-                "username": "currentuser",
-                "email": "current@example.com"
-            }
-        ],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-*   **Error Response (403 Forbidden):**
-    ```json
-    {
-        "error": "only admins can update group"
-    }
-    ```
-
-### 5.4 Add Member to Group
-
-Adds a user as a member to a chat group. Only group admins can perform this action.
-
-*   **URL:** `/api/groups/:id/members`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the group.
-*   **Request Body:**
-    ```json
-    {
-        "user_id": "654321098765432109876549"
-    }
-    ```
-*   **Response (204 No Content):** (Success, no content returned)
-*   **Error Response (403 Forbidden):**
-    ```json
-    {
-        "error": "only admins can add members"
-    }
-    ```
-
-### 5.5 Remove Member from Group
-
-Removes a member from a chat group. Only group admins can perform this action.
-
-*   **URL:** `/api/groups/:id/members/:userId`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the group.
-    *   `userId` (string, required): The ID of the user to remove.
-*   **Request Body:** None
-*   **Response (204 No Content):** (Success, no content returned)
-*   **Error Response (403 Forbidden):**
-    ```json
-    {
-        "error": "only admins can remove members"
-    }
-    ```
-
-### 5.6 Add Admin to Group
-
-Promotes an existing group member to an admin. Only group admins can perform this action.
-
-*   **URL:** `/api/groups/:id/admins`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the group.
-*   **Request Body:**
-    ```json
-    {
-        "user_id": "654321098765432109876549"
-    }
-    ```
-*   **Response (204 No Content):** (Success, no content returned)
-*   **Error Response (403 Forbidden):**
-    ```json
-    {
-        "error": "only admins can add other admins"
-    }
-    ```
-
-### 5.7 Get User's Groups
-
-Retrieves a list of all chat groups the authenticated user is a member of.
-
-*   **URL:** `/api/users/me/groups`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    [
-        {
-            "id": "654321098765432109876548",
-            "name": "My Awesome Group",
-            "creator": {
-                "id": "654321098765432109876543",
-                "username": "currentuser",
-                "email": "current@example.com"
-            },
-            "members": [
-                {
-                    "id": "654321098765432109876543",
-                    "username": "currentuser",
-                    "email": "current@example.com"
-                },
-                {
-                    "id": "654321098765432109876544",
-                    "username": "anotheruser",
-                    "email": "another@example.com"
-                }
-            ],
-            "admins": [
-                {
-                    "id": "654321098765432109876543",
-                    "username": "currentuser",
-                    "email": "current@example.com"
-                }
-            ],
-            "created_at": "2023-10-27T10:00:00Z",
-            "updated_at": "2023-10-27T10:00:00Z"
-        }
-    ]
-    ```
-
-## 6. Messaging Endpoints (`/api/messages`)
-
-### 6.1 Send Message
-
-Sends a direct message to a user or a message to a group.
-
-*   **URL:** `/api/messages`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body (Direct Message):**
-    ```json
-    {
-        "receiver_id": "654321098765432109876544",
-        "content": "Hello there!",
-        "content_type": "text"
-    }
-    ```
-*   **Request Body (Group Message):**
-    ```json
-    {
-        "group_id": "654321098765432109876548",
-        "content": "Hello everyone in the group!",
-        "content_type": "text",
-        "media_urls": ["https://example.com/image.jpg"]
-    }
-    ```
-*   **Response (201 Created):**
-    ```json
-    {
-        "id": "654321098765432109876550",
-        "sender_id": "654321098765432109876543",
-        "sender_name": "currentuser",
-        "receiver_id": "654321098765432109876544",
-        "group_id": null,
-        "group_name": "",
-        "content": "Hello there!",
-        "content_type": "text",
-        "media_urls": [],
-        "seen_by": [],
+This document outlines the RESTful API endpoints for the messaging application, covering Messages, Conversations, Friendships, and Groups.
+
+---
+
+## 1. Messages API
+
+### 1.1 Send a Message
+- **Summary:** Send a direct or group message.
+- **Method:** `POST`
+- **Endpoint:** `/messages`
+- **Authentication:** `ApiKeyAuth`
+- **Request Payload (`models.MessageRequest`):**
+  ```json
+  {
+    "receiver_id": "string", // Optional, for direct messages
+    "group_id": "string",    // Optional, for group messages
+    "content": "string",     // Optional, if media_urls are provided
+    "content_type": "string", // e.g., "text", "image", "video", "file", "audio", "text_image", "text_video", "text_file", "multiple"
+    "media_urls": ["string"], // Optional, URLs of media files
+    "reply_to_message_id": "string" // Optional, ID of the message being replied to
+  }
+  ```
+  *Note: Either `receiver_id` or `group_id` must be provided, but not both. `content` or `media_urls` must be provided.*
+- **Success Response (201 `models.Message`):**
+  ```json
+  {
+    "id": "string",
+    "sender_id": "string",
+    "sender_name": "string",
+    "receiver_id": "string",
+    "group_id": "string",
+    "group_name": "string",
+    "content": "string",
+    "content_type": "string",
+    "media_urls": ["string"],
+    "seen_by": ["string"],
+    "is_deleted": false,
+    "deleted_at": "timestamp",
+    "is_edited": false,
+    "edited_at": "timestamp",
+    "reactions": [
+      {
+        "user_id": "string",
+        "emoji": "string",
+        "timestamp": "timestamp"
+      }
+    ],
+    "reply_to_message_id": "string",
+    "created_at": "timestamp",
+    "updated_at": "timestamp"
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid user/group ID, missing content/media, invalid content type, both receiver/group ID provided.
+  - `403 Forbidden`: Not a group member, can only message friends.
+  - `500 Internal Server Error`
+
+### 1.2 Get Messages
+- **Summary:** Get messages for a conversation or group.
+- **Method:** `GET`
+- **Endpoint:** `/messages`
+- **Authentication:** `ApiKeyAuth`
+- **Query Parameters:**
+  - `groupID` (string, optional): Group ID
+  - `receiverID` (string, optional): Receiver ID (for direct messages)
+  - `page` (int, optional, default: 1): Page number
+  - `limit` (int, optional, default: 50): Messages per page (max 100)
+  - `before` (string, optional): Get messages before this timestamp (RFC3339)
+  *Note: Either `groupID` or `receiverID` must be provided, but not both.*
+- **Success Response (200 `models.MessageResponse`):**
+  ```json
+  {
+    "messages": [
+      {
+        "id": "string",
+        "sender_id": "string",
+        "sender_name": "string",
+        "receiver_id": "string",
+        "group_id": "string",
+        "group_name": "string",
+        "content": "string",
+        "content_type": "string",
+        "media_urls": ["string"],
+        "seen_by": ["string"],
         "is_deleted": false,
-        "deleted_at": null,
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-*   **Error Response (403 Forbidden):**
-    ```json
+        "deleted_at": "timestamp",
+        "is_edited": false,
+        "edited_at": "timestamp",
+        "reactions": [],
+        "reply_to_message_id": "string",
+        "created_at": "timestamp",
+        "updated_at": "timestamp"
+      }
+    ],
+    "total": 0,
+    "page": 0,
+    "limit": 0,
+    "has_more": false
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Both groupID and receiverID provided, neither provided.
+  - `500 Internal Server Error`
+
+### 1.3 Mark Messages as Seen
+- **Summary:** Mark messages as seen by the current user.
+- **Method:** `POST`
+- **Endpoint:** `/messages/seen`
+- **Authentication:** `ApiKeyAuth`
+- **Request Payload:** `array` of `string` (message IDs)
+  ```json
+  ["message_id_1", "message_id_2"]
+  ```
+- **Success Response (200 `models.SuccessResponse`):**
+  ```json
+  {
+    "success": true
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid message IDs, empty array.
+  - `500 Internal Server Error`
+
+### 1.4 Get Unread Message Count
+- **Summary:** Get count of unread messages for the current user.
+- **Method:** `GET`
+- **Endpoint:** `/messages/unread`
+- **Authentication:** `ApiKeyAuth`
+- **Success Response (200 `models.UnreadCountResponse`):**
+  ```json
+  {
+    "count": 0
+  }
+  ```
+- **Failure Responses:**
+  - `500 Internal Server Error`
+
+### 1.5 Delete a Message
+- **Summary:** Delete a message (only for sender or admin).
+- **Method:** `DELETE`
+- **Endpoint:** `/messages/{id}`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Message ID
+- **Success Response (200 `models.SuccessResponse`):**
+  ```json
+  {
+    "success": true
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid message ID.
+  - `403 Forbidden`
+  - `404 Not Found`: Message not found.
+  - `500 Internal Server Error`
+
+### 1.6 Edit a Message
+- **Summary:** Edit the content of an existing message.
+- **Method:** `PUT`
+- **Endpoint:** `/messages/{id}`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Message ID
+- **Request Payload:**
+  ```json
+  {
+    "content": "string" // New message content
+  }
+  ```
+- **Success Response (200 `models.Message`):** (Same as Send Message success response)
+- **Failure Responses:**
+  - `400 Bad Request`: Missing content, invalid ID format.
+  - `403 Forbidden`
+  - `404 Not Found`: Message not found, not owned by user, or already deleted.
+  - `500 Internal Server Error`
+
+### 1.7 Search Messages
+- **Summary:** Search messages in user's conversations.
+- **Method:** `GET`
+- **Endpoint:** `/messages/search`
+- **Authentication:** `ApiKeyAuth`
+- **Query Parameters:**
+  - `q` (string, required): Search query
+  - `page` (int, optional, default: 1): Page number
+  - `limit` (int, optional, default: 20): Messages per page
+- **Success Response (200 `array` of `models.Message`):** (Array of messages, same structure as `models.Message` in Send Message)
+- **Failure Responses:**
+  - `400 Bad Request`: Missing search query.
+  - `500 Internal Server Error`
+
+### 1.8 Add Reaction to a Message
+- **Summary:** Add an emoji reaction to a specific message.
+- **Method:** `POST`
+- **Endpoint:** `/messages/{id}/react`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Message ID
+- **Request Payload:**
+  ```json
+  {
+    "emoji": "string" // e.g., "👍", "❤️"
+  }
+  ```
+- **Success Response (200 `models.SuccessResponse`):**
+  ```json
+  {
+    "success": true
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Missing emoji, invalid ID format.
+  - `404 Not Found`
+  - `409 Conflict`: Reaction already exists.
+  - `500 Internal Server Error`
+
+### 1.9 Remove Reaction from a Message
+- **Summary:** Remove an emoji reaction from a specific message.
+- **Method:** `DELETE`
+- **Endpoint:** `/messages/{id}/react`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Message ID
+- **Request Payload:**
+  ```json
+  {
+    "emoji": "string" // e.g., "👍", "❤️"
+  }
+  ```
+- **Success Response (200 `models.SuccessResponse`):**
+  ```json
+  {
+    "success": true
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Missing emoji, invalid ID format.
+  - `404 Not Found`: Reaction not present.
+  - `500 Internal Server Error`
+
+---
+
+## 2. Conversations API
+
+### 2.1 Get Conversation Summaries
+- **Summary:** Get a list of all conversations (direct and group) with last message details.
+- **Method:** `GET`
+- **Endpoint:** `/conversations`
+- **Authentication:** `ApiKeyAuth`
+- **Success Response (200 `array` of `models.ConversationSummary`):**
+  ```json
+  [
     {
-        "error": "can only message friends"
+      "id": "string",
+      "name": "string",
+      "avatar": "string",
+      "is_group": false,
+      "last_message_content": "string",
+      "last_message_timestamp": "timestamp"
     }
-    ```
+  ]
+  ```
+- **Failure Responses:**
+  - `401 Unauthorized`
+  - `500 Internal Server Error`
 
-### 6.2 Get Messages
+---
 
-Retrieves a paginated list of messages for a direct conversation or a group chat.
+## 3. Friendships API
 
-*   **URL:** `/api/messages`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Query Parameters (Direct Message):**
-    *   `receiverID` (string, required): The ID of the other user in the direct conversation.
-    *   `page` (integer, optional): The page number (default: 1).
-    *   `limit` (integer, optional): Messages per page (default: 50, max: 100).
-    *   `before` (string, optional): RFC3339 timestamp to get messages before this time.
-*   **Query Parameters (Group Message):**
-    *   `groupID` (string, required): The ID of the group chat.
-    *   `page` (integer, optional): The page number (default: 1).
-    *   `limit` (integer, optional): Messages per page (default: 50, max: 100).
-    *   `before` (string, optional): RFC3339 timestamp to get messages before this time.
-*   **Response (200 OK):**
-    ```json
-    {
-        "messages": [
-            {
-                "id": "654321098765432109876550",
-                "sender_id": "654321098765432109876543",
-                "sender_name": "currentuser",
-                "receiver_id": "654321098765432109876544",
-                "content": "Hello there!",
-                "content_type": "text",
-                "media_urls": [],
-                "seen_by": [
-                    "654321098765432109876544"
-                ],
-                "is_deleted": false,
-                "deleted_at": null,
-                "created_at": "2023-10-27T10:00:00Z",
-                "updated_at": "2023-10-27T10:00:00Z"
-            }
-        ],
-        "total": 1,
-        "page": 1,
-        "limit": 50,
-        "has_more": false
-    }
-    ```
-*   **Error Response (400 Bad Request):**
-    ```json
-    {
-        "error": "cannot specify both groupID and receiverID"
-    }
-    ```
+### 3.1 Send Friend Request
+- **Summary:** Send a friend request to another user.
+- **Method:** `POST`
+- **Endpoint:** `/friendships/requests`
+- **Authentication:** `ApiKeyAuth`
+- **Request Payload (`friendshipRequest`):**
+  ```json
+  {
+    "receiver_id": "string" // ID of the user to send request to
+  }
+  ```
+- **Success Response (201 `models.Friendship`):**
+  ```json
+  {
+    "id": "string",
+    "requester_id": "string",
+    "receiver_id": "string",
+    "status": "pending", // "pending", "accepted", "rejected", "blocked"
+    "created_at": "timestamp",
+    "updated_at": "timestamp"
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid user ID, invalid receiver ID.
+  - `401 Unauthorized`
+  - `409 Conflict`: Cannot friend self, friend request already exists.
 
-### 6.3 Search Messages
+### 3.2 Respond to Friend Request
+- **Summary:** Accept or reject a friend request.
+- **Method:** `POST`
+- **Endpoint:** `/friendships/requests/respond/{id}`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Friendship ID
+- **Request Payload (`friendshipResponse`):**
+  ```json
+  {
+    "friendship_id": "string", // ID of the friendship to respond to
+    "accept": true             // true to accept, false to reject
+  }
+  ```
+- **Success Response (200 `gin.H`):**
+  ```json
+  {
+    "status": "success"
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid user ID, invalid friendship ID.
+  - `401 Unauthorized`
+  - `403 Forbidden`: Not authorized.
+  - `404 Not Found`: Friend request not found.
 
-Searches for messages within the user's conversations.
-
-*   **URL:** `/api/messages/search`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Query Parameters:**
-    *   `q` (string, required): The search query.
-    *   `page` (integer, optional): The page number (default: 1).
-    *   `limit` (integer, optional): Messages per page (default: 20).
-*   **Response (200 OK):**
-    ```json
-    [
-        {
-            "id": "654321098765432109876550",
-            "sender_id": "654321098765432109876543",
-            "content": "Hello there! This is a search result.",
-            "created_at": "2023-10-27T10:00:00Z"
-        }
-    ]
-    ```
-
-### 6.4 Mark Messages as Seen
-
-Marks a list of messages as seen by the authenticated user.
-
-*   **URL:** `/api/messages/seen`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    [
-        "654321098765432109876550",
-        "654321098765432109876551"
-    ]
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-*   **Error Response (400 Bad Request):**
-    ```json
-    {
-        "error": "at least one message ID required"
-    }
-    ```
-
-### 6.5 Get Unread Message Count
-
-Retrieves the total count of unread messages for the authenticated user.
-
-*   **URL:** `/api/messages/unread`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "count": 5
-    }
-    ```
-*   **Error Response (500 Internal Server Error):**
-    ```json
-    {
-        "error": "failed to get unread count"
-    }
-    ```
-
-### 6.6 Delete Message
-
-Deletes a message. Only the sender or an authorized admin can delete a message. This performs a soft delete.
-
-*   **URL:** `/api/messages/:id`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the message to delete.
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-*   **Error Response (403 Forbidden):**
-    ```json
-    {
-        "error": "not authorized to delete this message"
-    }
-    ```
-
-## 7. Feed Endpoints (`/api/feed`)
-
-### 7.1 Create Post
-
-Creates a new post on the user's feed.
-
-*   **URL:** `/api/feed/posts`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "content": "This is my new post! #golang #api @anotheruser",
-        "media_type": "image",
-        "media_url": "https://example.com/post_image.jpg",
-        "privacy": "FRIENDS",
-        "custom_audience": [],
-        "mentions": ["654321098765432109876544"],
-        "hashtags": ["golang", "api"]
-    }
-    ```
-*   **Response (201 Created):**
-    ```json
-    {
-        "id": "654321098765432109876552",
-        "user_id": "654321098765432109876543",
-        "content": "This is my new post! #golang #api @anotheruser",
-        "media_type": "image",
-        "media_url": "https://example.com/post_image.jpg",
-        "privacy": "FRIENDS",
-        "custom_audience": [],
-        "comments": [],
-        "mentions": ["654321098765432109876544"],
-        "reaction_counts": {},
-        "hashtags": ["golang", "api"],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-
-### 7.2 List Posts
-
-Retrieves a paginated list of posts for the user's feed.
-
-*   **URL:** `/api/feed/posts`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Query Parameters:**
-    *   `page` (integer, optional): The page number (default: 1).
-    *   `limit` (integer, optional): Posts per page (default: 20).
-    *   `sortBy` (string, optional): Sort by field (`created_at`, `reaction_count`, `comment_count`). Default: `created_at`.
-    *   `sortOrder` (string, optional): Sort order (`asc`, `desc`). Default: `desc`.
-    *   `user_id` (string, optional): Filter posts by a specific user ID.
-*   **Response (200 OK):**
-    ```json
-    {
-        "posts": [...],
-        "total": 50,
-        "page": 1,
-        "limit": 20
-    }
-    ```
-
-### 7.3 Get Post by ID
-
-Retrieves a specific post by its ID.
-
-*   **URL:** `/api/feed/posts/:postId`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `postId` (string, required): The ID of the post to retrieve.
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876552",
-        "user_id": "654321098765432109876543",
-        "content": "This is my new post! #golang #api @anotheruser",
-        "media_type": "image",
-        "media_url": "https://example.com/post_image.jpg",
-        "privacy": "FRIENDS",
-        "custom_audience": [],
-        "comments": [],
-        "mentions": ["654321098765432109876544"],
-        "reaction_counts": {
-            "LIKE": 5,
-            "LOVE": 2
+### 3.3 List Friendships
+- **Summary:** Get a list of friendships with optional status filter.
+- **Method:** `GET`
+- **Endpoint:** `/friendships`
+- **Authentication:** `ApiKeyAuth`
+- **Query Parameters:**
+  - `status` (string, optional): Friendship status ("pending", "accepted", "rejected")
+  - `page` (int, optional, default: 1): Page number
+  - `limit` (int, optional, default: 10): Items per page
+- **Success Response (200 `gin.H`):**
+  ```json
+  {
+    "data": [
+      {
+        "id": "string",
+        "requester_id": "string",
+        "receiver_id": "string",
+        "requester_info": {
+          "id": "string",
+          "username": "string",
+          "email": "string",
+          "avatar": "string",
+          "full_name": "string",
+          "bio": "string",
+          "date_of_birth": "timestamp",
+          "gender": "string",
+          "location": "string",
+          "phone_number": "string",
+          "friends": ["string"],
+          "two_factor_enabled": false,
+          "email_verified": false,
+          "is_active": false,
+          "last_login": "timestamp",
+          "created_at": "timestamp"
         },
-        "hashtags": ["golang", "api"],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "post not found"
-    }
-    ```
+        "receiver_info": {
+          "id": "string",
+          "username": "string",
+          "email": "string",
+          "avatar": "string",
+          "full_name": "string",
+          "bio": "string",
+          "date_of_birth": "timestamp",
+          "gender": "string",
+          "location": "string",
+          "phone_number": "string",
+          "friends": ["string"],
+          "two_factor_enabled": false,
+          "email_verified": false,
+          "is_active": false,
+          "last_login": "timestamp",
+          "created_at": "timestamp"
+        },
+        "status": "string",
+        "created_at": "timestamp",
+        "updated_at": "timestamp"
+      }
+    ],
+    "total": 0,
+    "page": 0,
+    "totalPages": 0
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`
+  - `401 Unauthorized`
 
-### 7.4 Update Post
+### 3.4 Get Detailed Friendship Status
+- **Summary:** Get detailed friendship status between the current user and another user.
+- **Method:** `GET`
+- **Endpoint:** `/friendships/check`
+- **Authentication:** `ApiKeyAuth`
+- **Query Parameters:**
+  - `other_user_id` (string, required): Other user ID to check
+- **Success Response (200 `services.FriendshipStatusResponse`):**
+  ```json
+  {
+    "are_friends": false,
+    "request_sent": false,
+    "request_received": false,
+    "is_blocked_by_viewer": false,
+    "has_blocked_viewer": false
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid user IDs.
+  - `401 Unauthorized`
+  - `500 Internal Server Error`
 
-Updates an existing post. Only the post owner can update it.
+### 3.5 Unfriend a User
+- **Summary:** Remove a friendship between two users.
+- **Method:** `DELETE`
+- **Endpoint:** `/friendships/{friend_id}`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `friend_id` (string, required): Friend ID to unfriend
+- **Success Response (200 `gin.H`):**
+  ```json
+  {
+    "status": "success"
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid user ID, invalid friend ID.
+  - `401 Unauthorized`
+  - `404 Not Found`: Not friends.
 
-*   **URL:** `/api/feed/posts/:postId`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `postId` (string, required): The ID of the post to update.
-*   **Request Body:**
-    ```json
-    {
-        "content": "Updated post content!",
-        "privacy": "PUBLIC"
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876552",
-        "user_id": "654321098765432109876543",
-        "content": "Updated post content!",
-        "media_type": "image",
-        "media_url": "https://example.com/post_image.jpg",
-        "privacy": "PUBLIC",
-        "custom_audience": [],
-        "comments": [],
-        "mentions": ["654321098765432109876544"],
-        "reaction_counts": {},
-        "hashtags": ["golang", "api"],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:05:00Z"
-    }
-    ```
-*   **Error Response (403 Forbidden):**
-    ```json
-    {
-        "error": "unauthorized to update this post"
-    }
-    ```
+### 3.6 Block a User
+- **Summary:** Block another user.
+- **Method:** `POST`
+- **Endpoint:** `/friendships/block/{user_id}`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `user_id` (string, required): User ID to block
+- **Success Response (200 `gin.H`):**
+  ```json
+  {
+    "status": "success"
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Cannot block self, invalid user ID.
+  - `401 Unauthorized`
+  - `409 Conflict`: Already blocked.
 
-### 7.5 Delete Post
+### 3.7 Unblock a User
+- **Summary:** Remove a block between users.
+- **Method:** `DELETE`
+- **Endpoint:** `/friendships/block/{user_id}`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `user_id` (string, required): User ID to unblock
+- **Success Response (200 `gin.H`):**
+  ```json
+  {
+    "status": "success"
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid user ID.
+  - `401 Unauthorized`
+  - `404 Not Found`: Block not found.
 
-Deletes a post. Only the post owner can delete it.
+### 3.8 Check if User is Blocked
+- **Summary:** Check if a user is blocked by another user.
+- **Method:** `GET`
+- **Endpoint:** `/friendships/block/{user_id}/status`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `user_id` (string, required): User ID to check block status
+- **Success Response (200 `gin.H`):**
+  ```json
+  {
+    "is_blocked": false
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid user IDs.
+  - `401 Unauthorized`
 
-*   **URL:** `/api/feed/posts/:postId`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `postId` (string, required): The ID of the post to delete.
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-*   **Error Response (403 Forbidden):**
-    ```json
-    {
-        "error": "unauthorized to delete this post"
-    }
-    ```
-
-### 7.6 Get Posts by Hashtag
-
-Retrieves a paginated list of posts associated with a specific hashtag.
-
-*   **URL:** `/api/feed/hashtags/:hashtag/posts`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `hashtag` (string, required): The hashtag to search for (e.g., `golang`).
-*   **Query Parameters:**
-    *   `page` (integer, optional): The page number (default: 1).
-    *   `limit` (integer, optional): Posts per page (default: 20).
-*   **Response (200 OK):**
-    ```json
-    {
-        "posts": [
-            {
-                "id": "654321098765432109876552",
-                "user_id": "654321098765432109876543",
-                "content": "This is my new post! #golang #api",
-                "media_type": "",
-                "media_url": "",
-                "privacy": "PUBLIC",
-                "custom_audience": [],
-                "comments": [],
-                "mentions": [],
-                "reaction_counts": {},
-                "hashtags": ["golang", "api"],
-                "created_at": "2023-10-27T10:00:00Z",
-                "updated_at": "2023-10-27T10:00:00Z"
-            }
-        ],
-        "total": 1,
-        "page": 1,
-        "limit": 20
-    }
-    ```
-
-### 7.7 Get Comments by Post ID
-
-Retrieves a paginated list of comments for a specific post.
-
-*   **URL:** `/api/feed/posts/:postId/comments`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `postId` (string, required): The ID of the post.
-*   **Query Parameters:**
-    *   `page` (integer, optional): The page number (default: 1).
-    *   `limit` (integer, optional): Comments per page (default: 20).
-*   **Response (200 OK):**
-    ```json
-    [
-        {
-            "id": "654321098765432109876553",
-            "post_id": "654321098765432109876552",
-            "user_id": "654321098765432109876544",
-            "content": "Great post!",
-            "replies": [],
-            "reaction_counts": {},
-            "mentions": [],
-            "created_at": "2023-10-27T10:01:00Z",
-            "updated_at": "2023-10-27T10:01:00Z"
-        }
+### 3.9 Get Blocked Users List
+- **Summary:** Get a list of users blocked by the current user.
+- **Method:** `GET`
+- **Endpoint:** `/friendships/blocked`
+- **Authentication:** `ApiKeyAuth`
+- **Success Response (200 `gin.H`):**
+  ```json
+  {
+    "blocked_users": [
+      {
+        "id": "string",
+        "username": "string",
+        "email": "string"
+      }
     ]
-    ```
-
-### 7.8 Create Comment
-
-Creates a new comment on a post.
-
-*   **URL:** `/api/feed/comments`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "post_id": "654321098765432109876552",
-        "content": "My comment on this post! @anotheruser",
-        "media_type": "image",
-        "media_url": "https://example.com/comment_image.jpg",
-        "mentions": ["654321098765432109876544"]
-    }
-    ```
-*   **Response (201 Created):**
-    ```json
-    {
-        "id": "654321098765432109876553",
-        "post_id": "654321098765432109876552",
-        "user_id": "654321098765432109876543",
-        "content": "My comment on this post! @anotheruser",
-        "replies": [],
-        "reaction_counts": {},
-        "mentions": ["654321098765432109876544"],
-        "created_at": "2023-10-27T10:01:00Z",
-        "updated_at": "2023-10-27T10:01:00Z"
-    }
-    ```
-
-### 7.9 Update Comment
-
-Updates an existing comment. Only the comment owner can update it.
-
-*   **URL:** `/api/feed/comments/:commentId`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `commentId` (string, required): The ID of the comment to update.
-*   **Request Body:**
-    ```json
-    {
-        "content": "Updated comment content."
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876553",
-        "post_id": "654321098765432109876552",
-        "user_id": "654321098765432109876543",
-        "content": "Updated comment content.",
-        "replies": [],
-        "reaction_counts": {},
-        "mentions": [],
-        "created_at": "2023-10-27T10:01:00Z",
-        "updated_at": "2023-10-27T10:02:00Z"
-    }
-    ```
-
-### 7.10 Delete Comment
-
-Deletes a comment. Only the comment owner can delete it.
-
-*   **URL:** `/api/feed/posts/:postId/comments/:commentId`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `postId` (string, required): The ID of the post the comment belongs to.
-    *   `commentId` (string, required): The ID of the comment to delete.
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-
-### 7.11 Get Replies by Comment ID
-
-Retrieves a paginated list of replies for a specific comment.
-
-*   **URL:** `/api/feed/comments/:commentId/replies`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `commentId` (string, required): The ID of the comment.
-*   **Query Parameters:**
-    *   `page` (integer, optional): The page number (default: 1).
-    *   `limit` (integer, optional): Replies per page (default: 20).
-*   **Response (200 OK):**
-    ```json
-    [
-        {
-            "id": "654321098765432109876554",
-            "comment_id": "654321098765432109876553",
-            "user_id": "654321098765432109876545",
-            "content": "My reply to this comment!",
-            "reaction_counts": {},
-            "mentions": [],
-            "created_at": "2023-10-27T10:03:00Z",
-            "updated_at": "2023-10-27T10:03:00Z"
-        }
-    ]
-    ```
-
-### 7.12 Create Reply
-
-Creates a new reply to a comment.
-
-*   **URL:** `/api/feed/comments/:commentId/replies`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `commentId` (string, required): The ID of the comment to reply to.
-*   **Request Body:**
-    ```json
-    {
-        "content": "My reply to this comment! @thirduser",
-        "parent_reply_id": "654321098765432109876554",
-        "media_type": "image",
-        "media_url": "https://example.com/reply_image.jpg",
-        "mentions": ["654321098765432109876545"]
-    }
-    ```
-*   **Response (201 Created):**
-    ```json
-    {
-        "id": "654321098765432109876554",
-        "comment_id": "654321098765432109876553",
-        "user_id": "654321098765432109876543",
-        "content": "My reply to this comment! @thirduser",
-        "reaction_counts": {},
-        "mentions": ["654321098765432109876545"],
-        "created_at": "2023-10-27T10:03:00Z",
-        "updated_at": "2023-10-27T10:03:00Z"
-    }
-    ```
-
-### 7.13 Update Reply
-
-Updates an existing reply. Only the reply owner can update it.
-
-*   **URL:** `/api/feed/comments/:commentId/replies/:replyId`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `commentId` (string, required): The ID of the comment the reply belongs to.
-    *   `replyId` (string, required): The ID of the reply to update.
-*   **Request Body:**
-    ```json
-    {
-        "content": "Updated reply content."
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876554",
-        "comment_id": "654321098765432109876553",
-        "user_id": "654321098765432109876543",
-        "content": "Updated reply content.",
-        "reaction_counts": {},
-        "mentions": [],
-        "created_at": "2023-10-27T10:03:00Z",
-        "updated_at": "2023-10-27T10:04:00Z"
-    }
-    ```
-
-### 7.14 Delete Reply
-
-Deletes a reply. Only the reply owner can delete it.
-
-*   **URL:** `/api/feed/comments/:commentId/replies/:replyId`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `commentId` (string, required): The ID of the comment the reply belongs to.
-    *   `replyId` (string, required): The ID of the reply to delete.
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-
-### 7.15 Create Reaction
-
-Creates a new reaction on a post, comment, or reply.
-
-*   **URL:** `/api/feed/reactions`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "target_id": "654321098765432109876552",
-        "target_type": "post",
-        "type": "LIKE"
-    }
-    ```
-*   **Response (201 Created):**
-    ```json
-    {
-        "id": "654321098765432109876555",
-        "user_id": "654321098765432109876543",
-        "target_id": "654321098765432109876552",
-        "target_type": "post",
-        "type": "LIKE",
-        "created_at": "2023-10-27T10:05:00Z"
-    }
-    ```
-
-### 7.16 Delete Reaction
-
-Deletes a reaction. Only the user who created the reaction can delete it.
-
-*   **URL:** `/api/feed/reactions/:reactionId`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `reactionId` (string, required): The ID of the reaction to delete.
-*   **Query Parameters:**
-    *   `targetId` (string, required): The ID of the target (post, comment, or reply) the reaction belongs to.
-    *   `targetType` (string, required): The type of the target (`post`, `comment`, or `reply`).
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-
-### 7.17 Get Reactions by Post ID
-
-Retrieves a list of reactions for a specific post.
-
-*   **URL:** `/api/feed/posts/:postId/reactions`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `postId` (string, required): The ID of the post.
-*   **Response (200 OK):**
-    ```json
-    [
-        {
-            "id": "654321098765432109876555",
-            "user_id": "654321098765432109876543",
-            "target_id": "654321098765432109876552",
-            "target_type": "post",
-            "type": "LIKE",
-            "created_at": "2023-10-27T10:05:00Z"
-        }
-    ]
-    ```
-
-### 7.18 Get Reactions by Comment ID
-
-Retrieves a list of reactions for a specific comment.
-
-*   **URL:** `/api/feed/comments/:commentId/reactions`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `commentId` (string, required): The ID of the comment.
-*   **Response (200 OK):**
-    ```json
-    [
-        {
-            "id": "654321098765432109876556",
-            "user_id": "654321098765432109876544",
-            "target_id": "654321098765432109876553",
-            "target_type": "comment",
-            "type": "LOVE",
-            "created_at": "2023-10-27T10:06:00Z"
-        }
-    ]
-    ```
-
-### 7.19 Get Reactions by Reply ID
-
-Retrieves a list of reactions for a specific reply.
-
-*   **URL:** `/api/feed/replies/:replyId/reactions`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `replyId` (string, required): The ID of the reply.
-*   **Response (200 OK):**
-    ```json
-    [
-        {
-            "id": "654321098765432109876557",
-            "user_id": "654321098765432109876545",
-            "target_id": "654321098765432109876554",
-            "target_type": "reply",
-            "type": "HAHA",
-            "created_at": "2023-10-27T10:07:00Z"
-        }
-    ]
-    ```
-
-## 8. Privacy Endpoints (`/api/privacy`)
-
-### 8.1 Get User Privacy Settings
-
-Retrieves the privacy settings for the authenticated user.
-
-*   **URL:** `/api/privacy/settings`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "user_id": "654321098765432109876543",
-        "default_post_privacy": "FRIENDS",
-        "can_see_my_friends_list": "ONLY_ME",
-        "can_send_me_friend_requests": "EVERYONE",
-        "can_tag_me_in_posts": "FRIENDS",
-        "last_updated": "2023-10-27T10:00:00Z"
-    }
-    ```
-
-### 8.2 Update User Privacy Settings
-
-Updates the privacy settings for the authenticated user.
-
-*   **URL:** `/api/privacy/settings`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "default_post_privacy": "PUBLIC",
-        "can_see_my_friends_list": "FRIENDS"
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "user_id": "654321098765432109876543",
-        "default_post_privacy": "PUBLIC",
-        "can_see_my_friends_list": "FRIENDS",
-        "can_send_me_friend_requests": "EVERYONE",
-        "can_tag_me_in_posts": "FRIENDS",
-        "last_updated": "2023-10-27T10:05:00Z"
-    }
-    ```
-
-### 8.3 Create Custom Privacy List
-
-Creates a new custom privacy list for the authenticated user.
-
-*   **URL:** `/api/privacy/lists`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Request Body:**
-    ```json
-    {
-        "name": "Close Friends",
-        "members": [
-            "654321098765432109876544",
-            "654321098765432109876545"
-        ]
-    }
-    ```
-*   **Response (201 Created):**
-    ```json
-    {
-        "id": "654321098765432109876558",
-        "user_id": "654321098765432109876543",
-        "name": "Close Friends",
-        "members": [
-            "654321098765432109876544",
-            "654321098765432109876545"
-        ],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-
-### 8.4 Get Custom Privacy List by ID
-
-Retrieves a specific custom privacy list by its ID.
-
-*   **URL:** `/api/privacy/lists/:id`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the custom privacy list.
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876558",
-        "user_id": "654321098765432109876543",
-        "name": "Close Friends",
-        "members": [
-            "654321098765432109876544",
-            "654321098765432109876545"
-        ],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:00:00Z"
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "custom privacy list not found"
-    }
-    ```
-
-### 8.5 Get Custom Privacy Lists by User ID
-
-Retrieves all custom privacy lists created by the authenticated user.
-
-*   **URL:** `/api/privacy/lists`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    [
-        {
-            "id": "654321098765432109876558",
-            "user_id": "654321098765432109876543",
-            "name": "Close Friends",
-            "members": [
-                "654321098765432109876544",
-                "654321098765432109876545"
-            ],
-            "created_at": "2023-10-27T10:00:00Z",
-            "updated_at": "2023-10-27T10:00:00Z"
-        }
-    ]
-    ```
-
-### 8.6 Update Custom Privacy List
-
-Updates an existing custom privacy list. Only the list owner can update it.
-
-*   **URL:** `/api/privacy/lists/:id`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the custom privacy list to update.
-*   **Request Body:**
-    ```json
-    {
-        "name": "Super Close Friends",
-        "members": [
-            "654321098765432109876544"
-        ]
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876558",
-        "user_id": "654321098765432109876543",
-        "name": "Super Close Friends",
-        "members": [
-            "654321098765432109876544"
-        ],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:10:00Z"
-    }
-    ```
-
-### 8.7 Delete Custom Privacy List
-
-Deletes a custom privacy list. Only the list owner can delete it.
-
-*   **URL:** `/api/privacy/lists/:id`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the custom privacy list to delete.
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-
-### 8.8 Add Member to Custom Privacy List
-
-Adds a member to an existing custom privacy list. Only the list owner can modify it.
-
-*   **URL:** `/api/privacy/lists/:id/members`
-*   **Method:** `POST`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the custom privacy list.
-*   **Request Body:**
-    ```json
-    {
-        "user_id": "654321098765432109876549"
-    }
-    ```
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876558",
-        "user_id": "654321098765432109876543",
-        "name": "Super Close Friends",
-        "members": [
-            "654321098765432109876544",
-            "654321098765432109876549"
-        ],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:15:00Z"
-    }
-    ```
-
-### 8.9 Remove Member from Custom Privacy List
-
-Removes a member from an existing custom privacy list. Only the list owner can modify it.
-
-*   **URL:** `/api/privacy/lists/:id/members/:memberId`
-*   **Method:** `DELETE`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the custom privacy list.
-    *   `memberId` (string, required): The ID of the member user to remove.
-*   **Request Body:** None
-*   **Response (200 OK):**
-    ```json
-    {
-        "id": "654321098765432109876558",
-        "user_id": "654321098765432109876543",
-        "name": "Super Close Friends",
-        "members": [
-            "654321098765432109876544"
-        ],
-        "created_at": "2023-10-27T10:00:00Z",
-        "updated_at": "2023-10-27T10:20:00Z"
-    }
-    ```
-
-## 9. Notification Endpoints (`/api/notifications`)
-
-### 9.1 List Notifications
-
-Retrieves a paginated list of notifications for the authenticated user.
-
-*   **URL:** `/api/notifications`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Query Parameters:**
-    *   `page` (integer, optional): The page number to retrieve (default: 1).
-    *   `limit` (integer, optional): The number of notifications per page (default: 10).
-    *   `read` (boolean, optional): Filter by read status (true for read, false for unread).
-*   **Response (200 OK):**
-    ```json
-    {
-        "notifications": [
-            {
-                "id": "654321098765432109876559",
-                "recipient_id": "654321098765432109876543",
-                "sender_id": "654321098765432109876544",
-                "type": "LIKE",
-                "target_id": "654321098765432109876552",
-                "target_type": "post",
-                "content": "anotheruser liked your post.",
-                "data": {},
-                "read": false,
-                "created_at": "2023-10-27T10:00:00Z"
-            }
-        ],
-        "total": 1,
-        "page": 1,
-        "limit": 10
-    }
-    ```
-
-### 9.2 Mark Notification as Read
-
-Marks a specific notification as read for the authenticated user.
-
-*   **URL:** `/api/notifications/:id/read`
-*   **Method:** `PUT`
-*   **Authentication:** Bearer Token
-*   **Path Parameters:**
-    *   `id` (string, required): The ID of the notification to mark as read.
-*   **Response (200 OK):**
-    ```json
-    {
-        "success": true
-    }
-    ```
-*   **Error Response (404 Not Found):**
-    ```json
-    {
-        "error": "notification not found"
-    }
-    ```
-*   **Error Response (403 Forbidden):**
-    ```json
-    {
-        "error": "unauthorized to mark this notification as read"
-    }
-    ```
-
-### 9.3 Get Unread Notification Count
-
-Retrieves the total count of unread notifications for the authenticated user.
-
-*   **URL:** `/api/notifications/unread`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Response (200 OK):**
-    ```json
-    {
-        "count": 5
-    }
-    ```
-*   **Error Response (500 Internal Server Error):**
-    ```json
-    {
-        "error": "failed to get unread count"
-    }
-    ```
-
-## 10. Search Endpoint (`/api/search`)
-
-### 10.1 Global Search
-
-Performs a full-text search across users and posts.
-
-*   **URL:** `/api/search`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token
-*   **Query Parameters:**
-    *   `query` (string, required): The search term.
-    *   `page` (integer, optional): The page number (default: 1).
-    *   `limit` (integer, optional): Results per page (default: 10).
-*   **Response (200 OK):**
-    ```json
-    {
-        "users": [
-            {
-                "id": "654321098765432109876543",
-                "username": "searcheduser",
-                "avatar": ""
-            }
-        ],
-        "posts": [
-            {
-                "id": "654321098765432109876552",
-                "user_id": "654321098765432109876544",
-                "content": "A post matching the search query.",
-                "created_at": "2023-10-27T10:00:00Z"
-            }
-        ]
-    }
-    ```
-
-## 11. WebSocket Endpoint
-
-### 11.1 Connect to WebSocket
-
-Establishes a real-time connection for receiving live updates.
-
-*   **URL:** `/ws`
-*   **Method:** `GET`
-*   **Authentication:** Bearer Token (sent as a query parameter `token`)
-*   **Description:** The WebSocket connection is used for real-time events like new messages, notifications, and presence updates. Clients should listen for different event types on this connection.
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`
+  - `401 Unauthorized`
+
+---
+
+## 4. Groups API
+
+### 4.1 Create Group
+- **Summary:** Create a new group.
+- **Method:** `POST`
+- **Endpoint:** `/groups`
+- **Authentication:** `ApiKeyAuth`
+- **Request Payload (`CreateGroupRequest`):**
+  ```json
+  {
+    "name": "string",      // Group name (min 3, max 50 characters)
+    "member_ids": ["string"] // Array of user IDs to include as initial members
+  }
+  ```
+- **Success Response (201 `GroupResponse`):**
+  ```json
+  {
+    "id": "string",
+    "name": "string",
+    "creator": {
+      "id": "string",
+      "username": "string",
+      "email": "string"
+    },
+    "members": [
+      {
+        "id": "string",
+        "username": "string",
+        "email": "string"
+      }
+    ],
+    "admins": [
+      {
+        "id": "string",
+        "username": "string",
+        "email": "string"
+      }
+    ],
+    "created_at": "timestamp",
+    "updated_at": "timestamp"
+  }
+  ```
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid name, invalid member IDs.
+  - `401 Unauthorized`
+  - `500 Internal Server Error`
+
+### 4.2 Get Group Details
+- **Summary:** Get group details.
+- **Method:** `GET`
+- **Endpoint:** `/groups/{id}`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Group ID
+- **Success Response (200 `GroupResponse`):** (Same as Create Group success response)
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid group ID.
+  - `404 Not Found`: Group not found.
+  - `500 Internal Server Error`
+
+### 4.3 Add Member to Group
+- **Summary:** Add a member to a group.
+- **Method:** `POST`
+- **Endpoint:** `/groups/{id}/members`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Group ID
+- **Request Payload (`AddMemberRequest`):**
+  ```json
+  {
+    "user_id": "string" // ID of the user to add
+  }
+  ```
+- **Success Response (204 No Content)**
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid group ID, invalid user ID.
+  - `401 Unauthorized`
+  - `403 Forbidden`: Not authorized to add member.
+  - `404 Not Found`: Group or user not found.
+  - `409 Conflict`: User already a member.
+  - `500 Internal Server Error`
+
+### 4.4 Add Admin to Group
+- **Summary:** Add an admin to a group.
+- **Method:** `POST`
+- **Endpoint:** `/groups/{id}/admins`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Group ID
+- **Request Payload (`AddMemberRequest`):**
+  ```json
+  {
+    "user_id": "string" // ID of the user to make admin
+  }
+  ```
+- **Success Response (204 No Content)**
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid group ID, invalid user ID.
+  - `401 Unauthorized`
+  - `403 Forbidden`: Not authorized to add admin.
+  - `404 Not Found`: Group or user not found.
+  - `409 Conflict`: User already an admin.
+  - `500 Internal Server Error`
+
+### 4.5 Remove Member from Group
+- **Summary:** Remove a member from a group.
+- **Method:** `DELETE`
+- **Endpoint:** `/groups/{id}/members/{user_id}`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Group ID
+  - `user_id` (string, required): Member ID to remove
+- **Success Response (204 No Content)**
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid group ID, invalid user ID.
+  - `401 Unauthorized`
+  - `403 Forbidden`: Not authorized to remove member.
+  - `404 Not Found`: Group or user not found.
+  - `500 Internal Server Error`
+
+### 4.6 Update Group
+- **Summary:** Update group details (e.g., name).
+- **Method:** `PUT`
+- **Endpoint:** `/groups/{id}`
+- **Authentication:** `ApiKeyAuth`
+- **Path Parameters:**
+  - `id` (string, required): Group ID
+- **Request Payload (`UpdateGroupRequest`):**
+  ```json
+  {
+    "name": "string" // New group name (min 3, max 50 characters)
+  }
+  ```
+- **Success Response (200 `GroupResponse`):** (Same as Create Group success response)
+- **Failure Responses:**
+  - `400 Bad Request`: Invalid group ID, no valid fields to update.
+  - `401 Unauthorized`
+  - `403 Forbidden`: Not authorized to update group.
+  - `404 Not Found`: Group not found.
+  - `500 Internal Server Error`
+
+### 4.7 Get User's Groups
+- **Summary:** Get all groups the current user is a member of.
+- **Method:** `GET`
+- **Endpoint:** `/groups`
+- **Authentication:** `ApiKeyAuth`
+- **Success Response (200 `array` of `GroupResponse`):** (Array of GroupResponse, same structure as Create Group success response)
+- **Failure Responses:**
+  - `401 Unauthorized`
+  - `500 Internal Server Error`

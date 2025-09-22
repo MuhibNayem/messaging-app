@@ -196,3 +196,17 @@ func (r *UserRepository) AddFriend(ctx context.Context, userID1, userID2 primiti
 
 	return err
 }
+
+func (r *UserRepository) RemoveFriend(ctx context.Context, userID, friendID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	// Use $pull to remove the friendID from the user's friends array
+	_, err := r.db.Collection("users").UpdateOne(
+		ctx,
+		bson.M{"_id": userID},
+		bson.M{"$pull": bson.M{"friends": friendID}},
+	)
+
+	return err
+}

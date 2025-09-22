@@ -48,29 +48,13 @@ func (s *FriendshipService) SendRequest(ctx context.Context, requesterID, receiv
 func (s *FriendshipService) RespondToRequest(ctx context.Context, friendshipID primitive.ObjectID, receiverID primitive.ObjectID, accept bool) error {
 	log.Printf("Service: RespondToRequest called for friendshipID: %s, receiverID: %s, accept: %t", friendshipID.Hex(), receiverID.Hex(), accept)
 
-	// First verify the request exists and belongs to this user
-	friendships, _, err := s.friendshipRepo.GetFriendRequests(ctx, receiverID, string(models.FriendshipStatusPending), 1, 1)
+	// Get the specific pending request to ensure it exists and belongs to the user.
+	targetRequest, err := s.friendshipRepo.GetPendingFriendshipByID(ctx, friendshipID, receiverID)
 	if err != nil {
-		return err
+		log.Printf("Service: RespondToRequest - could not find pending request: %v", err)
+		return err // Returns ErrFriendRequestNotFound if not found
 	}
 
-	var targetRequest *models.Friendship
-	for _, f := range friendships {
-		if f.ID == friendshipID {
-			targetRequest = &f
-			break
-		}
-	}
-
-	if targetRequest == nil {
-		log.Printf("Service: RespondToRequest - target request not found for ID: %s", friendshipID.Hex())
-		return repositories.ErrFriendRequestNotFound
-	}
-
-	if targetRequest.ReceiverID != receiverID {
-		log.Printf("Service: RespondToRequest - receiverID mismatch. Expected: %s, Got: %s", targetRequest.ReceiverID.Hex(), receiverID.Hex())
-		return repositories.ErrFriendRequestNotFound
-	}
 	log.Printf("Service: RespondToRequest - Found target request: %+v", targetRequest)
 
 	status := models.FriendshipStatusRejected
@@ -82,6 +66,8 @@ func (s *FriendshipService) RespondToRequest(ctx context.Context, friendshipID p
 		}
 		if err := s.userRepo.AddFriend(ctx, targetRequest.ReceiverID, targetRequest.RequesterID); err != nil {
 			log.Printf("Service: RespondToRequest - Error adding reciprocal friend: %v", err)
+			// Attempt to roll back the first AddFriend call
+			_ = s.userRepo.RemoveFriend(ctx, targetRequest.RequesterID, targetRequest.ReceiverID)
 			return err
 		}
 		log.Printf("Service: RespondToRequest - Successfully added friends: %s and %s", targetRequest.RequesterID.Hex(), targetRequest.ReceiverID.Hex())
@@ -98,8 +84,8 @@ func (s *FriendshipService) RespondToRequest(ctx context.Context, friendshipID p
 	return nil
 }
 
-func (s *FriendshipService) ListFriendships(ctx context.Context, userID primitive.ObjectID, status models.FriendshipStatus, page, limit int64) ([]models.Friendship, int64, error) {
-	return s.friendshipRepo.GetFriendRequests(ctx, userID, string(status), page, limit)
+func (s *FriendshipService) ListFriendships(ctx context.Context, userID primitive.ObjectID, status models.FriendshipStatus, page, limit int64) ([]models.PopulatedFriendship, int64, error) {
+	return s.friendshipRepo.GetFriendRequests(ctx, userID, status, page, limit)
 }
 
 func (s *FriendshipService) CheckFriendship(ctx context.Context, userID1, userID2 primitive.ObjectID) (bool, error) {

@@ -22,6 +22,7 @@ type MessageService struct {
 	friendshipRepo *repositories.FriendshipRepository
 	producer       *kafka.MessageProducer
 	redisClient    *redis.ClusterClient
+	userRepo       *repositories.UserRepository
 }
 
 func NewMessageService(
@@ -30,6 +31,7 @@ func NewMessageService(
 	friendshipRepo *repositories.FriendshipRepository,
 	producer *kafka.MessageProducer,
 	redisClient *redis.ClusterClient,
+	userRepo *repositories.UserRepository,
 ) *MessageService {
 	return &MessageService{
 		messageRepo:    messageRepo,
@@ -37,6 +39,7 @@ func NewMessageService(
 		friendshipRepo: friendshipRepo,
 		producer:       producer,
 		redisClient:    redisClient,
+		userRepo:       userRepo,
 	}
 }
 
@@ -46,6 +49,14 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID primitive.Obj
 		Content:     req.Content,
 		ContentType: req.ContentType,
 		MediaURLs:   req.MediaURLs,
+	}
+
+	if req.ReplyToMessageID != "" {
+		replyToID, err := primitive.ObjectIDFromHex(req.ReplyToMessageID)
+		if err != nil {
+			return nil, errors.New("invalid reply to message ID")
+		}
+		msg.ReplyToMessageID = &replyToID
 	}
 
 	if req.GroupID != "" {
@@ -96,7 +107,7 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 	}
 
 	msg.GroupID = gID
-	
+
 	// Get group name from cache or DB
 	groupName, err := s.redisClient.Get(ctx, "group:"+groupID+":name").Result()
 	if err != nil {
@@ -110,10 +121,16 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 	msg.GroupName = groupName
 
 	// Get sender info from cache or DB
-	senderName, err := s.redisClient.Get(ctx, "user:"+msg.SenderID.Hex()+":name").Result()
+	senderName, err := s.redisClient.Get(ctx, "user:"+msg.SenderID.Hex()+":username").Result()
 	if err != nil {
-		// In a real app, you'd fetch from user repo
-		senderName = "Unknown"
+		user, userErr := s.userRepo.FindUserByID(ctx, msg.SenderID)
+		if userErr != nil {
+			log.Printf("Failed to find sender user %s: %v", msg.SenderID.Hex(), userErr)
+			senderName = "Unknown"
+		} else {
+			senderName = user.Username
+			s.redisClient.Set(ctx, "user:"+msg.SenderID.Hex()+":username", senderName, 24*time.Hour)
+		}
 	}
 	msg.SenderName = senderName
 
@@ -129,7 +146,7 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 		log.Printf("Failed to marshal group message for Kafka: %v", err)
 	} else {
 		kafkaMsg := kafkago.Message{
-			Key:   []byte(createdMsg.GroupID.Hex()), 
+			Key:   []byte(createdMsg.GroupID.Hex()),
 			Value: msgBytes,
 			Time:  time.Now(),
 		}
@@ -167,10 +184,16 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 	msg.ReceiverID = rID
 
 	// Get sender info from cache or DB
-	senderName, err := s.redisClient.Get(ctx, "user:"+msg.SenderID.Hex()+":name").Result()
+	senderName, err := s.redisClient.Get(ctx, "user:"+msg.SenderID.Hex()+":username").Result()
 	if err != nil {
-		// In a real app, you'd fetch from user repo
-		senderName = "Unknown"
+		user, userErr := s.userRepo.FindUserByID(ctx, msg.SenderID)
+		if userErr != nil {
+			log.Printf("Failed to find sender user %s: %v", msg.SenderID.Hex(), userErr)
+			senderName = "Unknown"
+		} else {
+			senderName = user.Username
+			s.redisClient.Set(ctx, "user:"+msg.SenderID.Hex()+":username", senderName, 24*time.Hour)
+		}
 	}
 	msg.SenderName = senderName
 
@@ -186,7 +209,7 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 		log.Printf("Failed to marshal direct message for Kafka: %v", err)
 	} else {
 		kafkaMsg := kafkago.Message{
-			Key:   []byte(createdMsg.ReceiverID.Hex()), 
+			Key:   []byte(createdMsg.ReceiverID.Hex()),
 			Value: msgBytes,
 			Time:  time.Now(),
 		}
@@ -196,9 +219,9 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 	}
 
 	// Update last message cache
-	s.redisClient.Set(ctx, 
-		"last_msg:"+msg.SenderID.Hex()+":"+receiverID, 
-		createdMsg.ID.Hex(), 
+	s.redisClient.Set(ctx,
+		"last_msg:"+msg.SenderID.Hex()+":"+receiverID,
+		createdMsg.ID.Hex(),
 		24*time.Hour,
 	)
 
@@ -221,6 +244,26 @@ func (s *MessageService) MarkMessagesAsSeen(ctx context.Context, userID primitiv
 		s.redisClient.Decr(ctx, "unread:"+userID.Hex()+":"+msgID.Hex())
 	}
 
+	// Publish read receipt event to Kafka
+	readReceiptEvent := models.ReadReceiptEvent{
+		MessageIDs: messageIDs,
+		ReaderID:   userID,
+		Timestamp:  time.Now(),
+	}
+	readReceiptEventBytes, err := json.Marshal(readReceiptEvent)
+	if err != nil {
+		log.Printf("Failed to marshal read receipt event for Kafka: %v", err)
+	} else {
+		kafkaMsg := kafkago.Message{
+			Key:   []byte(userID.Hex()), // Key by reader ID
+			Value: readReceiptEventBytes,
+			Time:  time.Now(),
+		}
+		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
+			log.Printf("Failed to produce read receipt event to Kafka: %v", err)
+		}
+	}
+
 	return nil
 }
 
@@ -236,47 +279,56 @@ func (s *MessageService) GetUnreadCount(ctx context.Context, userID primitive.Ob
 }
 
 func (s *MessageService) GetConversationMessageTotalCount(
-    ctx context.Context,
-    query models.MessageQuery,
+	ctx context.Context,
+	query models.MessageQuery,
 ) (int64, error) {
-    // Validate required parameters
-	var isGroup bool = false
-    if query.ConversationID == "" {
-        return 0, errors.New("conversation ID is required")
-    }
+	var conversationID primitive.ObjectID
+	var isGroup bool
 
 	if query.GroupID != "" {
+		id, err := primitive.ObjectIDFromHex(query.GroupID)
+		if err != nil {
+			return 0, errors.New("invalid group ID format")
+		}
+		conversationID = id
 		isGroup = true
+	} else if query.ReceiverID != "" {
+		id, err := primitive.ObjectIDFromHex(query.ReceiverID)
+		if err != nil {
+			return 0, errors.New("invalid receiver ID format")
+		}
+		conversationID = id
+		isGroup = false
+	} else {
+		return 0, errors.New("either groupID or receiverID must be provided")
 	}
 
-    // Generate cache key
-    cacheKey := fmt.Sprintf("msg_count:%s:%t", query.ConversationID, isGroup)
-    
-    // Try Redis first
-    count, err := s.redisClient.Get(ctx, cacheKey).Int64()
-    if err == nil {
-        return count, nil
-    }
+	// Generate cache key
+	cacheKey := fmt.Sprintf("msg_count:%s:%t", conversationID.Hex(), isGroup)
 
-    // Convert string ID to ObjectID
-    objID, err := primitive.ObjectIDFromHex(query.ConversationID)
-    if err != nil {
-        return 0, errors.New("invalid conversation ID format")
-    }
+	// Try Redis first
+	count, err := s.redisClient.Get(ctx, cacheKey).Int64()
+	if err == nil {
+		return count, nil
+	}
 
-    // Get count from repository
-    count, err = s.messageRepo.GetConversationMessageCount(ctx, objID, isGroup)
-    if err != nil {
-        return 0, fmt.Errorf("failed to count messages: %w", err)
-    }
+	// Get count from repository
+	senderObjectID, err := primitive.ObjectIDFromHex(query.SenderID)
+	if err != nil {
+		return 0, errors.New("invalid sender ID format")
+	}
+	count, err = s.messageRepo.GetConversationMessageCount(ctx, conversationID, isGroup, senderObjectID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count messages: %w", err)
+	}
 
-    // Update cache with 3 second expiration
-    s.redisClient.Set(ctx, cacheKey, count, 3*time.Second)
-    return count, nil
+	// Update cache with 3 second expiration
+	s.redisClient.Set(ctx, cacheKey, count, 3*time.Second)
+	return count, nil
 }
 
 func (s *MessageService) GetAllMessages(ctx context.Context, query models.MessageQuery) ([]models.Message, error) {
-    return s.messageRepo.GetMessages(ctx, query)
+	return s.messageRepo.GetMessages(ctx, query)
 }
 
 func (s *MessageService) SearchMessages(ctx context.Context, userID primitive.ObjectID, query string, page, limit int64) ([]models.Message, error) {
@@ -301,66 +353,188 @@ func (s *MessageService) SearchMessages(ctx context.Context, userID primitive.Ob
 // 4. Publishes deletion event to Kafka
 // 5. Updates relevant caches
 func (s *MessageService) DeleteMessage(
-    ctx context.Context,
-    messageIDStr string,
-    requesterID primitive.ObjectID,
+	ctx context.Context,
+	messageIDStr string,
+	requesterID primitive.ObjectID,
 ) (*models.Message, error) {
-    messageID, err := primitive.ObjectIDFromHex(messageIDStr)
-    if err != nil {
-        return nil, errors.New("invalid message ID format")
-    }
+	messageID, err := primitive.ObjectIDFromHex(messageIDStr)
+	if err != nil {
+		return nil, errors.New("invalid message ID format")
+	}
 
-    // TODO: Media deletion function using storage service
-    mediaDeleter := func(ctx context.Context, urls []string) error {
-        if len(urls) == 0 {
-            return nil
-        }
-        
-        // TODO: In production, will use actual media service:
-        // return s.mediaService.DeleteFiles(ctx, urls)
-        
-        // Mock implementation:
-        log.Printf("Deleting media files: %v", urls)
-        return nil
-    }
+	// TODO: Media deletion function using storage service
+	mediaDeleter := func(ctx context.Context, urls []string) error {
+		if len(urls) == 0 {
+			return nil
+		}
 
-    deletedMsg, err := s.messageRepo.DeleteMessage(ctx, messageID, requesterID, mediaDeleter)
-    if err != nil {
-        return nil, err
-    }
+		// TODO: In production, will use actual media service:
+		// return s.mediaService.DeleteFiles(ctx, urls)
 
-    // Publish deletion event to Kafka
-    deletionEventMsg := models.Message{
-        ID:          deletedMsg.ID,
-        SenderID:    deletedMsg.SenderID,
-        ReceiverID:  deletedMsg.ReceiverID,
-        GroupID:     deletedMsg.GroupID,
-        ContentType: models.ContentTypeDeleted,
-        DeletedAt:   deletedMsg.DeletedAt,
-    }
-    deletionEventBytes, err := json.Marshal(deletionEventMsg)
-    if err != nil {
-        log.Printf("Failed to marshal deletion event for Kafka: %v", err)
-    } else {
+		// Mock implementation:
+		log.Printf("Deleting media files: %v", urls)
+		return nil
+	}
+
+	deletedMsg, err := s.messageRepo.DeleteMessage(ctx, messageID, requesterID, mediaDeleter)
+	if err != nil {
+		return nil, err
+	}
+
+	// Publish deletion event to Kafka
+	deletionEventMsg := models.Message{
+		ID:          deletedMsg.ID,
+		SenderID:    deletedMsg.SenderID,
+		ReceiverID:  deletedMsg.ReceiverID,
+		GroupID:     deletedMsg.GroupID,
+		ContentType: models.ContentTypeDeleted,
+		DeletedAt:   deletedMsg.DeletedAt,
+	}
+	deletionEventBytes, err := json.Marshal(deletionEventMsg)
+	if err != nil {
+		log.Printf("Failed to marshal deletion event for Kafka: %v", err)
+	} else {
 		kafkaMsg := kafkago.Message{
-			Key:   []byte(deletedMsg.ID.Hex()), 
+			Key:   []byte(deletedMsg.ID.Hex()),
 			Value: deletionEventBytes,
 			Time:  time.Now(),
 		}
-        if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
-            log.Printf("Failed to publish deletion event: %v", err)
-        }
-    }
+		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
+			log.Printf("Failed to publish deletion event: %v", err)
+		}
+	}
 
-    if !deletedMsg.GroupID.IsZero() {
-        cacheKey := "group_last_msg:" + deletedMsg.GroupID.Hex()
-        s.redisClient.Del(ctx, cacheKey)
-    } else {
-        cacheKey := fmt.Sprintf("last_msg:%s:%s", 
-            deletedMsg.SenderID.Hex(),
-            deletedMsg.ReceiverID.Hex())
-        s.redisClient.Del(ctx, cacheKey)
-    }
+	if !deletedMsg.GroupID.IsZero() {
+		cacheKey := "group_last_msg:" + deletedMsg.GroupID.Hex()
+		s.redisClient.Del(ctx, cacheKey)
+	} else {
+		cacheKey := fmt.Sprintf("last_msg:%s:%s",
+			deletedMsg.SenderID.Hex(),
+			deletedMsg.ReceiverID.Hex())
+		s.redisClient.Del(ctx, cacheKey)
+	}
 
-    return deletedMsg, nil
+	return deletedMsg, nil
+}
+
+// AddReaction handles adding a reaction to a message
+func (s *MessageService) AddReaction(ctx context.Context, messageIDStr, userIDStr, emoji string) error {
+	messageID, err := primitive.ObjectIDFromHex(messageIDStr)
+	if err != nil {
+		return errors.New("invalid message ID format")
+	}
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		return errors.New("invalid user ID format")
+	}
+
+	err = s.messageRepo.AddReaction(ctx, messageID, userID, emoji)
+	if err != nil {
+		return err
+	}
+
+	// Publish reaction event to Kafka
+	reactionEvent := models.ReactionEvent{
+		MessageID: messageID,
+		UserID:    userID,
+		Emoji:     emoji,
+		Action:    "add",
+		Timestamp: time.Now(),
+	}
+	reactionEventBytes, err := json.Marshal(reactionEvent)
+	if err != nil {
+		log.Printf("Failed to marshal reaction event for Kafka: %v", err)
+	} else {
+		kafkaMsg := kafkago.Message{
+			Key:   []byte(messageID.Hex()),
+			Value: reactionEventBytes,
+			Time:  time.Now(),
+		}
+		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
+			log.Printf("Failed to produce reaction event to Kafka: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// RemoveReaction handles removing a reaction from a message
+func (s *MessageService) RemoveReaction(ctx context.Context, messageIDStr, userIDStr, emoji string) error {
+	messageID, err := primitive.ObjectIDFromHex(messageIDStr)
+	if err != nil {
+		return errors.New("invalid message ID format")
+	}
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		return errors.New("invalid user ID format")
+	}
+
+	err = s.messageRepo.RemoveReaction(ctx, messageID, userID, emoji)
+	if err != nil {
+		return err
+	}
+
+	// Publish reaction event to Kafka
+	reactionEvent := models.ReactionEvent{
+		MessageID: messageID,
+		UserID:    userID,
+		Emoji:     emoji,
+		Action:    "remove",
+		Timestamp: time.Now(),
+	}
+	reactionEventBytes, err := json.Marshal(reactionEvent)
+	if err != nil {
+		log.Printf("Failed to marshal reaction event for Kafka: %v", err)
+	} else {
+		kafkaMsg := kafkago.Message{
+			Key:   []byte(messageID.Hex()),
+			Value: reactionEventBytes,
+			Time:  time.Now(),
+		}
+		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
+			log.Printf("Failed to produce reaction event to Kafka: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// EditMessage handles editing a message
+func (s *MessageService) EditMessage(ctx context.Context, messageIDStr, requesterIDStr, newContent string) (*models.Message, error) {
+	messageID, err := primitive.ObjectIDFromHex(messageIDStr)
+	if err != nil {
+		return nil, errors.New("invalid message ID format")
+	}
+	requesterID, err := primitive.ObjectIDFromHex(requesterIDStr)
+	if err != nil {
+		return nil, errors.New("invalid requester ID format")
+	}
+
+	updatedMsg, err := s.messageRepo.EditMessage(ctx, messageID, requesterID, newContent)
+	if err != nil {
+		return nil, err
+	}
+
+	// Publish message edited event to Kafka
+	messageEditedEvent := models.MessageEditedEvent{
+		MessageID:  updatedMsg.ID,
+		EditorID:   requesterID,
+		NewContent: updatedMsg.Content,
+		EditedAt:   *updatedMsg.EditedAt,
+	}
+	messageEditedEventBytes, err := json.Marshal(messageEditedEvent)
+	if err != nil {
+		log.Printf("Failed to marshal message edited event for Kafka: %v", err)
+	} else {
+		kafkaMsg := kafkago.Message{
+			Key:   []byte(updatedMsg.ID.Hex()),
+			Value: messageEditedEventBytes,
+			Time:  time.Now(),
+		}
+		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
+			log.Printf("Failed to produce message edited event to Kafka: %v", err)
+		}
+	}
+
+	return updatedMsg, err
 }

@@ -61,30 +61,35 @@ func NewMessageRepository(db *mongo.Database) *MessageRepository {
 func (r *MessageRepository) GetMessages(ctx context.Context, query models.MessageQuery) ([]models.Message, error) {
 	filter := bson.M{}
 
+	// Convert SenderID to ObjectID first
+	senderID, err := primitive.ObjectIDFromHex(query.SenderID)
+	if err != nil {
+		return nil, errors.New("invalid sender ID")
+	}
+
 	if query.GroupID != "" {
 		groupID, err := primitive.ObjectIDFromHex(query.GroupID)
 		if err != nil {
 			return nil, errors.New("invalid group ID")
 		}
-		filter["chat_id"] = groupID // Assuming chat_id is used for groups
+		filter["group_id"] = groupID
 	} else if query.ReceiverID != "" {
 		receiverID, err := primitive.ObjectIDFromHex(query.ReceiverID)
 		if err != nil {
 			return nil, errors.New("invalid receiver ID")
 		}
-		// For private chats, we need to find messages where both sender and receiver are involved
-		// This logic might need to be adjusted based on how private chats are structured (e.g., a dedicated chat document)
-		// For now, assuming a direct sender-receiver relationship in messages
+		// Find messages where the current user (senderID) and the other user (receiverID) are involved
 		filter["$or"] = []bson.M{
-			{"sender_id": query.SenderID, "receiver_id": receiverID},
-			{"sender_id": receiverID, "receiver_id": query.SenderID},
+			{"sender_id": senderID, "receiver_id": receiverID},
+			{"sender_id": receiverID, "receiver_id": senderID},
 		}
 	} else {
-		return nil, errors.New("either group_id or receiver_id must be provided")
+		return nil, errors.New("either groupID or receiverID must be provided")
 	}
 
 	pipeline := mongo.Pipeline{
 		bson.D{{Key: "$match", Value: filter}},
+		// Lookup sender info
 		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "users",
 			"localField":   "sender_id",
@@ -92,28 +97,29 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 			"as":           "sender_info",
 		}}},
 		bson.D{{Key: "$unwind", Value: bson.M{"path": "$sender_info", "preserveNullAndEmptyArrays": true}}},
+		// Project fields to match models.Message struct
 		bson.D{{Key: "$project", Value: bson.M{
-			"_id":        1,
-			"chat_id":    1,
-			"sender_id":  1,
-			"content":    1,
-			"timestamp":  1,
-			"read_by":    1,
-			"edited":     1,
-			"deleted":    1,
-			"media_type": 1,
-			"media_url":  1,
-			"reply_to":   1,
-			"sender": bson.M{
-				"id":          "$sender_info._id",
-				"username":    "$sender_info.username",
-				"avatar":      "$sender_info.avatar",
-				"full_name":   "$sender_info.full_name",
-				"online":      "$sender_info.online",
-				"last_active": "$sender_info.last_active",
-			},
+			"_id":                 1,
+			"sender_id":           1,
+			"sender_name":         "$sender_info.username", // Populate sender_name
+			"receiver_id":         1,
+			"group_id":            1,
+			"group_name":          1,
+			"content":             1,
+			"content_type":        1,
+			"media_urls":          1,
+			"seen_by":             1,
+			"is_deleted":          1,
+			"deleted_at":          1,
+			"original_content":    1,
+			"is_edited":           1,
+			"edited_at":           1,
+			"reactions":           1,
+			"reply_to_message_id": 1,
+			"created_at":          1,
+			"updated_at":          1,
 		}}},
-		bson.D{{Key: "$sort", Value: bson.D{{Key: "timestamp", Value: -1}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "created_at", Value: -1}}}}, // Sort by creation time descending
 		bson.D{{Key: "$skip", Value: int64((query.Page - 1) * query.Limit)}},
 		bson.D{{Key: "$limit", Value: int64(query.Limit)}},
 	}
@@ -128,6 +134,8 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 	if err = cursor.All(ctx, &messages); err != nil {
 		return nil, err
 	}
+
+	log.Printf("Fetched %d messages with filter: %+v", len(messages), filter)
 	return messages, nil
 }
 
@@ -167,15 +175,17 @@ func (r *MessageRepository) GetConversationMessageCount(
 	ctx context.Context,
 	conversationID primitive.ObjectID,
 	isGroup bool,
+	currentUserID primitive.ObjectID,
 ) (int64, error) {
 	filter := bson.M{}
 
 	if isGroup {
 		filter["group_id"] = conversationID
 	} else {
+		// For direct messages, count messages between currentUserID and conversationID (the other user)
 		filter["$or"] = []bson.M{
-			{"sender_id": conversationID},
-			{"receiver_id": conversationID},
+			{"sender_id": currentUserID, "receiver_id": conversationID},
+			{"sender_id": conversationID, "receiver_id": currentUserID},
 		}
 	}
 
@@ -240,6 +250,42 @@ func (r *MessageRepository) DeleteMessage(
 	return &deletedMessage, nil
 }
 
+// EditMessage updates the content of a message
+func (r *MessageRepository) EditMessage(
+	ctx context.Context,
+	messageID primitive.ObjectID,
+	requesterID primitive.ObjectID,
+	newContent string,
+) (*models.Message, error) {
+	var updatedMessage models.Message
+	now := time.Now()
+	err := r.collection.FindOneAndUpdate(
+		ctx,
+		bson.M{
+			"_id":        messageID,
+			"sender_id":  requesterID,
+			"is_deleted": false, // Cannot edit a deleted message
+		},
+		bson.M{
+			"$set": bson.M{
+				"content":    newContent,
+				"is_edited":  true,
+				"edited_at":  &now,
+				"updated_at": now,
+			},
+		},
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	).Decode(&updatedMessage)
+
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, errors.New("message not found, not owned by user, or already deleted")
+		}
+		return nil, err
+	}
+	return &updatedMessage, nil
+}
+
 func (r *MessageRepository) SearchMessages(ctx context.Context, userID primitive.ObjectID, query string, groupIDs []primitive.ObjectID, page, limit int64) ([]models.Message, error) {
 	// Define the text search stage
 	textSearchStage := bson.D{{"$match", bson.D{{"$text", bson.D{{"$search", query}}}}}}
@@ -272,4 +318,63 @@ func (r *MessageRepository) SearchMessages(ctx context.Context, userID primitive
 	}
 
 	return messages, nil
+}
+
+// AddReaction adds a reaction to a message
+func (r *MessageRepository) AddReaction(ctx context.Context, messageID, userID primitive.ObjectID, emoji string) error {
+	filter := bson.M{"_id": messageID, "reactions.user_id": bson.M{"$ne": userID}, "reactions.emoji": bson.M{"$ne": emoji}}
+	update := bson.M{
+		"$push": bson.M{
+			"reactions": models.MessageReaction{
+				UserID:    userID,
+				Emoji:     emoji,
+				Timestamp: time.Now(),
+			},
+		},
+		"$set": bson.M{"updated_at": time.Now()},
+	}
+
+	res, err := r.collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return fmt.Errorf("failed to add reaction: %w", err)
+	}
+	if res.ModifiedCount == 0 {
+		return errors.New("message not found or reaction already exists")
+	}
+	return nil
+}
+
+// RemoveReaction removes a reaction from a message
+func (r *MessageRepository) RemoveReaction(ctx context.Context, messageID, userID primitive.ObjectID, emoji string) error {
+	filter := bson.M{"_id": messageID}
+	update := bson.M{
+		"$pull": bson.M{
+			"reactions": bson.M{
+				"user_id": userID,
+				"emoji":   emoji,
+			},
+		},
+		"$set": bson.M{"updated_at": time.Now()},
+	}
+
+	res, err := r.collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return fmt.Errorf("failed to remove reaction: %w", err)
+	}
+	if res.ModifiedCount == 0 {
+		return errors.New("message not found or reaction not present")
+	}
+	return nil
+}
+
+func (r *MessageRepository) GetMessageByID(ctx context.Context, messageID primitive.ObjectID) (*models.Message, error) {
+	var message models.Message
+	err := r.collection.FindOne(ctx, bson.M{"_id": messageID}).Decode(&message)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, errors.New("message not found")
+		}
+		return nil, err
+	}
+	return &message, nil
 }

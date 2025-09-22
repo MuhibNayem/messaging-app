@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 var (
@@ -71,15 +72,19 @@ type Hub struct {
 	groupRepo    *repositories.GroupRepository
 	feedRepo     *repositories.FeedRepository // New
 	userRepo     *repositories.UserRepository // New
+	messageRepo  *repositories.MessageRepository
 	redisClient  *redis.ClusterClient
 	messageCache *MessageCache
 
-	register     chan *Client
-	unregister   chan *Client
-	Broadcast    chan models.Message
-	FeedEvents   chan models.WebSocketEvent // New
-	NotificationEvents chan models.Notification // New for notifications
-	typingEvents chan models.TypingEvent
+	register            chan *Client
+	unregister          chan *Client
+	Broadcast           chan models.Message
+	FeedEvents          chan models.WebSocketEvent // New
+	NotificationEvents  chan models.Notification   // New for notifications
+	typingEvents        chan models.TypingEvent
+	ReactionEvents      chan models.ReactionEvent      // New channel for reaction events
+	ReadReceiptEvents   chan models.ReadReceiptEvent   // New channel for read receipt events
+	MessageEditedEvents chan models.MessageEditedEvent // New channel for message edited events
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -88,29 +93,68 @@ type Hub struct {
 }
 
 // NewHub creates a new Hub and starts its goroutines
-func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository, feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository) *Hub {
+func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository, feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, messageRepo *repositories.MessageRepository) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
-		userClients:  make(map[string]map[*Client]bool),
-		groupClients: make(map[string]map[*Client]bool),
-		groupRepo:    groupRepo,
-		feedRepo:     feedRepo, // New
-		userRepo:     userRepo, // New
-		redisClient:  redisClient,
-		messageCache: NewMessageCache(redisClient),
-		register:     make(chan *Client),
-		unregister:   make(chan *Client),
-		Broadcast:    make(chan models.Message, 10000),
-		FeedEvents:   make(chan models.WebSocketEvent, 10000), // New
-		NotificationEvents: make(chan models.Notification, 10000), // New for notifications
-		typingEvents: make(chan models.TypingEvent, 1000),
-		ctx:          ctx,
-		cancel:       cancel,
+		userClients:         make(map[string]map[*Client]bool),
+		groupClients:        make(map[string]map[*Client]bool),
+		groupRepo:           groupRepo,
+		feedRepo:            feedRepo, // New
+		userRepo:            userRepo, // New
+		messageRepo:         messageRepo,
+		redisClient:         redisClient,
+		messageCache:        NewMessageCache(redisClient),
+		register:            make(chan *Client),
+		unregister:          make(chan *Client),
+		Broadcast:           make(chan models.Message, 10000),
+		FeedEvents:          make(chan models.WebSocketEvent, 10000), // New
+		NotificationEvents:  make(chan models.Notification, 10000),   // New for notifications
+		typingEvents:        make(chan models.TypingEvent, 1000),
+		ReactionEvents:      make(chan models.ReactionEvent, 10000),      // Initialize new channel
+		ReadReceiptEvents:   make(chan models.ReadReceiptEvent, 10000),   // Initialize new channel
+		MessageEditedEvents: make(chan models.MessageEditedEvent, 10000), // Initialize new channel
+		ctx:                 ctx,
+		cancel:              cancel,
 	}
 	go h.run()
 	go h.subscribeToRedis()
 	go h.cleanupStaleConnections()
 	return h
+}
+
+func (h *Hub) broadcastToParticipants(messageID primitive.ObjectID, wsEvent models.WebSocketEvent) {
+	msg, err := h.messageRepo.GetMessageByID(h.ctx, messageID)
+	if err != nil {
+		log.Printf("Error getting message %s for event broadcasting: %v", messageID.Hex(), err)
+		return
+	}
+
+	var participantIDs []string
+	if !msg.GroupID.IsZero() {
+		// Group message: get all members of the group
+		group, err := h.groupRepo.GetGroup(h.ctx, msg.GroupID)
+		if err != nil {
+			log.Printf("Error getting group %s for event broadcasting: %v", msg.GroupID.Hex(), err)
+			return
+		}
+		for _, memberID := range group.Members {
+			participantIDs = append(participantIDs, memberID.Hex())
+		}
+	} else {
+		// Direct message: sender and receiver
+		participantIDs = append(participantIDs, msg.SenderID.Hex(), msg.ReceiverID.Hex())
+	}
+
+	wsEventJSON, err := json.Marshal(wsEvent)
+	if err != nil {
+		log.Printf("Error marshaling WebSocketEvent for targeted broadcast: %v", err)
+		return
+	}
+
+	for _, userID := range participantIDs {
+		h.sendToUser(userID, wsEventJSON)
+	}
+	log.Printf("Broadcasted %s event for message %s to %d participants", wsEvent.Type, messageID.Hex(), len(participantIDs))
 }
 
 func (h *Hub) run() {
@@ -247,6 +291,62 @@ func (h *Hub) run() {
 
 		case ev := <-h.typingEvents:
 			h.dispatchTypingEvent(ev)
+
+		case reactionEvent := <-h.ReactionEvents:
+			reactionEventJSON, err := json.Marshal(reactionEvent)
+			if err != nil {
+				log.Printf("Error marshaling ReactionEvent for WebSocket: %v", err)
+				continue
+			}
+			wsEvent := models.WebSocketEvent{
+				Type: "MESSAGE_REACTION_UPDATE",
+				Data: reactionEventJSON,
+			}
+			h.broadcastToParticipants(reactionEvent.MessageID, wsEvent)
+
+		case readReceiptEvent := <-h.ReadReceiptEvents:
+			readReceiptEventJSON, err := json.Marshal(readReceiptEvent)
+			if err != nil {
+				log.Printf("Error marshaling ReadReceiptEvent for WebSocket: %v", err)
+				continue
+			}
+			wsEvent := models.WebSocketEvent{
+				Type: "MESSAGE_READ_UPDATE",
+				Data: readReceiptEventJSON,
+			}
+			wsEventJSON, err := json.Marshal(wsEvent)
+			if err != nil {
+				log.Printf("Error marshaling WebSocketEvent for read receipt: %v", err)
+				continue
+			}
+
+			// Notify the reader that their action was processed
+			h.sendToUser(readReceiptEvent.ReaderID.Hex(), wsEventJSON)
+
+			// Notify the sender of the messages that they were read
+			for _, msgID := range readReceiptEvent.MessageIDs {
+				msg, err := h.messageRepo.GetMessageByID(h.ctx, msgID)
+				if err != nil {
+					log.Printf("Error getting message %s for read receipt: %v", msgID.Hex(), err)
+					continue
+				}
+				// Avoid sending notification to self
+				if msg.SenderID != readReceiptEvent.ReaderID {
+					h.sendToUser(msg.SenderID.Hex(), wsEventJSON)
+				}
+			}
+
+		case messageEditedEvent := <-h.MessageEditedEvents:
+			messageEditedEventJSON, err := json.Marshal(messageEditedEvent)
+			if err != nil {
+				log.Printf("Error marshaling MessageEditedEvent for WebSocket: %v", err)
+				continue
+			}
+			wsEvent := models.WebSocketEvent{
+				Type: "MESSAGE_EDITED_UPDATE",
+				Data: messageEditedEventJSON,
+			}
+			h.broadcastToParticipants(messageEditedEvent.MessageID, wsEvent)
 		}
 	}
 }

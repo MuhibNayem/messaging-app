@@ -45,6 +45,8 @@ func (c *MessageController) SendMessage(ctx *gin.Context) {
 		return
 	}
 
+	req.SenderID = userID // Set SenderID from authenticated user
+
 	// Validate content
 	if req.Content == "" && len(req.MediaURLs) == 0 {
 		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "message content or media URLs required"})
@@ -274,15 +276,51 @@ func (c *MessageController) DeleteMessage(ctx *gin.Context) {
 		switch err.Error() {
 		case "message not found":
 			ctx.JSON(http.StatusNotFound, models.ErrorResponse{Error: err.Error()})
-		case "not authorized to delete this message":
-			ctx.JSON(http.StatusForbidden, models.ErrorResponse{Error: err.Error()})
+		}
+	}
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// @Summary Edit a message
+// @Description Edit the content of an existing message
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path string true "Message ID"
+// @Param message body object{content:string} true "New message content"
+// @Success 200 {object} models.Message
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Failure 500 {object} models.ErrorResponse
+// @Router /messages/{id} [put]
+func (c *MessageController) EditMessage(ctx *gin.Context) {
+	messageID := ctx.Param("id")
+	userID := ctx.MustGet("userID").(string)
+
+	var req struct {
+		Content string `json:"content" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	updatedMessage, err := c.messageService.EditMessage(ctx.Request.Context(), messageID, userID, req.Content)
+	if err != nil {
+		switch err.Error() {
+		case "message not found, not owned by user, or already deleted":
+			ctx.JSON(http.StatusNotFound, models.ErrorResponse{Error: err.Error()})
+		case "invalid message ID format", "invalid requester ID format":
+			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
 		default:
 			ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
 		}
 		return
 	}
 
-	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+	ctx.JSON(http.StatusOK, updatedMessage)
 }
 
 // @Summary Search messages
@@ -322,4 +360,86 @@ func (c *MessageController) SearchMessages(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, messages)
+}
+
+// @Summary Add a reaction to a message
+// @Description Add an emoji reaction to a specific message
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path string true "Message ID"
+// @Param reaction body object{emoji:string} true "Reaction emoji"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Failure 500 {object} models.ErrorResponse
+// @Router /messages/{id}/react [post]
+func (c *MessageController) AddReactionToMessage(ctx *gin.Context) {
+	messageID := ctx.Param("id")
+	userID := ctx.MustGet("userID").(string)
+
+	var req struct {
+		Emoji string `json:"emoji" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	err := c.messageService.AddReaction(ctx.Request.Context(), messageID, userID, req.Emoji)
+	if err != nil {
+		switch err.Error() {
+		case "message not found or reaction already exists":
+			ctx.JSON(http.StatusConflict, models.ErrorResponse{Error: err.Error()})
+		case "invalid message ID format", "invalid user ID format":
+			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
+		default:
+			ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// @Summary Remove a reaction from a message
+// @Description Remove an emoji reaction from a specific message
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path string true "Message ID"
+// @Param reaction body object{emoji:string} true "Reaction emoji"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Failure 500 {object} models.ErrorResponse
+// @Router /messages/{id}/react [delete]
+func (c *MessageController) RemoveReactionFromMessage(ctx *gin.Context) {
+	messageID := ctx.Param("id")
+	userID := ctx.MustGet("userID").(string)
+
+	var req struct {
+		Emoji string `json:"emoji" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	err := c.messageService.RemoveReaction(ctx.Request.Context(), messageID, userID, req.Emoji)
+	if err != nil {
+		switch err.Error() {
+		case "message not found or reaction not present":
+			ctx.JSON(http.StatusNotFound, models.ErrorResponse{Error: err.Error()})
+		case "invalid message ID format", "invalid user ID format":
+			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
+		default:
+			ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
 }
