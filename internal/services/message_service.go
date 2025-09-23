@@ -267,6 +267,36 @@ func (s *MessageService) MarkMessagesAsSeen(ctx context.Context, userID primitiv
 	return nil
 }
 
+func (s *MessageService) MarkConversationAsSeen(ctx context.Context, userID, conversationID primitive.ObjectID, timestamp time.Time, isGroup bool) error {
+	err := s.messageRepo.MarkConversationAsSeen(ctx, conversationID, userID, timestamp, isGroup)
+	if err != nil {
+		return err
+	}
+
+	// Publish conversation seen event to Kafka
+	conversationSeenEvent := models.ConversationSeenEvent{
+		ConversationID: conversationID,
+		UserID:         userID,
+		Timestamp:      timestamp,
+		IsGroup:        isGroup,
+	}
+	conversationSeenEventBytes, err := json.Marshal(conversationSeenEvent)
+	if err != nil {
+		log.Printf("Failed to marshal conversation seen event for Kafka: %v", err)
+	} else {
+		kafkaMsg := kafkago.Message{
+			Key:   []byte(conversationID.Hex()),
+			Value: conversationSeenEventBytes,
+			Time:  time.Now(),
+		}
+		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
+			log.Printf("Failed to produce conversation seen event to Kafka: %v", err)
+		}
+	}
+
+	return nil
+}
+
 func (s *MessageService) MarkMessagesAsDelivered(ctx context.Context, userID primitive.ObjectID, messageIDs []primitive.ObjectID) error {
 	if len(messageIDs) == 0 {
 		return nil

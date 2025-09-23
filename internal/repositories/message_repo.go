@@ -171,6 +171,30 @@ func (r *MessageRepository) MarkMessagesAsSeen(ctx context.Context, userID primi
 	return err
 }
 
+func (r *MessageRepository) MarkConversationAsSeen(ctx context.Context, conversationID primitive.ObjectID, userID primitive.ObjectID, timestamp time.Time, isGroup bool) error {
+	filter := bson.M{
+		"created_at": bson.M{"lte": timestamp},
+		"seen_by":    bson.M{"$ne": userID},
+	}
+
+	if isGroup {
+		filter["group_id"] = conversationID
+	} else {
+		filter["$or"] = []bson.M{
+			{"sender_id": userID, "receiver_id": conversationID},
+			{"sender_id": conversationID, "receiver_id": userID},
+		}
+	}
+
+	update := bson.M{
+		"$addToSet": bson.M{"seen_by": userID},
+		"$set":      bson.M{"updated_at": time.Now()},
+	}
+
+	_, err := r.collection.UpdateMany(ctx, filter, update)
+	return err
+}
+
 func (r *MessageRepository) MarkMessagesAsDelivered(ctx context.Context, userID primitive.ObjectID, messageIDs []primitive.ObjectID) error {
 	_, err := r.collection.UpdateMany(
 		ctx,

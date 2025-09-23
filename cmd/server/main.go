@@ -353,6 +353,7 @@ func main() {
 	conversationRoutes := api.Group("/conversations")
 	{
 		conversationRoutes.GET("", conversationController.GetConversationSummaries)
+		conversationRoutes.POST("/:id/seen", messageController.MarkConversationAsSeen)
 	}
 	messageRoutes := api.Group("/messages")
 	{

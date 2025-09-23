@@ -91,6 +91,7 @@ type Hub struct {
 	ReadReceiptEvents   chan models.ReadReceiptEvent   // New channel for read receipt events
 	MessageEditedEvents chan models.MessageEditedEvent // New channel for message edited events
 	DeliveredEvents     chan models.DeliveredEvent     // New channel for delivered events
+	ConversationSeenEvents chan models.ConversationSeenEvent // New channel for conversation seen events
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -122,6 +123,7 @@ func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepos
 		ReadReceiptEvents:   make(chan models.ReadReceiptEvent, 10000),   // Initialize new channel
 		MessageEditedEvents: make(chan models.MessageEditedEvent, 10000), // Initialize new channel
 		DeliveredEvents:     make(chan models.DeliveredEvent, 10000),     // Initialize new channel
+		ConversationSeenEvents: make(chan models.ConversationSeenEvent, 10000), // Initialize new channel
 		ctx:                 ctx,
 		cancel:              cancel,
 		messageUpdater:      messageUpdater, // Assign MessageUpdater
@@ -352,6 +354,36 @@ func (h *Hub) run() {
 		case ev := <-h.MessageEditedEvents:
 			h.broadcastToParticipants(ev.MessageID, models.WebSocketEvent{Type: "MESSAGE_EDITED_UPDATE", Data: json.RawMessage(fmt.Sprintf(`{"message_id": "%s", "new_content": "%s"}`, ev.MessageID.Hex(), ev.NewContent))})
 
+		case conversationSeenEvent := <-h.ConversationSeenEvents:
+			conversationSeenEventJSON, err := json.Marshal(conversationSeenEvent)
+			if err != nil {
+				log.Printf("Error marshaling ConversationSeenEvent for WebSocket: %v", err)
+				continue
+			}
+			wsEvent := models.WebSocketEvent{
+				Type: "CONVERSATION_SEEN_UPDATE",
+				Data: conversationSeenEventJSON,
+			}
+			wsEventJSON, err := json.Marshal(wsEvent)
+			if err != nil {
+				log.Printf("Error marshaling WebSocketEvent for conversation seen: %v", err)
+				continue
+			}
+
+			if conversationSeenEvent.IsGroup {
+				group, err := h.groupRepo.GetGroup(h.ctx, conversationSeenEvent.ConversationID)
+				if err != nil {
+					log.Printf("Error getting group %s for conversation seen event: %v", conversationSeenEvent.ConversationID.Hex(), err)
+					continue
+				}
+				for _, memberID := range group.Members {
+					h.sendToUser(memberID.Hex(), wsEventJSON)
+				}
+			} else {
+				h.sendToUser(conversationSeenEvent.UserID.Hex(), wsEventJSON)
+				h.sendToUser(conversationSeenEvent.ConversationID.Hex(), wsEventJSON)
+			}
+
 		case dev := <-h.DeliveredEvents:
 			// Mark messages as delivered in the database
 			err := h.messageUpdater.MarkMessagesAsDelivered(h.ctx, dev.DelivererID, dev.MessageIDs)
@@ -377,15 +409,12 @@ func (h *Hub) run() {
 					continue
 				}
 				// Determine conversation type and ID
-				conversationID := ""
 				var clients []*Client
 				if !msg.GroupID.IsZero() {
-					conversationID = msg.GroupID.Hex()
-					clients = h.getClientsByGroup(conversationID)
+					clients = h.getClientsByGroup(msg.GroupID.Hex())
 				} else if !msg.ReceiverID.IsZero() {
 					// For direct messages, send to sender and receiver
 					clients = append(h.getClientsByUser(msg.SenderID.Hex()), h.getClientsByUser(msg.ReceiverID.Hex())...)
-					conversationID = msg.ReceiverID.Hex() // Use receiver ID as conversation ID for direct messages
 				}
 
 				wsEventJSON, err := json.Marshal(wsEvent)

@@ -28,3 +28,18 @@ type DeliveredEvent struct {
 	DelivererID primitive.ObjectID   `json:"deliverer_id"` // The user who received the message
 	Timestamp   time.Time            `json:"timestamp"`
 }
+
+// // ReadReceiptEvent represents an event where one or more messages have been seen by a user.
+// type ReadReceiptEvent struct {
+// 	MessageIDs []primitive.ObjectID `json:"message_ids"`
+// 	ReaderID   primitive.ObjectID   `json:"reader_id"`
+// 	Timestamp  time.Time            `json:"timestamp"`
+// }
+
+// ConversationSeenEvent represents an event where a whole conversation has been seen by a user up to a certain timestamp.
+type ConversationSeenEvent struct {
+	ConversationID primitive.ObjectID `json:"conversation_id"`
+	UserID         primitive.ObjectID `json:"user_id"`
+	Timestamp      time.Time          `json:"timestamp"`
+	IsGroup        bool               `json:"is_group"`
+}

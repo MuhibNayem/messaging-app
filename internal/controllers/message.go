@@ -3,6 +3,7 @@ package controllers
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"messaging-app/internal/models"
 	"messaging-app/internal/services"
@@ -209,6 +210,57 @@ func (c *MessageController) MarkMessagesAsSeen(ctx *gin.Context) {
 	}
 
 	err = c.messageService.MarkMessagesAsSeen(ctx.Request.Context(), currentUserID, objectIDs)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// @Summary Mark a conversation as seen
+// @Description Mark all messages in a conversation as seen up to a certain timestamp
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path string true "Conversation ID (user ID or group ID)"
+// @Param seenRequest body object{timestamp:string,is_group:bool} true "Timestamp and conversation type"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 500 {object} models.ErrorResponse
+// @Router /conversations/{id}/seen [post]
+func (c *MessageController) MarkConversationAsSeen(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	currentUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid user ID"})
+		return
+	}
+
+	conversationIDStr := ctx.Param("id")
+	conversationID, err := primitive.ObjectIDFromHex(conversationIDStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid conversation ID"})
+		return
+	}
+
+	var req struct {
+		Timestamp string `json:"timestamp" binding:"required"`
+		IsGroup   bool   `json:"is_group"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	timestamp, err := time.Parse(time.RFC3339, req.Timestamp)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid timestamp format"})
+		return
+	}
+
+	err = c.messageService.MarkConversationAsSeen(ctx.Request.Context(), currentUserID, conversationID, timestamp, req.IsGroup)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
 		return
