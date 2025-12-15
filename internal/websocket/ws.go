@@ -544,11 +544,18 @@ func (h *Hub) run() {
 			}
 
 		case dev := <-h.DeliveredEvents:
-			// Mark messages as delivered in the database
-			err := h.messageUpdater.MarkMessagesAsDelivered(h.ctx, dev.DelivererID, dev.MessageIDs)
-			if err != nil {
-				log.Printf("Error marking messages as delivered: %v", err)
-			}
+			// Mark messages as delivered in the database asynchronously
+			go func(delivererID primitive.ObjectID, messageIDs []primitive.ObjectID) {
+				// Create a new context as the hub's context might be cancelled or not appropriate for long running DB ops if we wanted strict timeouts
+				// But context.Background() is safer for detached async ops
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+
+				err := h.messageUpdater.MarkMessagesAsDelivered(ctx, delivererID, messageIDs)
+				if err != nil {
+					log.Printf("Error marking messages as delivered: %v", err)
+				}
+			}(dev.DelivererID, dev.MessageIDs)
 
 			// Notify relevant clients about the delivery update
 			deliveredEventJSON, err := json.Marshal(dev)
@@ -643,6 +650,8 @@ func (h *Hub) removeClient(c *Client) {
 }
 
 func (h *Hub) removeUserClient(userID string, client *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.userClients[userID] != nil {
 		delete(h.userClients[userID], client)
 		if len(h.userClients[userID]) == 0 {
@@ -709,7 +718,10 @@ func (h *Hub) dispatchMessage(msg models.Message) {
 	// group
 	if !msg.GroupID.IsZero() {
 		h.sendToClients(h.getClientsByGroup(msg.GroupID.Hex()), msg)
-		h.queuePendingForGroup(msg)
+
+		// Queue pending messages asynchronously to avoid blocking the hub loop
+		// queuePendingForGroup handles its own locking safely
+		go h.queuePendingForGroup(msg)
 	}
 }
 

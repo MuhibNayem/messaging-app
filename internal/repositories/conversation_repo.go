@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"messaging-app/internal/models"
+	"sort"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -59,9 +60,17 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"let":  bson.M{"u1": userID, "u2": "$other_user_id"},
 			"pipeline": bson.A{
 				bson.M{"$match": bson.M{
-					"$or": bson.A{
-						bson.M{"sender_id": "$$u1", "receiver_id": "$$u2"},
-						bson.M{"sender_id": "$$u2", "receiver_id": "$$u1"},
+					"$expr": bson.M{
+						"$or": bson.A{
+							bson.M{"$and": bson.A{
+								bson.M{"$eq": bson.A{"$sender_id", "$$u1"}},
+								bson.M{"$eq": bson.A{"$receiver_id", "$$u2"}},
+							}},
+							bson.M{"$and": bson.A{
+								bson.M{"$eq": bson.A{"$sender_id", "$$u2"}},
+								bson.M{"$eq": bson.A{"$receiver_id", "$$u1"}},
+							}},
+						},
 					},
 				}},
 				bson.M{"$sort": bson.M{"created_at": -1}},
@@ -70,7 +79,7 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"as": "last_message_dm",
 		}}},
 		bson.D{{"$unwind", bson.M{"path": "$last_message_dm", "preserveNullAndEmptyArrays": true}}},
-		// Project into ConversationSummary format - FIXED: Use inclusion-only projection
+		// Project into ConversationSummary format
 		bson.D{{"$project", bson.M{
 			"_id":      "$user_info._id",
 			"name":     "$user_info.username",
@@ -90,11 +99,12 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 							{"case": bson.M{"$eq": bson.A{"$last_message_dm.content_type", "file"}}, "then": "Sent a file"},
 							{"case": bson.M{"$eq": bson.A{"$last_message_dm.content_type", "multiple"}}, "then": "Sent multiple items"},
 						},
-						"default": "Sent an attachment",
+						"default": "",
 					}},
 				},
 			},
 			"last_message_timestamp": "$last_message_dm.created_at",
+			"last_message_sender_id": "$last_message_dm.sender_id",
 		}}},
 	}) // End of direct message aggregation
 	if err != nil {
@@ -118,14 +128,24 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"from": "messages",
 			"let":  bson.M{"groupId": "$_id"},
 			"pipeline": bson.A{
-				bson.M{"$match": bson.M{"group_id": "$$groupId"}},
+				bson.M{"$match": bson.M{
+					"$expr": bson.M{"$eq": bson.A{"$group_id", "$$groupId"}},
+				}},
 				bson.M{"$sort": bson.M{"created_at": -1}},
 				bson.M{"$limit": 1},
 			},
 			"as": "last_message_group",
 		}}},
 		bson.D{{"$unwind", bson.M{"path": "$last_message_group", "preserveNullAndEmptyArrays": true}}},
-		// Project into ConversationSummary format - FIXED: Use inclusion-only projection
+		// Lookup sender info for the last message
+		bson.D{{"$lookup", bson.M{
+			"from":         "users",
+			"localField":   "last_message_group.sender_id",
+			"foreignField": "_id",
+			"as":           "last_message_sender_info",
+		}}},
+		bson.D{{"$unwind", bson.M{"path": "$last_message_sender_info", "preserveNullAndEmptyArrays": true}}},
+		// Project into ConversationSummary format
 		bson.D{{"$project", bson.M{
 			"id":       "$_id",
 			"name":     "$name",
@@ -145,11 +165,13 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 							{"case": bson.M{"$eq": bson.A{"$last_message_group.content_type", "file"}}, "then": "Sent a file"},
 							{"case": bson.M{"$eq": bson.A{"$last_message_group.content_type", "multiple"}}, "then": "Sent multiple items"},
 						},
-						"default": "Sent an attachment",
+						"default": "",
 					}},
 				},
 			},
-			"last_message_timestamp": "$last_message_group.created_at",
+			"last_message_timestamp":   "$last_message_group.created_at",
+			"last_message_sender_id":   "$last_message_group.sender_id",
+			"last_message_sender_name": "$last_message_sender_info.username",
 		}}},
 	}) // End of group message aggregation
 	if err != nil {
@@ -163,6 +185,22 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 	}
 	log.Printf("Repo: Retrieved %d group message summaries for user %s", len(groupSummaries), userID.Hex())
 	summaries = append(summaries, groupSummaries...)
+
+	// Sort summaries by last message timestamp (descending)
+	sort.Slice(summaries, func(i, j int) bool {
+		t1 := summaries[i].LastMessageTimestamp
+		t2 := summaries[j].LastMessageTimestamp
+		if t1 == nil && t2 == nil {
+			return false
+		}
+		if t1 == nil {
+			return false // t1 is technically "older" (non-existent) so it should be after t2
+		}
+		if t2 == nil {
+			return true // t2 is "older", so t1 comes first
+		}
+		return t1.After(*t2)
+	})
 
 	log.Printf("Repo: Finished GetConversationSummaries for user %s. Total summaries: %d", userID.Hex(), len(summaries))
 	return summaries, nil

@@ -143,10 +143,12 @@ func IsValidContentType(contentType string) bool {
 
 // ConversationSummary represents a summary of a chat conversation for the list view
 type ConversationSummary struct {
-	ID                   primitive.ObjectID `bson:"_id" json:"id"`
-	Name                 string             `bson:"name" json:"name"`
-	Avatar               string             `bson:"avatar" json:"avatar,omitempty"`
-	IsGroup              bool               `bson:"is_group" json:"is_group"`
-	LastMessageContent   string             `bson:"last_message_content" json:"last_message_content,omitempty"`
-	LastMessageTimestamp *time.Time         `bson:"last_message_timestamp" json:"last_message_timestamp,omitempty"`
+	ID                    primitive.ObjectID `bson:"_id" json:"id"`
+	Name                  string             `bson:"name" json:"name"`
+	Avatar                string             `bson:"avatar" json:"avatar,omitempty"`
+	IsGroup               bool               `bson:"is_group" json:"is_group"`
+	LastMessageSenderID   primitive.ObjectID `bson:"last_message_sender_id" json:"last_message_sender_id,omitempty"`
+	LastMessageSenderName string             `bson:"last_message_sender_name" json:"last_message_sender_name,omitempty"`
+	LastMessageContent    string             `bson:"last_message_content" json:"last_message_content,omitempty"`
+	LastMessageTimestamp  *time.Time         `bson:"last_message_timestamp" json:"last_message_timestamp,omitempty"`
 }
