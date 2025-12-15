@@ -24,7 +24,7 @@ type Post struct {
 	CommentIDs             []primitive.ObjectID   `bson:"comment_ids" json:"-"`                                       // Stored as IDs in DB, not directly exposed in JSON
 	Comments               []Comment              `bson:"comments,omitempty" json:"comments"`                         // Populated full Comment objects, not stored in DB
 	Mentions               []primitive.ObjectID   `bson:"mentions,omitempty" json:"mentions,omitempty"`
-	MentionedUsers         []PostAuthor           `bson:"-" json:"mentioned_users,omitempty"`
+	MentionedUsers         []PostAuthor           `bson:"mentioned_users,omitempty" json:"mentioned_users,omitempty"`
 	SpecificReactionCounts map[ReactionType]int64 `json:"specific_reaction_counts,omitempty"`
 	Hashtags               []string               `bson:"hashtags,omitempty,sparse" json:"hashtags,omitempty"`
 	TotalReactions         int64                  `bson:"total_reactions" json:"total_reactions"` // Denormalized count

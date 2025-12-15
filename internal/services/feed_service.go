@@ -43,16 +43,21 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 		// Log error but don't fail post creation if mentioned users are not found
 		fmt.Printf("Failed to find mentioned users: %v\n", err)
 	}
-	var mentionedUserIDs []primitive.ObjectID
+	// Use a map to deduplicate mentions
+	uniqueMentions := make(map[string]primitive.ObjectID)
 	for _, user := range mentionedUsers {
-		mentionedUserIDs = append(mentionedUserIDs, user.ID)
+		uniqueMentions[user.ID.Hex()] = user.ID
 	}
 
 	// Merge explicitly tagged users with mentioned users from text
 	for _, id := range req.Mentions {
+		uniqueMentions[id.Hex()] = id
+	}
+
+	var mentionedUserIDs []primitive.ObjectID
+	for _, id := range uniqueMentions {
 		mentionedUserIDs = append(mentionedUserIDs, id)
 	}
-	// TODO: Add deduplication if needed
 
 	post := &models.Post{
 		UserID:         userID,
@@ -133,6 +138,18 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 			}
 		}
 	}
+
+	// Populate MentionedUsers for the response
+	var mentionedPostAuthors []models.PostAuthor
+	for _, user := range mentionedUsers {
+		mentionedPostAuthors = append(mentionedPostAuthors, models.PostAuthor{
+			ID:       user.ID.Hex(),
+			Username: user.Username,
+			Avatar:   user.Avatar,
+			FullName: user.FullName,
+		})
+	}
+	createdPost.MentionedUsers = mentionedPostAuthors
 
 	return createdPost, nil
 }
