@@ -230,3 +230,10 @@ func (u *User) ToSafeResponse() SafeUserResponse {
 		CreatedAt:        u.CreatedAt,
 	}
 }
+
+type UserShortResponse struct {
+	ID       primitive.ObjectID `bson:"_id" json:"id"`
+	Username string             `bson:"username" json:"username"`
+	FullName string             `bson:"full_name,omitempty" json:"full_name,omitempty"`
+	Avatar   string             `bson:"avatar,omitempty" json:"avatar,omitempty"`
+}

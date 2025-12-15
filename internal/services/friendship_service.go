@@ -247,6 +247,11 @@ func (s *FriendshipService) GetDetailedFriendshipStatus(ctx context.Context, vie
 	return status, nil
 }
 
+// SearchFriends searches for accepted friends matching the query
+func (s *FriendshipService) SearchFriends(ctx context.Context, userID primitive.ObjectID, query string, limit int64) ([]models.UserShortResponse, error) {
+	return s.friendshipRepo.SearchFriends(ctx, userID, query, limit)
+}
+
 // error declarations
 var (
 	ErrNotFriends      = repositories.ErrNotFriends

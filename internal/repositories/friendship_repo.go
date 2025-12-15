@@ -496,6 +496,74 @@ func (r *FriendshipRepository) GetPendingFriendshipByID(ctx context.Context, fri
 	return &friendship, nil
 }
 
+// SearchFriends searches for friends whose username or full name matches the query
+func (r *FriendshipRepository) SearchFriends(ctx context.Context, userID primitive.ObjectID, query string, limit int64) ([]models.UserShortResponse, error) {
+	// Case-insensitive regex for the search query
+	regexPattern := fmt.Sprintf(".*%s.*", query)
+
+	pipeline := mongo.Pipeline{
+		// 1. Match accepted friendships involving the user
+		bson.D{{"$match", bson.M{
+			"status": models.FriendshipStatusAccepted,
+			"$or": []bson.M{
+				{"requester_id": userID},
+				{"receiver_id": userID},
+			},
+		}}},
+		// 2. Lookup friend details
+		// We need to figure out which field is the "friend" (not the current user)
+		// Simpler approach: Lookup both, then pick the right one
+		bson.D{{"$lookup", bson.M{
+			"from":         "users",
+			"localField":   "requester_id",
+			"foreignField": "_id",
+			"as":           "requester_info",
+		}}},
+		bson.D{{"$lookup", bson.M{
+			"from":         "users",
+			"localField":   "receiver_id",
+			"foreignField": "_id",
+			"as":           "receiver_info",
+		}}},
+		bson.D{{"$unwind", "$requester_info"}},
+		bson.D{{"$unwind", "$receiver_info"}},
+		// 3. Project the "friend" info into a common field
+		bson.D{{"$project", bson.M{
+			"friend_info": bson.M{
+				"$cond": bson.A{
+					bson.M{"$eq": bson.A{"$requester_id", userID}},
+					"$receiver_info",
+					"$requester_info",
+				},
+			},
+		}}},
+		// 4. Match against the search query
+		bson.D{{"$match", bson.M{
+			"$or": []bson.M{
+				{"friend_info.username": bson.M{"$regex": regexPattern, "$options": "i"}},
+				{"friend_info.full_name": bson.M{"$regex": regexPattern, "$options": "i"}},
+			},
+		}}},
+		// 5. Limit results
+		bson.D{{"$limit", limit}},
+		// 6. Project final shape
+		bson.D{{"$replaceRoot", bson.M{"newRoot": "$friend_info"}}},
+	}
+
+	cursor, err := r.db.Collection("friendships").Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search friends: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var friends []models.UserShortResponse
+	if err := cursor.All(ctx, &friends); err != nil {
+		return nil, fmt.Errorf("failed to decode search results: %w", err)
+	}
+
+	return friends, nil
+}
+
 // Custom errors
 var (
 	ErrCannotFriendSelf      = errors.New("cannot send friend request to yourself")

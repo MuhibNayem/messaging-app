@@ -405,7 +405,11 @@ func main() {
 		friendshipRoutes.POST("/block/:userId", friendshipController.BlockUser)
 		friendshipRoutes.DELETE("/block/:userId", friendshipController.UnblockUser)
 		friendshipRoutes.GET("/block/:userId/status", friendshipController.IsBlocked)
+
 		friendshipRoutes.GET("/blocked", friendshipController.GetBlockedUsers)
+
+		// Search friends
+		friendshipRoutes.GET("/search", friendshipController.SearchFriends)
 	}
 
 	// Search Routes

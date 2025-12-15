@@ -86,18 +86,25 @@ func (c *MessageConsumer) ConsumeMessages(ctx context.Context) {
 						log.Printf("Received Kafka message of type: MessageEditedEvent for topic %s at offset %d", m.Topic, m.Offset)
 						c.hub.MessageEditedEvents <- messageEditedEvent
 					} else {
-						// Fallback to WebSocketEvent (for feed events)
-						var wsEvent models.WebSocketEvent
-						if err := json.Unmarshal(m.Value, &wsEvent); err != nil {
-							log.Printf("Error unmarshaling Kafka message to Message, ReactionEvent, ReadReceiptEvent, MessageEditedEvent, or WebSocketEvent: %v, message: %s", err, string(m.Value))
-							// If unmarshaling fails, commit the message to avoid reprocessing
-							if err := c.reader.CommitMessages(ctx, m); err != nil {
-								log.Printf("Error committing message after unmarshaling failure: %v", err)
+						// If not a MessageEditedEvent, attempt to unmarshal as a ConversationSeenEvent
+						var conversationSeenEvent models.ConversationSeenEvent
+						if err := json.Unmarshal(m.Value, &conversationSeenEvent); err == nil && !conversationSeenEvent.ConversationID.IsZero() {
+							log.Printf("Received Kafka message of type: ConversationSeenEvent for topic %s at offset %d", m.Topic, m.Offset)
+							c.hub.ConversationSeenEvents <- conversationSeenEvent
+						} else {
+							// Fallback to WebSocketEvent (for feed events)
+							var wsEvent models.WebSocketEvent
+							if err := json.Unmarshal(m.Value, &wsEvent); err != nil {
+								log.Printf("Error unmarshaling Kafka message to known types or WebSocketEvent: %v, message: %s", err, string(m.Value))
+								// If unmarshaling fails, commit the message to avoid reprocessing
+								if err := c.reader.CommitMessages(ctx, m); err != nil {
+									log.Printf("Error committing message after unmarshaling failure: %v", err)
+								}
+								continue
 							}
-							continue
+							log.Printf("Received Kafka event of type: %s for topic %s at offset %d", wsEvent.Type, m.Topic, m.Offset)
+							c.hub.FeedEvents <- wsEvent
 						}
-						log.Printf("Received Kafka event of type: %s for topic %s at offset %d", wsEvent.Type, m.Topic, m.Offset)
-						c.hub.FeedEvents <- wsEvent
 					}
 				}
 			}

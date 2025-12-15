@@ -28,7 +28,7 @@ func NewGroupController(groupService *services.GroupService, userService *servic
 // Request/Response structures
 type CreateGroupRequest struct {
 	Name      string   `json:"name" binding:"required,min=3,max=50"`
-	MemberIDs []string `json:"member_ids" binding:"required,min=1,dive,objectid"`
+	MemberIDs []string `json:"member_ids" binding:"required,min=1,dive"`
 }
 
 type GroupResponse struct {
@@ -49,7 +49,7 @@ type UserShortResponse struct {
 }
 
 type AddMemberRequest struct {
-	UserID string `json:"user_id" binding:"required,objectid"`
+	UserID string `json:"user_id" binding:"required"`
 }
 
 type UpdateGroupRequest struct {

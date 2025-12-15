@@ -107,7 +107,6 @@ func (c *FriendshipController) RespondToRequest(ctx *gin.Context) {
 
 	log.Printf("Responding to friend request: FriendshipID=%s, Accept=%t", friendshipID.Hex(), req.Accept)
 
-
 	if err := c.friendshipService.RespondToRequest(ctx.Request.Context(), friendshipID, receiverID, req.Accept); err != nil {
 		log.Printf("Error from friendshipService.RespondToRequest: %v", err)
 		status := http.StatusBadRequest
@@ -151,7 +150,7 @@ func (c *FriendshipController) ListFriendships(ctx *gin.Context) {
 	}
 
 	status := ctx.Query("status")
-	
+
 	page, err := strconv.ParseInt(ctx.DefaultQuery("page", "1"), 10, 64)
 	if err != nil || page < 1 {
 		page = 1
@@ -174,6 +173,44 @@ func (c *FriendshipController) ListFriendships(ctx *gin.Context) {
 		"page":       page,
 		"totalPages": (total + limit - 1) / limit,
 	})
+}
+
+// @Summary Search friends
+// @Description Search for friends by username or full name
+// @Tags friendships
+// @Produce json
+// @Param query query string true "Search query"
+// @Param limit query int false "Max results" default(20)
+// @Success 200 {object} gin.H
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Router /friendships/search [get]
+func (c *FriendshipController) SearchFriends(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	currentUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	query := ctx.Query("query")
+	if query == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "query is required"})
+		return
+	}
+
+	limit, err := strconv.ParseInt(ctx.DefaultQuery("limit", "20"), 10, 64)
+	if err != nil || limit < 1 {
+		limit = 20
+	}
+
+	friends, err := c.friendshipService.SearchFriends(ctx.Request.Context(), currentUserID, query, limit)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, friends)
 }
 
 // @Summary Get detailed friendship status
@@ -220,29 +257,29 @@ func (c *FriendshipController) CheckFriendship(ctx *gin.Context) {
 // @Failure 404 {object} gin.H
 // @Router /friendships/{friend_id} [delete]
 func (c *FriendshipController) Unfriend(ctx *gin.Context) {
-    userID := ctx.MustGet("userID").(string)
-    currentUserID, err := primitive.ObjectIDFromHex(userID)
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
-        return
-    }
+	userID := ctx.MustGet("userID").(string)
+	currentUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
 
-    friendID, err := primitive.ObjectIDFromHex(ctx.Param("friend_id"))
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid friend ID"})
-        return
-    }
+	friendID, err := primitive.ObjectIDFromHex(ctx.Param("friend_id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid friend ID"})
+		return
+	}
 
-    if err := c.friendshipService.Unfriend(ctx.Request.Context(), currentUserID, friendID); err != nil {
-        status := http.StatusBadRequest
-        if errors.Is(err, services.ErrNotFriends) {
-            status = http.StatusNotFound
-        }
-        ctx.JSON(status, gin.H{"error": err.Error()})
-        return
-    }
+	if err := c.friendshipService.Unfriend(ctx.Request.Context(), currentUserID, friendID); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, services.ErrNotFriends) {
+			status = http.StatusNotFound
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
 
-    ctx.JSON(http.StatusOK, gin.H{"status": "success"})
+	ctx.JSON(http.StatusOK, gin.H{"status": "success"})
 }
 
 // @Summary Block a user
@@ -257,32 +294,32 @@ func (c *FriendshipController) Unfriend(ctx *gin.Context) {
 // @Failure 409 {object} gin.H
 // @Router /friendships/block/{user_id} [post]
 func (c *FriendshipController) BlockUser(ctx *gin.Context) {
-    userID := ctx.MustGet("userID").(string)
-    blockerID, err := primitive.ObjectIDFromHex(userID)
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
-        return
-    }
+	userID := ctx.MustGet("userID").(string)
+	blockerID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
 
-    blockedID, err := primitive.ObjectIDFromHex(ctx.Param("user_id"))
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID to block"})
-        return
-    }
+	blockedID, err := primitive.ObjectIDFromHex(ctx.Param("user_id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID to block"})
+		return
+	}
 
-    if err := c.friendshipService.BlockUser(ctx.Request.Context(), blockerID, blockedID); err != nil {
-        status := http.StatusBadRequest
-        switch {
-        case errors.Is(err, services.ErrCannotBlockSelf):
-            status = http.StatusBadRequest
-        case errors.Is(err, services.ErrAlreadyBlocked):
-            status = http.StatusConflict
-        }
-        ctx.JSON(status, gin.H{"error": err.Error()})
-        return
-    }
+	if err := c.friendshipService.BlockUser(ctx.Request.Context(), blockerID, blockedID); err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, services.ErrCannotBlockSelf):
+			status = http.StatusBadRequest
+		case errors.Is(err, services.ErrAlreadyBlocked):
+			status = http.StatusConflict
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
 
-    ctx.JSON(http.StatusOK, gin.H{"status": "success"})
+	ctx.JSON(http.StatusOK, gin.H{"status": "success"})
 }
 
 // @Summary Unblock a user
@@ -296,29 +333,29 @@ func (c *FriendshipController) BlockUser(ctx *gin.Context) {
 // @Failure 404 {object} gin.H
 // @Router /friendships/block/{user_id} [delete]
 func (c *FriendshipController) UnblockUser(ctx *gin.Context) {
-    userID := ctx.MustGet("userID").(string)
-    blockerID, err := primitive.ObjectIDFromHex(userID)
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
-        return
-    }
+	userID := ctx.MustGet("userID").(string)
+	blockerID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
 
-    blockedID, err := primitive.ObjectIDFromHex(ctx.Param("user_id"))
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID to unblock"})
-        return
-    }
+	blockedID, err := primitive.ObjectIDFromHex(ctx.Param("user_id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID to unblock"})
+		return
+	}
 
-    if err := c.friendshipService.UnblockUser(ctx.Request.Context(), blockerID, blockedID); err != nil {
-        status := http.StatusBadRequest
-        if errors.Is(err, services.ErrBlockNotFound) {
-            status = http.StatusNotFound
-        }
-        ctx.JSON(status, gin.H{"error": err.Error()})
-        return
-    }
+	if err := c.friendshipService.UnblockUser(ctx.Request.Context(), blockerID, blockedID); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, services.ErrBlockNotFound) {
+			status = http.StatusNotFound
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
 
-    ctx.JSON(http.StatusOK, gin.H{"status": "success"})
+	ctx.JSON(http.StatusOK, gin.H{"status": "success"})
 }
 
 // @Summary Check if user is blocked
@@ -331,26 +368,26 @@ func (c *FriendshipController) UnblockUser(ctx *gin.Context) {
 // @Failure 401 {object} gin.H
 // @Router /friendships/block/{user_id}/status [get]
 func (c *FriendshipController) IsBlocked(ctx *gin.Context) {
-    userID := ctx.MustGet("userID").(string)
-    currentUserID, err := primitive.ObjectIDFromHex(userID)
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
-        return
-    }
+	userID := ctx.MustGet("userID").(string)
+	currentUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
 
-    otherUserID, err := primitive.ObjectIDFromHex(ctx.Param("user_id"))
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid other user ID"})
-        return
-    }
+	otherUserID, err := primitive.ObjectIDFromHex(ctx.Param("user_id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid other user ID"})
+		return
+	}
 
-    isBlocked, err := c.friendshipService.IsBlocked(ctx.Request.Context(), currentUserID, otherUserID)
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-        return
-    }
+	isBlocked, err := c.friendshipService.IsBlocked(ctx.Request.Context(), currentUserID, otherUserID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
-    ctx.JSON(http.StatusOK, gin.H{"is_blocked": isBlocked})
+	ctx.JSON(http.StatusOK, gin.H{"is_blocked": isBlocked})
 }
 
 // @Summary Get blocked users list
@@ -362,18 +399,18 @@ func (c *FriendshipController) IsBlocked(ctx *gin.Context) {
 // @Failure 401 {object} gin.H
 // @Router /friendships/blocked [get]
 func (c *FriendshipController) GetBlockedUsers(ctx *gin.Context) {
-    userID := ctx.MustGet("userID").(string)
-    currentUserID, err := primitive.ObjectIDFromHex(userID)
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
-        return
-    }
+	userID := ctx.MustGet("userID").(string)
+	currentUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
 
-    blockedUsers, err := c.friendshipService.GetBlockedUsers(ctx.Request.Context(), currentUserID)
-    if err != nil {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-        return
-    }
+	blockedUsers, err := c.friendshipService.GetBlockedUsers(ctx.Request.Context(), currentUserID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
-    ctx.JSON(http.StatusOK, gin.H{"blocked_users": blockedUsers})
+	ctx.JSON(http.StatusOK, gin.H{"blocked_users": blockedUsers})
 }

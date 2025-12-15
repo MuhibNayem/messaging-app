@@ -26,7 +26,7 @@ func NewConversationRepository(db *mongo.Database, userRepo *UserRepository, gro
 
 func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, userID primitive.ObjectID) ([]models.ConversationSummary, error) {
 	log.Printf("Repo: GetConversationSummaries for user %s", userID.Hex())
-	var summaries []models.ConversationSummary
+	summaries := make([]models.ConversationSummary, 0)
 
 	// --- 1. Get Direct Message Conversations (Friends) ---
 	log.Printf("Repo: Starting direct message aggregation for user %s", userID.Hex())
@@ -72,11 +72,28 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 		bson.D{{"$unwind", bson.M{"path": "$last_message_dm", "preserveNullAndEmptyArrays": true}}},
 		// Project into ConversationSummary format - FIXED: Use inclusion-only projection
 		bson.D{{"$project", bson.M{
-			"_id":                    "$user_info._id",
-			"name":                   "$user_info.username",
-			"avatar":                 "$user_info.avatar",
-			"is_group":               bson.M{"$literal": false},
-			"last_message_content":   "$last_message_dm.content",
+			"_id":      "$user_info._id",
+			"name":     "$user_info.username",
+			"avatar":   "$user_info.avatar",
+			"is_group": bson.M{"$literal": false},
+			"last_message_content": bson.M{
+				"$cond": bson.A{
+					bson.M{"$and": bson.A{
+						bson.M{"$ne": bson.A{"$last_message_dm.content", ""}},
+						bson.M{"$ne": bson.A{"$last_message_dm.content", nil}},
+					}},
+					"$last_message_dm.content",
+					bson.M{"$switch": bson.M{
+						"branches": []bson.M{
+							{"case": bson.M{"$eq": bson.A{"$last_message_dm.content_type", "image"}}, "then": "Sent a photo"},
+							{"case": bson.M{"$eq": bson.A{"$last_message_dm.content_type", "video"}}, "then": "Sent a video"},
+							{"case": bson.M{"$eq": bson.A{"$last_message_dm.content_type", "file"}}, "then": "Sent a file"},
+							{"case": bson.M{"$eq": bson.A{"$last_message_dm.content_type", "multiple"}}, "then": "Sent multiple items"},
+						},
+						"default": "Sent an attachment",
+					}},
+				},
+			},
 			"last_message_timestamp": "$last_message_dm.created_at",
 		}}},
 	}) // End of direct message aggregation
@@ -110,11 +127,28 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 		bson.D{{"$unwind", bson.M{"path": "$last_message_group", "preserveNullAndEmptyArrays": true}}},
 		// Project into ConversationSummary format - FIXED: Use inclusion-only projection
 		bson.D{{"$project", bson.M{
-			"id":                     "$_id",
-			"name":                   "$name",
-			"avatar":                 "$avatar",
-			"is_group":               bson.M{"$literal": true},
-			"last_message_content":   "$last_message_group.content",
+			"id":       "$_id",
+			"name":     "$name",
+			"avatar":   "$avatar",
+			"is_group": bson.M{"$literal": true},
+			"last_message_content": bson.M{
+				"$cond": bson.A{
+					bson.M{"$and": bson.A{
+						bson.M{"$ne": bson.A{"$last_message_group.content", ""}},
+						bson.M{"$ne": bson.A{"$last_message_group.content", nil}},
+					}},
+					"$last_message_group.content",
+					bson.M{"$switch": bson.M{
+						"branches": []bson.M{
+							{"case": bson.M{"$eq": bson.A{"$last_message_group.content_type", "image"}}, "then": "Sent a photo"},
+							{"case": bson.M{"$eq": bson.A{"$last_message_group.content_type", "video"}}, "then": "Sent a video"},
+							{"case": bson.M{"$eq": bson.A{"$last_message_group.content_type", "file"}}, "then": "Sent a file"},
+							{"case": bson.M{"$eq": bson.A{"$last_message_group.content_type", "multiple"}}, "then": "Sent multiple items"},
+						},
+						"default": "Sent an attachment",
+					}},
+				},
+			},
 			"last_message_timestamp": "$last_message_group.created_at",
 		}}},
 	}) // End of group message aggregation
