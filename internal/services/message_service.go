@@ -161,9 +161,43 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 	msg.Mentions = mentionedUserIDs
 	// --- End Mention Logic ---
 
+	// --- End Mention Logic ---
+
+	// Optimistic Broadcast: Publish to Redis BEFORE DB Save
+	// This ensures "instant" delivery to recipients, bypassing DB/Kafka latency.
+	if msg.ID.IsZero() {
+		msg.ID = primitive.NewObjectID()
+	}
+	now := time.Now()
+	msg.CreatedAt = now
+	msg.UpdatedAt = now
+	if msg.SeenBy == nil {
+		msg.SeenBy = []primitive.ObjectID{}
+	}
+	if msg.DeliveredTo == nil {
+		msg.DeliveredTo = []primitive.ObjectID{}
+	}
+
+	msgBytesOptimistic, err := json.Marshal(msg)
+	if err == nil {
+		s.redisClient.Publish(ctx, "messages", msgBytesOptimistic)
+	} else {
+		log.Printf("Failed to marshal optimistic group message: %v", err)
+	}
+
 	// Save to database
 	createdMsg, err := s.messageRepo.CreateMessage(ctx, msg)
 	if err != nil {
+		// COMPENSATING EVENT: DB save failed, so broadcast a deletion event to undo the optimistic update
+		log.Printf("DB Save failed for message %s, sending compensating deletion event: %v", msg.ID.Hex(), err)
+		deletionEvent := models.Message{
+			ID:          msg.ID,
+			SenderID:    msg.SenderID,
+			GroupID:     msg.GroupID,
+			ContentType: models.ContentTypeDeleted, // Signal to clients to remove this message
+		}
+		deletionBytes, _ := json.Marshal(deletionEvent)
+		s.redisClient.Publish(ctx, "messages", deletionBytes)
 		return nil, err
 	}
 
@@ -244,9 +278,42 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 	}
 	msg.SenderName = senderName
 
+	msg.SenderName = senderName
+
+	// Optimistic Broadcast: Publish to Redis BEFORE DB Save
+	if msg.ID.IsZero() {
+		msg.ID = primitive.NewObjectID()
+	}
+	now := time.Now()
+	msg.CreatedAt = now
+	msg.UpdatedAt = now
+	if msg.SeenBy == nil {
+		msg.SeenBy = []primitive.ObjectID{}
+	}
+	if msg.DeliveredTo == nil {
+		msg.DeliveredTo = []primitive.ObjectID{}
+	}
+
+	msgBytesOptimistic, err := json.Marshal(msg)
+	if err == nil {
+		s.redisClient.Publish(ctx, "messages", msgBytesOptimistic)
+	} else {
+		log.Printf("Failed to marshal optimistic direct message: %v", err)
+	}
+
 	// Save to database
 	createdMsg, err := s.messageRepo.CreateMessage(ctx, msg)
 	if err != nil {
+		// COMPENSATING EVENT: DB save failed, so broadcast a deletion event to undo the optimistic update
+		log.Printf("DB Save failed for message %s, sending compensating deletion event: %v", msg.ID.Hex(), err)
+		deletionEvent := models.Message{
+			ID:          msg.ID,
+			SenderID:    msg.SenderID,
+			ReceiverID:  msg.ReceiverID,
+			ContentType: models.ContentTypeDeleted, // Signal to clients to remove this message
+		}
+		deletionBytes, _ := json.Marshal(deletionEvent)
+		s.redisClient.Publish(ctx, "messages", deletionBytes)
 		return nil, err
 	}
 

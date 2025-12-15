@@ -109,6 +109,7 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 			"content_type":        1,
 			"media_urls":          1,
 			"seen_by":             1,
+			"delivered_to":        1,
 			"is_deleted":          1,
 			"deleted_at":          1,
 			"original_content":    1,
@@ -173,7 +174,7 @@ func (r *MessageRepository) MarkMessagesAsSeen(ctx context.Context, userID primi
 
 func (r *MessageRepository) MarkConversationAsSeen(ctx context.Context, conversationID primitive.ObjectID, userID primitive.ObjectID, timestamp time.Time, isGroup bool) error {
 	filter := bson.M{
-		"created_at": bson.M{"lte": timestamp},
+		"created_at": bson.M{"$lte": timestamp},
 		"seen_by":    bson.M{"$ne": userID},
 	}
 

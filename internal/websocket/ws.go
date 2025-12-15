@@ -181,31 +181,32 @@ func (h *Hub) run() {
 			h.addClient(c)
 			go h.sendCachedMessages(c)
 
-			// Set presence in Redis
-			presenceData, _ := json.Marshal(map[string]interface{}{"status": "online", "last_seen": time.Now().Unix()})
-			h.redisClient.Set(h.ctx, "presence:"+c.userID, presenceData, 24*time.Hour)
+			go func(client *Client) {
+				// Set presence in Redis
+				presenceData, _ := json.Marshal(map[string]interface{}{"status": "online", "last_seen": time.Now().Unix()})
+				h.redisClient.Set(h.ctx, "presence:"+client.userID, presenceData, 24*time.Hour)
 
-			// 1. Fetch friends to send THEIR presence to the new client
-			//    and to send the new client's presence to THEM.
-			friends, err := h.friendshipRepo.GetFriends(h.ctx, func() primitive.ObjectID {
-				oid, _ := primitive.ObjectIDFromHex(c.userID)
-				return oid
-			}())
+				// 1. Fetch friends to send THEIR presence to the new client
+				//    and to send the new client's presence to THEM.
+				friends, err := h.friendshipRepo.GetFriends(h.ctx, func() primitive.ObjectID {
+					oid, _ := primitive.ObjectIDFromHex(client.userID)
+					return oid
+				}())
 
-			if err != nil {
-				log.Printf("Error getting friends for presence: %v", err)
-			}
+				if err != nil {
+					log.Printf("Error getting friends for presence: %v", err)
+					return
+				}
 
-			// Prepare presence event for the new user
-			myPresenceEvent := models.WebSocketEvent{
-				Type: "presence_update",
-				Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "online", "last_seen": %d}`, c.userID, time.Now().Unix())),
-			}
-			myPresenceNumBytes, _ := json.Marshal(myPresenceEvent)
+				// Prepare presence event for the new user
+				myPresenceEvent := models.WebSocketEvent{
+					Type: "presence_update",
+					Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "online", "last_seen": %d}`, client.userID, time.Now().Unix())),
+				}
+				myPresenceNumBytes, _ := json.Marshal(myPresenceEvent)
 
-			// List of friend IDs to notify
-			friendIDs := make([]string, 0)
-			if err == nil {
+				// List of friend IDs to notify
+				friendIDs := make([]string, 0)
 				for _, f := range friends {
 					friendIDs = append(friendIDs, f.ID.Hex())
 
@@ -221,189 +222,169 @@ func (h *Hub) run() {
 							Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "online", "last_seen": %d}`, f.ID.Hex(), time.Now().Unix())),
 						}
 						friendPresenceBytes, _ := json.Marshal(friendPresence)
-						c.send <- friendPresenceBytes
+
+						// Safe send: Only send if client is still registered
+						h.mu.RLock()
+						if clients, ok := h.userClients[client.userID]; ok {
+							if _, exists := clients[client]; exists {
+								client.send <- friendPresenceBytes
+							}
+						}
+						h.mu.RUnlock()
 					}
 				}
-			}
 
-			// 2. Broadcast my presence ONLY to my friends
-			for _, fid := range friendIDs {
-				h.sendToUser(fid, myPresenceNumBytes)
-			}
-			// Also send to self to confirm connection (optional but good for consistency)
-			c.send <- myPresenceNumBytes
+				// 2. Broadcast my presence ONLY to my friends
+				for _, fid := range friendIDs {
+					h.sendToUser(fid, myPresenceNumBytes)
+				}
+				// Also send to self to confirm connection (optional but good for consistency)
+				h.mu.RLock()
+				if clients, ok := h.userClients[client.userID]; ok {
+					if _, exists := clients[client]; exists {
+						client.send <- myPresenceNumBytes
+					}
+				}
+				h.mu.RUnlock()
+			}(c)
 
 		case c := <-h.unregister:
 			h.removeClient(c)
 
-			// Set presence in Redis
-			presenceData, _ := json.Marshal(map[string]interface{}{"status": "offline", "last_seen": time.Now().Unix()})
-			h.redisClient.Set(h.ctx, "presence:"+c.userID, presenceData, 24*time.Hour)
+			go func(userID string) {
+				// Set presence in Redis
+				presenceData, _ := json.Marshal(map[string]interface{}{"status": "offline", "last_seen": time.Now().Unix()})
+				h.redisClient.Set(h.ctx, "presence:"+userID, presenceData, 24*time.Hour)
 
-			// Broadcast offline status ONLY to friends
-			friends, err := h.friendshipRepo.GetFriends(h.ctx, func() primitive.ObjectID {
-				oid, _ := primitive.ObjectIDFromHex(c.userID)
-				return oid
-			}())
+				// Broadcast offline status ONLY to friends
+				oid, _ := primitive.ObjectIDFromHex(userID)
+				friends, err := h.friendshipRepo.GetFriends(h.ctx, oid)
 
-			if err == nil {
-				offlineEvent := models.WebSocketEvent{
-					Type: "presence_update",
-					Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "offline", "last_seen": %d}`, c.userID, time.Now().Unix())),
+				if err == nil {
+					offlineEvent := models.WebSocketEvent{
+						Type: "presence_update",
+						Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "offline", "last_seen": %d}`, userID, time.Now().Unix())),
+					}
+					offlineEventBytes, _ := json.Marshal(offlineEvent)
+
+					for _, f := range friends {
+						h.sendToUser(f.ID.Hex(), offlineEventBytes)
+					}
 				}
-				offlineEventBytes, _ := json.Marshal(offlineEvent)
-
-				for _, f := range friends {
-					h.sendToUser(f.ID.Hex(), offlineEventBytes)
-				}
-			}
+			}(c.userID)
 
 		case event := <-h.FeedEvents:
-			switch event.Type {
-			case "PostCreated":
-				var post models.Post
-				if err := json.Unmarshal(event.Data, &post); err != nil {
-					log.Printf("Error unmarshaling PostCreated data: %v", err)
-					continue
-				}
-
-				// Handle privacy-aware broadcasting
-				switch post.Privacy {
-				case models.PrivacySettingPublic:
-					// Broadcast to all connected clients
-					h.broadcastToAllUsers(event)
-				case models.PrivacySettingOnlyMe:
-					// Send only to the post author
-					h.sendToUser(post.UserID.Hex(), event.Data)
-				case models.PrivacySettingFriends:
-					// Send to author
-					h.sendToUser(post.UserID.Hex(), event.Data)
-
-					// Get friends of the post author
-					// Note: Using background context here, might consider passing a context if available
-					friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
-					if err != nil {
-						log.Printf("Error getting friends for post broadcast: %v", err)
-						continue
+			go func(event models.WebSocketEvent) {
+				switch event.Type {
+				case "PostCreated":
+					var post models.Post
+					if err := json.Unmarshal(event.Data, &post); err != nil {
+						log.Printf("Error unmarshaling PostCreated data: %v", err)
+						return
 					}
 
-					// Send to each friend
-					for _, friend := range friends {
-						h.sendToUser(friend.ID.Hex(), event.Data)
-					}
-				default:
-					// Default to author only for unknown privacy settings (fail safe)
-					h.sendToUser(post.UserID.Hex(), event.Data)
-				}
+					// Handle privacy-aware broadcasting
+					switch post.Privacy {
+					case models.PrivacySettingPublic:
+						// Broadcast to all connected clients
+						h.broadcastToAllUsers(event)
+					case models.PrivacySettingOnlyMe:
+						// Send only to the post author
+						h.sendToUser(post.UserID.Hex(), event.Data)
+					case models.PrivacySettingFriends:
+						// Send to author
+						h.sendToUser(post.UserID.Hex(), event.Data)
 
-				log.Printf("Broadcasted PostCreated event for post %s (Privacy: %s)", post.ID.Hex(), post.Privacy)
+						// Get friends of the post author
+						// Note: Using background context here, might consider passing a context if available
+						friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
+						if err != nil {
+							log.Printf("Error getting friends for post broadcast: %v", err)
+							return
+						}
 
-			case "PostUpdated":
-				var post models.Post
-				if err := json.Unmarshal(event.Data, &post); err != nil {
-					log.Printf("Error unmarshaling PostUpdated data: %v", err)
-					continue
-				}
-
-				// Handle privacy-aware broadcasting
-				switch post.Privacy {
-				case models.PrivacySettingPublic:
-					h.broadcastToAllUsers(event)
-				case models.PrivacySettingOnlyMe:
-					h.sendToUser(post.UserID.Hex(), event.Data)
-				case models.PrivacySettingFriends:
-					h.sendToUser(post.UserID.Hex(), event.Data)
-					friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
-					if err != nil {
-						log.Printf("Error getting friends for post update broadcast: %v", err)
-						continue
-					}
-					for _, friend := range friends {
-						h.sendToUser(friend.ID.Hex(), event.Data)
-					}
-				default:
-					h.sendToUser(post.UserID.Hex(), event.Data)
-				}
-				log.Printf("Broadcasted PostUpdated event for post %s", post.ID.Hex())
-
-			case "PostDeleted":
-				var post models.Post
-				if err := json.Unmarshal(event.Data, &post); err != nil {
-					log.Printf("Error unmarshaling PostDeleted data: %v", err)
-					continue
-				}
-				// For deletion, we can broadcast to all, as it just tells clients to remove the ID.
-				// Or we can be precise. Let's be precise to avoid noise.
-				switch post.Privacy {
-				case models.PrivacySettingPublic:
-					h.broadcastToAllUsers(event)
-				case models.PrivacySettingOnlyMe:
-					h.sendToUser(post.UserID.Hex(), event.Data)
-				case models.PrivacySettingFriends:
-					h.sendToUser(post.UserID.Hex(), event.Data)
-					friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
-					if err != nil {
-						log.Printf("Error getting friends for post delete broadcast: %v", err)
-						continue
-					}
-					for _, friend := range friends {
-						h.sendToUser(friend.ID.Hex(), event.Data)
-					}
-				default:
-					h.sendToUser(post.UserID.Hex(), event.Data)
-				}
-				log.Printf("Broadcasted PostDeleted event for post %s", post.ID.Hex())
-
-			case "CommentCreated":
-				var comment models.Comment
-				if err := json.Unmarshal(event.Data, &comment); err != nil {
-					log.Printf("Error unmarshaling CommentCreated data: %v", err)
-					continue
-				}
-				// Fetch the post to get the owner's ID
-				post, err := h.feedRepo.GetPostByID(context.Background(), comment.PostID)
-				if err != nil {
-					log.Printf("Error getting post %s for comment %s: %v", comment.PostID.Hex(), comment.ID.Hex(), err)
-					continue
-				}
-				h.sendToUser(post.UserID.Hex(), event.Data) // Send to post owner
-
-				// Also broadcast to others who can view the post (same logic as PostCreated)
-				switch post.Privacy {
-				case models.PrivacySettingPublic:
-					h.broadcastToAllUsers(event)
-				case models.PrivacySettingFriends:
-					friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
-					if err == nil {
+						// Send to each friend
 						for _, friend := range friends {
 							h.sendToUser(friend.ID.Hex(), event.Data)
 						}
+					default:
+						// Default to author only for unknown privacy settings (fail safe)
+						h.sendToUser(post.UserID.Hex(), event.Data)
 					}
-				}
 
-				log.Printf("Broadcasted CommentCreated event for comment %s on post %s", comment.ID.Hex(), comment.PostID.Hex())
+					log.Printf("Broadcasted PostCreated event for post %s (Privacy: %s)", post.ID.Hex(), post.Privacy)
 
-			case "ReplyCreated":
-				var reply models.Reply
-				if err := json.Unmarshal(event.Data, &reply); err != nil {
-					log.Printf("Error unmarshaling ReplyCreated data: %v", err)
-					continue
-				}
-				// Fetch the comment to get the owner's ID
-				comment, err := h.feedRepo.GetCommentByID(context.Background(), reply.CommentID)
-				if err != nil {
-					log.Printf("Error getting comment %s for reply %s: %v", reply.CommentID.Hex(), reply.ID.Hex(), err)
-					continue
-				}
-				h.sendToUser(comment.UserID.Hex(), event.Data) // Send to comment owner
+				case "PostUpdated":
+					var post models.Post
+					if err := json.Unmarshal(event.Data, &post); err != nil {
+						log.Printf("Error unmarshaling PostUpdated data: %v", err)
+						return
+					}
 
-				// Fetch post to check privacy for broader broadcast
-				post, err := h.feedRepo.GetPostByID(context.Background(), comment.PostID)
-				if err != nil {
-					log.Printf("Error getting post %s for reply broadcast: %v", comment.PostID.Hex(), err)
-				} else {
-					h.sendToUser(post.UserID.Hex(), event.Data) // Send to post owner as well
+					// Handle privacy-aware broadcasting
+					switch post.Privacy {
+					case models.PrivacySettingPublic:
+						h.broadcastToAllUsers(event)
+					case models.PrivacySettingOnlyMe:
+						h.sendToUser(post.UserID.Hex(), event.Data)
+					case models.PrivacySettingFriends:
+						h.sendToUser(post.UserID.Hex(), event.Data)
+						friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
+						if err != nil {
+							log.Printf("Error getting friends for post update broadcast: %v", err)
+							return
+						}
+						for _, friend := range friends {
+							h.sendToUser(friend.ID.Hex(), event.Data)
+						}
+					default:
+						h.sendToUser(post.UserID.Hex(), event.Data)
+					}
+					log.Printf("Broadcasted PostUpdated event for post %s", post.ID.Hex())
 
+				case "PostDeleted":
+					var post models.Post
+					if err := json.Unmarshal(event.Data, &post); err != nil {
+						log.Printf("Error unmarshaling PostDeleted data: %v", err)
+						return
+					}
+					// For deletion, we can broadcast to all, as it just tells clients to remove the ID.
+					// Or we can be precise. Let's be precise to avoid noise.
+					switch post.Privacy {
+					case models.PrivacySettingPublic:
+						h.broadcastToAllUsers(event)
+					case models.PrivacySettingOnlyMe:
+						h.sendToUser(post.UserID.Hex(), event.Data)
+					case models.PrivacySettingFriends:
+						h.sendToUser(post.UserID.Hex(), event.Data)
+						friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
+						if err != nil {
+							log.Printf("Error getting friends for post delete broadcast: %v", err)
+							return
+						}
+						for _, friend := range friends {
+							h.sendToUser(friend.ID.Hex(), event.Data)
+						}
+					default:
+						h.sendToUser(post.UserID.Hex(), event.Data)
+					}
+					log.Printf("Broadcasted PostDeleted event for post %s", post.ID.Hex())
+
+				case "CommentCreated":
+					var comment models.Comment
+					if err := json.Unmarshal(event.Data, &comment); err != nil {
+						log.Printf("Error unmarshaling CommentCreated data: %v", err)
+						return
+					}
+					// Fetch the post to get the owner's ID
+					post, err := h.feedRepo.GetPostByID(context.Background(), comment.PostID)
+					if err != nil {
+						log.Printf("Error getting post %s for comment %s: %v", comment.PostID.Hex(), comment.ID.Hex(), err)
+						return
+					}
+					h.sendToUser(post.UserID.Hex(), event.Data) // Send to post owner
+
+					// Also broadcast to others who can view the post (same logic as PostCreated)
 					switch post.Privacy {
 					case models.PrivacySettingPublic:
 						h.broadcastToAllUsers(event)
@@ -415,33 +396,69 @@ func (h *Hub) run() {
 							}
 						}
 					}
+
+					log.Printf("Broadcasted CommentCreated event for comment %s on post %s", comment.ID.Hex(), comment.PostID.Hex())
+
+				case "ReplyCreated":
+					var reply models.Reply
+					if err := json.Unmarshal(event.Data, &reply); err != nil {
+						log.Printf("Error unmarshaling ReplyCreated data: %v", err)
+						return
+					}
+					// Fetch the comment to get the owner's ID
+					comment, err := h.feedRepo.GetCommentByID(context.Background(), reply.CommentID)
+					if err != nil {
+						log.Printf("Error getting comment %s for reply %s: %v", reply.CommentID.Hex(), reply.ID.Hex(), err)
+						return
+					}
+					h.sendToUser(comment.UserID.Hex(), event.Data) // Send to comment owner
+
+					// Fetch post to check privacy for broader broadcast
+					post, err := h.feedRepo.GetPostByID(context.Background(), comment.PostID)
+					if err != nil {
+						log.Printf("Error getting post %s for reply broadcast: %v", comment.PostID.Hex(), err)
+					} else {
+						h.sendToUser(post.UserID.Hex(), event.Data) // Send to post owner as well
+
+						switch post.Privacy {
+						case models.PrivacySettingPublic:
+							h.broadcastToAllUsers(event)
+						case models.PrivacySettingFriends:
+							friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
+							if err == nil {
+								for _, friend := range friends {
+									h.sendToUser(friend.ID.Hex(), event.Data)
+								}
+							}
+						}
+					}
+
+					log.Printf("Broadcasted ReplyCreated event for reply %s on comment %s", reply.ID.Hex(), reply.CommentID.Hex())
+
+				case "ReactionCreated":
+					var reaction models.Reaction
+					if err := json.Unmarshal(event.Data, &reaction); err != nil {
+						log.Printf("Error unmarshaling ReactionCreated data: %v", err)
+						return
+					}
+					// Broadcast to all users for real-time update of reaction counts
+					h.broadcastToAllUsers(event)
+					log.Printf("Broadcasted ReactionCreated event for reaction %s on target %s (type: %s)", reaction.ID.Hex(), reaction.TargetID.Hex(), reaction.TargetType)
+
+				case "ReactionDeleted": // Handle ReactionDeleted event
+					var reaction models.Reaction
+					if err := json.Unmarshal(event.Data, &reaction); err != nil {
+						log.Printf("Error unmarshaling ReactionDeleted data: %v", err)
+						return
+					}
+					// Broadcast to all users for real-time update of reaction counts
+					h.broadcastToAllUsers(event)
+					log.Printf("Broadcasted ReactionDeleted event for reaction %s on target %s (type: %s)", reaction.ID.Hex(), reaction.TargetID.Hex(), reaction.TargetType)
+
+				default:
+					log.Printf("Received unknown WebSocket event type: %s, data: %s", event.Type, string(event.Data))
 				}
-
-				log.Printf("Broadcasted ReplyCreated event for reply %s on comment %s", reply.ID.Hex(), reply.CommentID.Hex())
-
-			case "ReactionCreated":
-				var reaction models.Reaction
-				if err := json.Unmarshal(event.Data, &reaction); err != nil {
-					log.Printf("Error unmarshaling ReactionCreated data: %v", err)
-					continue
-				}
-				// Broadcast to all users for real-time update of reaction counts
-				h.broadcastToAllUsers(event)
-				log.Printf("Broadcasted ReactionCreated event for reaction %s on target %s (type: %s)", reaction.ID.Hex(), reaction.TargetID.Hex(), reaction.TargetType)
-
-			case "ReactionDeleted": // Handle ReactionDeleted event
-				var reaction models.Reaction
-				if err := json.Unmarshal(event.Data, &reaction); err != nil {
-					log.Printf("Error unmarshaling ReactionDeleted data: %v", err)
-					continue
-				}
-				// Broadcast to all users for real-time update of reaction counts
-				h.broadcastToAllUsers(event)
-				log.Printf("Broadcasted ReactionDeleted event for reaction %s on target %s (type: %s)", reaction.ID.Hex(), reaction.TargetID.Hex(), reaction.TargetType)
-
-			default:
-				log.Printf("Received unknown WebSocket event type: %s, data: %s", event.Type, string(event.Data))
-			}
+			}(event)
 		case notification := <-h.NotificationEvents:
 			notificationJSON, err := json.Marshal(notification)
 			if err != nil {
@@ -467,81 +484,89 @@ func (h *Hub) run() {
 			h.dispatchMessage(m)
 
 		case reactionEvent := <-h.ReactionEvents:
-			reactionEventJSON, err := json.Marshal(reactionEvent)
-			if err != nil {
-				log.Printf("Error marshaling ReactionEvent for WebSocket: %v", err)
-				continue
-			}
-			wsEvent := models.WebSocketEvent{
-				Type: "MESSAGE_REACTION_UPDATE",
-				Data: reactionEventJSON,
-			}
-			h.broadcastToParticipants(reactionEvent.MessageID, wsEvent)
+			go func(event models.ReactionEvent) {
+				reactionEventJSON, err := json.Marshal(event)
+				if err != nil {
+					log.Printf("Error marshaling ReactionEvent for WebSocket: %v", err)
+					return
+				}
+				wsEvent := models.WebSocketEvent{
+					Type: "MESSAGE_REACTION_UPDATE",
+					Data: reactionEventJSON,
+				}
+				h.broadcastToParticipants(event.MessageID, wsEvent)
+			}(reactionEvent)
 
 		case readReceiptEvent := <-h.ReadReceiptEvents:
-			readReceiptEventJSON, err := json.Marshal(readReceiptEvent)
-			if err != nil {
-				log.Printf("Error marshaling ReadReceiptEvent for WebSocket: %v", err)
-				continue
-			}
-			wsEvent := models.WebSocketEvent{
-				Type: "MESSAGE_READ_UPDATE",
-				Data: readReceiptEventJSON,
-			}
-			wsEventJSON, err := json.Marshal(wsEvent)
-			if err != nil {
-				log.Printf("Error marshaling WebSocketEvent for read receipt: %v", err)
-				continue
-			}
-
-			// Notify the reader that their action was processed
-			h.sendToUser(readReceiptEvent.ReaderID.Hex(), wsEventJSON)
-
-			// Notify the sender of the messages that they were read
-			for _, msgID := range readReceiptEvent.MessageIDs {
-				msg, err := h.messageRepo.GetMessageByID(h.ctx, msgID)
+			go func(event models.ReadReceiptEvent) {
+				readReceiptEventJSON, err := json.Marshal(event)
 				if err != nil {
-					log.Printf("Error getting message %s for read receipt: %v", msgID.Hex(), err)
-					continue
+					log.Printf("Error marshaling ReadReceiptEvent for WebSocket: %v", err)
+					return
 				}
-				// Avoid sending notification to self
-				if msg.SenderID != readReceiptEvent.ReaderID {
-					h.sendToUser(msg.SenderID.Hex(), wsEventJSON)
+				wsEvent := models.WebSocketEvent{
+					Type: "MESSAGE_READ_UPDATE",
+					Data: readReceiptEventJSON,
 				}
-			}
+				wsEventJSON, err := json.Marshal(wsEvent)
+				if err != nil {
+					log.Printf("Error marshaling WebSocketEvent for read receipt: %v", err)
+					return
+				}
+
+				// Notify the reader that their action was processed
+				h.sendToUser(event.ReaderID.Hex(), wsEventJSON)
+
+				// Notify the sender of the messages that they were read
+				for _, msgID := range event.MessageIDs {
+					msg, err := h.messageRepo.GetMessageByID(context.Background(), msgID) // Use background context
+					if err != nil {
+						log.Printf("Error getting message %s for read receipt: %v", msgID.Hex(), err)
+						continue
+					}
+					// Avoid sending notification to self
+					if msg.SenderID != event.ReaderID {
+						h.sendToUser(msg.SenderID.Hex(), wsEventJSON)
+					}
+				}
+			}(readReceiptEvent)
 
 		case ev := <-h.MessageEditedEvents:
-			h.broadcastToParticipants(ev.MessageID, models.WebSocketEvent{Type: "MESSAGE_EDITED_UPDATE", Data: json.RawMessage(fmt.Sprintf(`{"message_id": "%s", "new_content": "%s"}`, ev.MessageID.Hex(), ev.NewContent))})
+			go func(ev models.MessageEditedEvent) {
+				h.broadcastToParticipants(ev.MessageID, models.WebSocketEvent{Type: "MESSAGE_EDITED_UPDATE", Data: json.RawMessage(fmt.Sprintf(`{"message_id": "%s", "new_content": "%s"}`, ev.MessageID.Hex(), ev.NewContent))})
+			}(ev)
 
 		case conversationSeenEvent := <-h.ConversationSeenEvents:
-			conversationSeenEventJSON, err := json.Marshal(conversationSeenEvent)
-			if err != nil {
-				log.Printf("Error marshaling ConversationSeenEvent for WebSocket: %v", err)
-				continue
-			}
-			wsEvent := models.WebSocketEvent{
-				Type: "CONVERSATION_SEEN_UPDATE",
-				Data: conversationSeenEventJSON,
-			}
-			wsEventJSON, err := json.Marshal(wsEvent)
-			if err != nil {
-				log.Printf("Error marshaling WebSocketEvent for conversation seen: %v", err)
-				continue
-			}
-
-			if conversationSeenEvent.IsGroup {
-				group, err := h.groupRepo.GetGroup(h.ctx, conversationSeenEvent.ConversationID)
+			go func(event models.ConversationSeenEvent) {
+				conversationSeenEventJSON, err := json.Marshal(event)
 				if err != nil {
-					log.Printf("Error getting group %s for conversation seen event: %v", conversationSeenEvent.ConversationID.Hex(), err)
-					continue
+					log.Printf("Error marshaling ConversationSeenEvent for WebSocket: %v", err)
+					return
 				}
-				for _, memberID := range group.Members {
-					h.sendToUser(memberID.Hex(), wsEventJSON)
+				wsEvent := models.WebSocketEvent{
+					Type: "CONVERSATION_SEEN_UPDATE",
+					Data: conversationSeenEventJSON,
 				}
-			} else {
-				h.sendToUser(conversationSeenEvent.UserID.Hex(), wsEventJSON)
-				h.sendToUser(conversationSeenEvent.ConversationID.Hex(), wsEventJSON)
-			}
+				wsEventJSON, err := json.Marshal(wsEvent)
+				if err != nil {
+					log.Printf("Error marshaling WebSocketEvent for conversation seen: %v", err)
+					return
+				}
+
+				if event.IsGroup {
+					group, err := h.groupRepo.GetGroup(context.Background(), event.ConversationID)
+					if err != nil {
+						log.Printf("Error getting group %s for conversation seen event: %v", event.ConversationID.Hex(), err)
+						return
+					}
+					for _, memberID := range group.Members {
+						h.sendToUser(memberID.Hex(), wsEventJSON)
+					}
+				} else {
+					h.sendToUser(event.UserID.Hex(), wsEventJSON)
+					h.sendToUser(event.ConversationID.Hex(), wsEventJSON)
+				}
+			}(conversationSeenEvent)
 
 		case dev := <-h.DeliveredEvents:
 			// Mark messages as delivered in the database asynchronously
@@ -662,6 +687,8 @@ func (h *Hub) removeUserClient(userID string, client *Client) {
 
 // sendToUser sends a message to all active WebSocket connections for a specific userID.
 func (h *Hub) sendToUser(userID string, message []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	if clients, ok := h.userClients[userID]; ok {
 		for client := range clients {
 			select {
@@ -670,7 +697,15 @@ func (h *Hub) sendToUser(userID string, message []byte) {
 				close(client.send)
 				// The client is already removed from userClients by removeUserClient
 				// No need to delete from h.clients as it's not directly managed here
-				h.removeUserClient(client.userID, client)
+				// Note: Calling removeUserClient requires Lock, but we hold RLock.
+				// This is tricky. removeUserClient takes Lock. RLock -> Lock = Deadlock!
+				// We should NOT call removeUserClient here synchronously if we hold RLock.
+				// Instead, we should arguably just skip or handle removal differently.
+				// OR we assume sendToUser is only called from main loop... BUT we want to call it from Go routines.
+				// If we call it from Go routines, we MUST lock.
+				// If we encounter a bad channel, we want to remove the client.
+				// To do so safely: launch a goroutine to remove it?
+				go h.removeUserClient(client.userID, client)
 			}
 		}
 	}
@@ -695,7 +730,8 @@ func (h *Hub) broadcastToAllUsers(event models.WebSocketEvent) {
 			default:
 				// Client's send channel is full, remove client
 				close(client.send)
-				h.removeUserClient(client.userID, client)
+				// Clean up asynchronously to avoid deadlock with RLock
+				go h.removeUserClient(client.userID, client)
 			}
 		}
 	}
@@ -749,18 +785,51 @@ func (h *Hub) sendToClients(clients []*Client, msg models.Message) {
 			c.setLastSeen(time.Now())
 			wsMessagesSent.WithLabelValues(msg.ContentType).Inc()
 
-			// Send a delivered event to the hub for processing
-			delivererObjectID, err := primitive.ObjectIDFromHex(c.userID)
-			if err != nil {
-				log.Printf("Error converting deliverer ID to ObjectID: %v", err)
-				return
-			}
-			h.DeliveredEvents <- models.DeliveredEvent{
-				MessageIDs:  []primitive.ObjectID{msg.ID},
-				DelivererID: delivererObjectID,
-				Timestamp:   time.Now(),
-			}
+			// Async delivery update & notification to Sender
+			// Bypassing the DeliveredEvents channel to avoid blocking the hub loop
+			go func(c *Client, msgID primitive.ObjectID) {
+				delivererObjectID, err := primitive.ObjectIDFromHex(c.userID)
+				if err != nil {
+					log.Printf("Error converting deliverer ID to ObjectID: %v", err)
+					return
+				}
+
+				// 1. Update DB
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := h.messageUpdater.MarkMessagesAsDelivered(ctx, delivererObjectID, []primitive.ObjectID{msgID}); err != nil {
+					log.Printf("Error marking message %s as delivered to %s: %v", msgID.Hex(), c.userID, err)
+				}
+
+				// 2. Notify Sender
+				// Construct the event
+				deliveredEvent := models.DeliveredEvent{
+					MessageIDs:  []primitive.ObjectID{msgID},
+					DelivererID: delivererObjectID,
+					Timestamp:   time.Now(),
+				}
+				eventBytes, err := json.Marshal(deliveredEvent)
+				if err != nil {
+					log.Printf("Error marshaling delivered event: %v", err)
+					return
+				}
+				wsEvent := models.WebSocketEvent{
+					Type: "MESSAGE_DELIVERED_UPDATE",
+					Data: eventBytes,
+				}
+				wsEventJSON, err := json.Marshal(wsEvent)
+				if err != nil {
+					log.Printf("Error marshaling WebSocketEvent for delivered update: %v", err)
+					return
+				}
+
+				// Send to msg Sender
+				// We need to fetch the message or pass senderID? We have msg object.
+				h.sendToUser(msg.SenderID.Hex(), wsEventJSON)
+			}(c, msg.ID)
+
 		default:
+			// Client buffer full or closed
 			h.removeClient(c)
 		}
 	}
