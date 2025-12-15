@@ -313,7 +313,7 @@ func (c *FeedController) GetPostsByHashtag(ctx *gin.Context) {
 // @Failure 500 {object} gin.H
 // @Router /api/posts/{postId}/comments [get]
 func (c *FeedController) GetCommentsByPostID(ctx *gin.Context) {
-	postID, err := primitive.ObjectIDFromHex(ctx.Param("postId"))
+	postID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid post ID"})
 		return
@@ -377,7 +377,7 @@ func (c *FeedController) GetRepliesByCommentID(ctx *gin.Context) {
 // @Failure 500 {object} gin.H
 // @Router /api/posts/{postId}/reactions [get]
 func (c *FeedController) GetReactionsByPostID(ctx *gin.Context) {
-	postID, err := primitive.ObjectIDFromHex(ctx.Param("postId"))
+	postID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid post ID"})
 		return

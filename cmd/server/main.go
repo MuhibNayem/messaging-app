@@ -309,11 +309,11 @@ func main() {
 		// Post routes
 		feedRoutes.POST("/posts", feedController.CreatePost)
 		feedRoutes.GET("/posts", feedController.ListPosts)
-		feedRoutes.GET("/posts/:postId", feedController.GetPostByID)
-		feedRoutes.PUT("/posts/:postId", feedController.UpdatePost)
-		feedRoutes.DELETE("/posts/:postId", feedController.DeletePost)
-		feedRoutes.GET("/posts/:postId/comments", feedController.GetCommentsByPostID)
-		feedRoutes.GET("/posts/:postId/reactions", feedController.GetReactionsByPostID)
+		feedRoutes.GET("/posts/:id", feedController.GetPostByID)
+		feedRoutes.PUT("/posts/:id", feedController.UpdatePost)
+		feedRoutes.DELETE("/posts/:id", feedController.DeletePost)
+		feedRoutes.GET("/posts/:id/comments", feedController.GetCommentsByPostID)
+		feedRoutes.GET("/posts/:id/reactions", feedController.GetReactionsByPostID)
 
 		// Hashtag routes
 		feedRoutes.GET("/hashtags/:hashtag/posts", feedController.GetPostsByHashtag)
@@ -321,7 +321,7 @@ func main() {
 		// Comment routes
 		feedRoutes.POST("/comments", feedController.CreateComment)
 		feedRoutes.PUT("/comments/:commentId", feedController.UpdateComment)
-		feedRoutes.DELETE("/posts/:postId/comments/:commentId", feedController.DeleteComment)
+		feedRoutes.DELETE("/posts/:id/comments/:commentId", feedController.DeleteComment)
 		feedRoutes.GET("/comments/:commentId/replies", feedController.GetRepliesByCommentID)
 		feedRoutes.GET("/comments/:commentId/reactions", feedController.GetReactionsByCommentID)
 

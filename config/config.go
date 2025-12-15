@@ -28,6 +28,12 @@ type Config struct {
 	RateLimitEnabled bool
 	RateLimitLimit   float64
 	RateLimitBurst   int
+	StorageEndpoint  string
+	StorageAccessKey string
+	StorageSecretKey string
+	StorageBucket    string
+	StorageUseSSL    bool
+	StoragePublicURL string
 }
 
 func LoadConfig() *Config {
@@ -41,6 +47,7 @@ func LoadConfig() *Config {
 	rateLimitEnabled, _ := strconv.ParseBool(getEnv("RATE_LIMIT_ENABLED", "true"))
 	rateLimitLimit, _ := strconv.ParseFloat(getEnv("RATE_LIMIT_LIMIT", "100"), 64)
 	rateLimitBurst, _ := strconv.Atoi(getEnv("RATE_LIMIT_BURST", "100"))
+	storageUseSSL, _ := strconv.ParseBool(getEnv("STORAGE_USE_SSL", "false"))
 
 	return &Config{
 		MongoURI:         getEnv("MONGO_URI", "mongodb://localhost:27017"),
@@ -60,6 +67,12 @@ func LoadConfig() *Config {
 		RateLimitEnabled: rateLimitEnabled,
 		RateLimitLimit:   rateLimitLimit,
 		RateLimitBurst:   rateLimitBurst,
+		StorageEndpoint:  getEnv("STORAGE_ENDPOINT", "minio:9000"),
+		StorageAccessKey: getEnv("STORAGE_ACCESS_KEY", "minioadmin"),
+		StorageSecretKey: getEnv("STORAGE_SECRET_KEY", "minioadmin"),
+		StorageBucket:    getEnv("STORAGE_BUCKET", "connectify-uploads"),
+		StorageUseSSL:    storageUseSSL,
+		StoragePublicURL: getEnv("STORAGE_PUBLIC_URL", "http://localhost:9000"),
 	}
 }
 

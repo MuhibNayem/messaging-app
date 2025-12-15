@@ -25,23 +25,12 @@ type StorageService struct {
 }
 
 func NewStorageService(cfg *config.Config) (*StorageService, error) {
-	// Initialize MinIO client object.
-	// For local development with Docker Compose:
-	// Endpoint: minio:9000 (internal Docker network)
-	// AccessKey: minioadmin
-	// SecretKey: minioadmin
-
-	// Note: In production, these should come from config.
-	// Assuming config has been updated or we use defaults for now based on the docker-compose we just observed.
-	// The docker-compose uses minioadmin/minioadmin and port 9000.
-
-	endpoint := "minio:9000"
-	accessKeyID := "minioadmin"
-	secretAccessKey := "minioadmin"
-	useSSL := false
-	bucketName := "connectify-uploads"
-	// External host for browser access. Localhost mapped port is 9000.
-	externalHost := "http://localhost:9000"
+	endpoint := cfg.StorageEndpoint
+	accessKeyID := cfg.StorageAccessKey
+	secretAccessKey := cfg.StorageSecretKey
+	useSSL := cfg.StorageUseSSL
+	bucketName := cfg.StorageBucket
+	externalHost := cfg.StoragePublicURL
 
 	minioClient, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
