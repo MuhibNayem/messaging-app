@@ -18,11 +18,13 @@ type Post struct {
 	Author                 PostAuthor             `bson:"author,omitempty" json:"author"` // Populated from User collection, not stored in Post
 	Content                string                 `bson:"content" json:"content"`
 	Media                  []MediaItem            `bson:"media,omitempty" json:"media,omitempty"`
+	Location               string                 `bson:"location,omitempty" json:"location,omitempty"`
 	Privacy                PrivacySettingType     `bson:"privacy" json:"privacy"`                                     // PUBLIC, FRIENDS, ONLY_ME, CUSTOM
 	CustomAudience         []primitive.ObjectID   `bson:"custom_audience,omitempty" json:"custom_audience,omitempty"` // For CUSTOM privacy
 	CommentIDs             []primitive.ObjectID   `bson:"comment_ids" json:"-"`                                       // Stored as IDs in DB, not directly exposed in JSON
 	Comments               []Comment              `bson:"comments,omitempty" json:"comments"`                         // Populated full Comment objects, not stored in DB
 	Mentions               []primitive.ObjectID   `bson:"mentions,omitempty" json:"mentions,omitempty"`
+	MentionedUsers         []PostAuthor           `bson:"-" json:"mentioned_users,omitempty"`
 	SpecificReactionCounts map[ReactionType]int64 `json:"specific_reaction_counts,omitempty"`
 	Hashtags               []string               `bson:"hashtags,omitempty,sparse" json:"hashtags,omitempty"`
 	TotalReactions         int64                  `bson:"total_reactions" json:"total_reactions"` // Denormalized count
@@ -97,6 +99,7 @@ type Reaction struct {
 type CreatePostRequest struct {
 	Content        string               `json:"content" binding:"required"`
 	Media          []MediaItem          `json:"media,omitempty"`
+	Location       string               `json:"location,omitempty"`
 	Privacy        PrivacySettingType   `json:"privacy" binding:"required"`
 	CustomAudience []primitive.ObjectID `json:"custom_audience,omitempty"`
 	Mentions       []primitive.ObjectID `json:"mentions,omitempty"`
@@ -106,6 +109,7 @@ type CreatePostRequest struct {
 type UpdatePostRequest struct {
 	Content        string               `json:"content,omitempty"`
 	Media          []MediaItem          `json:"media,omitempty"`
+	Location       string               `json:"location,omitempty"`
 	Privacy        PrivacySettingType   `json:"privacy,omitempty"`
 	CustomAudience []primitive.ObjectID `json:"custom_audience,omitempty"`
 	Mentions       []primitive.ObjectID `json:"mentions,omitempty"`

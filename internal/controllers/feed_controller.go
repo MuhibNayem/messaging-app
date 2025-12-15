@@ -56,7 +56,16 @@ func (c *FeedController) CreatePost(ctx *gin.Context) {
 
 		// Extract content and privacy from form fields
 		req.Content = ctx.PostForm("content")
+		req.Location = ctx.PostForm("location")
 		privacyStr := ctx.PostForm("privacy")
+
+		// Extract mentions (assuming []string of hex IDs)
+		mentionIDsStr := ctx.PostFormArray("mentions[]")
+		for _, idStr := range mentionIDsStr {
+			if id, err := primitive.ObjectIDFromHex(idStr); err == nil {
+				req.Mentions = append(req.Mentions, id)
+			}
+		}
 
 		// Validate required fields
 		if req.Content == "" {

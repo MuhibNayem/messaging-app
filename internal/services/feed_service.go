@@ -48,16 +48,25 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 		mentionedUserIDs = append(mentionedUserIDs, user.ID)
 	}
 
+	// Merge explicitly tagged users with mentioned users from text
+	for _, id := range req.Mentions {
+		mentionedUserIDs = append(mentionedUserIDs, id)
+	}
+	// TODO: Add deduplication if needed
+
 	post := &models.Post{
 		UserID:         userID,
 		Content:        req.Content,
-		Media:          req.Media,
+		Media:          req.Media, // This is where the media is saved
+		Location:       req.Location,
 		Privacy:        req.Privacy,
 		CustomAudience: req.CustomAudience,
 		Comments:       []models.Comment{},     // Initialize as empty array
 		CommentIDs:     []primitive.ObjectID{}, // Initialize as empty array
 		Mentions:       mentionedUserIDs,
 		Hashtags:       req.Hashtags,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
 	createdPost, err := s.feedRepo.CreatePost(ctx, post)

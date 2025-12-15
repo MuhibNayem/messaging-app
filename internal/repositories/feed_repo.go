@@ -535,6 +535,13 @@ func (r *FeedRepository) aggregatePostPipeline() mongo.Pipeline {
 		bson.D{{Key: "$addFields", Value: bson.M{
 			"specific_reaction_counts": bson.M{"$arrayToObject": "$reaction_counts_array"},
 		}}},
+		// Lookup mentioned users
+		bson.D{{Key: "$lookup", Value: bson.M{
+			"from":         "users",
+			"localField":   "mentions",
+			"foreignField": "_id",
+			"as":           "mentioned_users_info",
+		}}},
 		// Final projection (shape the output as needed)
 		bson.D{{Key: "$project", Value: bson.M{
 			"_id":             1,
@@ -547,9 +554,22 @@ func (r *FeedRepository) aggregatePostPipeline() mongo.Pipeline {
 			"privacy":         1,
 			"custom_audience": 1,
 			"mentions":        1,
-			"hashtags":        1,
-			"created_at":      1,
-			"updated_at":      1,
+			"mentioned_users": bson.M{
+				"$map": bson.M{
+					"input": "$mentioned_users_info",
+					"as":    "u",
+					"in": bson.M{
+						"id":        bson.M{"$toString": "$$u._id"},
+						"username":  "$$u.username",
+						"avatar":    "$$u.avatar",
+						"full_name": "$$u.full_name",
+					},
+				},
+			},
+			"location":   1,
+			"hashtags":   1,
+			"created_at": 1,
+			"updated_at": 1,
 			"author": bson.M{
 				"id":        bson.M{"$toString": "$author_info._id"},
 				"username":  bson.M{"$ifNull": bson.A{"$author_info.username", "Deleted User"}},
