@@ -167,6 +167,10 @@ func main() {
 	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
 	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
+	storageService, err := services.NewStorageService(cfg)
+	if err != nil {
+		log.Fatal("Failed to initialize storage service:", err)
+	}
 	searchService := services.NewSearchService(userRepo, feedRepo) // Initialize SearchService
 	conversationService := conversationServices.NewConversationService(conversationRepo)
 
@@ -176,7 +180,7 @@ func main() {
 	friendshipController := controllers.NewFriendshipController(friendshipService)
 	groupController := controllers.NewGroupController(groupService, userService)
 	messageController := controllers.NewMessageController(messageService)
-	feedController := controllers.NewFeedController(feedService, userService, privacyService)
+	feedController := controllers.NewFeedController(feedService, userService, privacyService, storageService)
 	privacyController := controllers.NewPrivacyController(privacyService, userService)
 	searchController := controllers.NewSearchController(searchService)                   // Initialize SearchController
 	notificationController := controllers.NewNotificationController(notificationService) // Initialize NotificationController

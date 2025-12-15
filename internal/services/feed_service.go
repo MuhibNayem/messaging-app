@@ -51,8 +51,7 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 	post := &models.Post{
 		UserID:         userID,
 		Content:        req.Content,
-		MediaType:      req.MediaType,
-		MediaURL:       req.MediaURL,
+		Media:          req.Media,
 		Privacy:        req.Privacy,
 		CustomAudience: req.CustomAudience,
 		Comments:       []models.Comment{},     // Initialize as empty array
@@ -188,11 +187,8 @@ func (s *FeedService) UpdatePost(ctx context.Context, userID, postID primitive.O
 	if req.Content != "" {
 		updateData["content"] = req.Content
 	}
-	if req.MediaType != "" {
-		updateData["media_type"] = req.MediaType
-	}
-	if req.MediaURL != "" {
-		updateData["media_url"] = req.MediaURL
+	if len(req.Media) > 0 {
+		updateData["media"] = req.Media
 	}
 	if req.Privacy != "" {
 		updateData["privacy"] = req.Privacy

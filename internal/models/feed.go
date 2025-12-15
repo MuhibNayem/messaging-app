@@ -6,25 +6,29 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+type MediaItem struct {
+	URL  string `bson:"url" json:"url"`
+	Type string `bson:"type" json:"type"` // "image", "video"
+}
+
 // Post represents a single post in the feed
 type Post struct {
-	ID             primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
-	UserID         primitive.ObjectID     `bson:"user_id" json:"user_id"`
-	Author         PostAuthor             `bson:"author,omitempty" json:"author"` // Populated from User collection, not stored in Post
-	Content        string                 `bson:"content" json:"content"`
-	MediaType      string                 `bson:"media_type,omitempty" json:"media_type,omitempty"` // e.g., "image", "video", "text"
-	MediaURL       string                 `bson:"media_url,omitempty" json:"media_url,omitempty"`
-	Privacy        PrivacySettingType     `bson:"privacy" json:"privacy"`                                     // PUBLIC, FRIENDS, ONLY_ME, CUSTOM
-	CustomAudience []primitive.ObjectID   `bson:"custom_audience,omitempty" json:"custom_audience,omitempty"` // For CUSTOM privacy
-	CommentIDs     []primitive.ObjectID   `bson:"comment_ids" json:"-"`                                       // Stored as IDs in DB, not directly exposed in JSON
-	Comments       []Comment              `bson:"comments,omitempty" json:"comments"`                         // Populated full Comment objects, not stored in DB
-	Mentions             []primitive.ObjectID   `bson:"mentions,omitempty" json:"mentions,omitempty"`
+	ID                     primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
+	UserID                 primitive.ObjectID     `bson:"user_id" json:"user_id"`
+	Author                 PostAuthor             `bson:"author,omitempty" json:"author"` // Populated from User collection, not stored in Post
+	Content                string                 `bson:"content" json:"content"`
+	Media                  []MediaItem            `bson:"media,omitempty" json:"media,omitempty"`
+	Privacy                PrivacySettingType     `bson:"privacy" json:"privacy"`                                     // PUBLIC, FRIENDS, ONLY_ME, CUSTOM
+	CustomAudience         []primitive.ObjectID   `bson:"custom_audience,omitempty" json:"custom_audience,omitempty"` // For CUSTOM privacy
+	CommentIDs             []primitive.ObjectID   `bson:"comment_ids" json:"-"`                                       // Stored as IDs in DB, not directly exposed in JSON
+	Comments               []Comment              `bson:"comments,omitempty" json:"comments"`                         // Populated full Comment objects, not stored in DB
+	Mentions               []primitive.ObjectID   `bson:"mentions,omitempty" json:"mentions,omitempty"`
 	SpecificReactionCounts map[ReactionType]int64 `json:"specific_reaction_counts,omitempty"`
-	Hashtags             []string               `bson:"hashtags,omitempty,sparse" json:"hashtags,omitempty"`
-	TotalReactions int64                  `bson:"total_reactions" json:"total_reactions"` // Denormalized count
-	TotalComments  int64                  `bson:"total_comments" json:"total_comments"`   // Denormalized count
-	CreatedAt      time.Time              `bson:"created_at" json:"created_at"`
-	UpdatedAt      time.Time              `bson:"updated_at" json:"updated_at"`
+	Hashtags               []string               `bson:"hashtags,omitempty,sparse" json:"hashtags,omitempty"`
+	TotalReactions         int64                  `bson:"total_reactions" json:"total_reactions"` // Denormalized count
+	TotalComments          int64                  `bson:"total_comments" json:"total_comments"`   // Denormalized count
+	CreatedAt              time.Time              `bson:"created_at" json:"created_at"`
+	UpdatedAt              time.Time              `bson:"updated_at" json:"updated_at"`
 }
 
 // PostAuthor represents the simplified user information for a post's author
@@ -92,8 +96,7 @@ type Reaction struct {
 // DTOs for Feed
 type CreatePostRequest struct {
 	Content        string               `json:"content" binding:"required"`
-	MediaType      string               `json:"media_type,omitempty"`
-	MediaURL       string               `json:"media_url,omitempty"`
+	Media          []MediaItem          `json:"media,omitempty"`
 	Privacy        PrivacySettingType   `json:"privacy" binding:"required"`
 	CustomAudience []primitive.ObjectID `json:"custom_audience,omitempty"`
 	Mentions       []primitive.ObjectID `json:"mentions,omitempty"`
@@ -102,8 +105,7 @@ type CreatePostRequest struct {
 
 type UpdatePostRequest struct {
 	Content        string               `json:"content,omitempty"`
-	MediaType      string               `json:"media_type,omitempty"`
-	MediaURL       string               `json:"media_url,omitempty"`
+	Media          []MediaItem          `json:"media,omitempty"`
 	Privacy        PrivacySettingType   `json:"privacy,omitempty"`
 	CustomAudience []primitive.ObjectID `json:"custom_audience,omitempty"`
 	Mentions       []primitive.ObjectID `json:"mentions,omitempty"`

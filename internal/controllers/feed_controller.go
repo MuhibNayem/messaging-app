@@ -5,6 +5,7 @@ import (
 	"messaging-app/internal/services"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -14,10 +15,11 @@ type FeedController struct {
 	feedService    *services.FeedService
 	userService    *services.UserService
 	privacyService *services.PrivacyService
+	storageService *services.StorageService
 }
 
-func NewFeedController(feedService *services.FeedService, userService *services.UserService, privacyService *services.PrivacyService) *FeedController {
-	return &FeedController{feedService: feedService, userService: userService, privacyService: privacyService}
+func NewFeedController(feedService *services.FeedService, userService *services.UserService, privacyService *services.PrivacyService, storageService *services.StorageService) *FeedController {
+	return &FeedController{feedService: feedService, userService: userService, privacyService: privacyService, storageService: storageService}
 }
 
 // CreatePost godoc
@@ -41,9 +43,49 @@ func (c *FeedController) CreatePost(ctx *gin.Context) {
 	}
 
 	var req models.CreatePostRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+
+	// Check if this is a multipart request
+	contentType := ctx.GetHeader("Content-Type")
+	if strings.Contains(contentType, "multipart/form-data") {
+		// Parse multipart form
+		form, err := ctx.MultipartForm()
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse multipart form: " + err.Error()})
+			return
+		}
+
+		// Extract content and privacy from form fields
+		req.Content = ctx.PostForm("content")
+		privacyStr := ctx.PostForm("privacy")
+
+		// Validate required fields
+		if req.Content == "" {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "content is required"})
+			return
+		}
+		if privacyStr == "" {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "privacy is required"})
+			return
+		}
+
+		req.Privacy = models.PrivacySettingType(privacyStr) // You might want to validate this enum
+
+		// Handle file uploads
+		files := form.File["files[]"]
+		if len(files) > 0 {
+			mediaItems, err := c.storageService.UploadFiles(ctx.Request.Context(), files)
+			if err != nil {
+				ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to upload files: " + err.Error()})
+				return
+			}
+			req.Media = mediaItems
+		}
+	} else {
+		// Handle standard JSON request (no files)
+		if err := ctx.ShouldBindJSON(&req); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	post, err := c.feedService.CreatePost(ctx.Request.Context(), objID, &req)
