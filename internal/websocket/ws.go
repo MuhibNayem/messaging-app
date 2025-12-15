@@ -298,6 +298,62 @@ func (h *Hub) run() {
 
 				log.Printf("Broadcasted PostCreated event for post %s (Privacy: %s)", post.ID.Hex(), post.Privacy)
 
+			case "PostUpdated":
+				var post models.Post
+				if err := json.Unmarshal(event.Data, &post); err != nil {
+					log.Printf("Error unmarshaling PostUpdated data: %v", err)
+					continue
+				}
+
+				// Handle privacy-aware broadcasting
+				switch post.Privacy {
+				case models.PrivacySettingPublic:
+					h.broadcastToAllUsers(event)
+				case models.PrivacySettingOnlyMe:
+					h.sendToUser(post.UserID.Hex(), event.Data)
+				case models.PrivacySettingFriends:
+					h.sendToUser(post.UserID.Hex(), event.Data)
+					friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
+					if err != nil {
+						log.Printf("Error getting friends for post update broadcast: %v", err)
+						continue
+					}
+					for _, friend := range friends {
+						h.sendToUser(friend.ID.Hex(), event.Data)
+					}
+				default:
+					h.sendToUser(post.UserID.Hex(), event.Data)
+				}
+				log.Printf("Broadcasted PostUpdated event for post %s", post.ID.Hex())
+
+			case "PostDeleted":
+				var post models.Post
+				if err := json.Unmarshal(event.Data, &post); err != nil {
+					log.Printf("Error unmarshaling PostDeleted data: %v", err)
+					continue
+				}
+				// For deletion, we can broadcast to all, as it just tells clients to remove the ID.
+				// Or we can be precise. Let's be precise to avoid noise.
+				switch post.Privacy {
+				case models.PrivacySettingPublic:
+					h.broadcastToAllUsers(event)
+				case models.PrivacySettingOnlyMe:
+					h.sendToUser(post.UserID.Hex(), event.Data)
+				case models.PrivacySettingFriends:
+					h.sendToUser(post.UserID.Hex(), event.Data)
+					friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
+					if err != nil {
+						log.Printf("Error getting friends for post delete broadcast: %v", err)
+						continue
+					}
+					for _, friend := range friends {
+						h.sendToUser(friend.ID.Hex(), event.Data)
+					}
+				default:
+					h.sendToUser(post.UserID.Hex(), event.Data)
+				}
+				log.Printf("Broadcasted PostDeleted event for post %s", post.ID.Hex())
+
 			case "CommentCreated":
 				var comment models.Comment
 				if err := json.Unmarshal(event.Data, &comment); err != nil {

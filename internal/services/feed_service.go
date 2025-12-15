@@ -211,17 +211,94 @@ func (s *FeedService) UpdatePost(ctx context.Context, userID, postID primitive.O
 	if err != nil {
 		return nil, err
 	}
+
+	// Publish PostUpdated event to Kafka
+	senderUser, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		fmt.Printf("Failed to find sender user %s for PostUpdate event: %v\n", userID.Hex(), err)
+	} else {
+		updatedPost.Author = models.PostAuthor{
+			ID:       senderUser.ID.Hex(),
+			Username: senderUser.Username,
+			Avatar:   senderUser.Avatar,
+			FullName: senderUser.FullName,
+		}
+	}
+
+	postDataBytes, err := json.Marshal(updatedPost)
+	if err != nil {
+		fmt.Printf("Failed to marshal updatedPost for WebSocketEvent: %v\n", err)
+	} else {
+		wsEvent := models.WebSocketEvent{
+			Type: "PostUpdated",
+			Data: postDataBytes,
+		}
+		eventBytes, err := json.Marshal(wsEvent)
+		if err != nil {
+			fmt.Printf("Failed to marshal WebSocketEvent for PostUpdated: %v\n", err)
+		} else {
+			kafkaMsg := kafkago.Message{
+				Key:   []byte(updatedPost.UserID.Hex()),
+				Value: eventBytes,
+				Time:  time.Now(),
+			}
+			err = s.kafkaProducer.ProduceMessage(ctx, kafkaMsg)
+			if err != nil {
+				fmt.Printf("Failed to produce PostUpdated WebSocketEvent to Kafka: %v\n", err)
+			}
+		}
+	}
+
 	return updatedPost, nil
 }
 
 func (s *FeedService) DeletePost(ctx context.Context, userID, postID primitive.ObjectID) error {
-	err := s.feedRepo.DeletePost(ctx, userID, postID)
+	// Fetch post before deletion to get details for event
+	post, err := s.feedRepo.GetPostByID(ctx, postID)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return errors.New("post not found")
+		}
+		return err
+	}
+
+	if post.UserID != userID {
+		return errors.New("unauthorized to delete this post")
+	}
+
+	err = s.feedRepo.DeletePost(ctx, userID, postID)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return errors.New("post not found or unauthorized to delete")
 		}
 		return err
 	}
+
+	// Publish PostDeleted event to Kafka
+	postDataBytes, err := json.Marshal(post)
+	if err != nil {
+		fmt.Printf("Failed to marshal deletedPost for WebSocketEvent: %v\n", err)
+	} else {
+		wsEvent := models.WebSocketEvent{
+			Type: "PostDeleted",
+			Data: postDataBytes,
+		}
+		eventBytes, err := json.Marshal(wsEvent)
+		if err != nil {
+			fmt.Printf("Failed to marshal WebSocketEvent for PostDeleted: %v\n", err)
+		} else {
+			kafkaMsg := kafkago.Message{
+				Key:   []byte(post.UserID.Hex()),
+				Value: eventBytes,
+				Time:  time.Now(),
+			}
+			err = s.kafkaProducer.ProduceMessage(ctx, kafkaMsg)
+			if err != nil {
+				fmt.Printf("Failed to produce PostDeleted WebSocketEvent to Kafka: %v\n", err)
+			}
+		}
+	}
+
 	return nil
 }
 
