@@ -110,6 +110,9 @@ func (s *UserService) UpdateUser(ctx context.Context, id primitive.ObjectID, upd
 	if update.Avatar != "" {
 		updateData["avatar"] = update.Avatar
 	}
+	if update.CoverPicture != "" {
+		updateData["cover_picture"] = update.CoverPicture
+	}
 
 	updatedUser, err := s.userRepo.UpdateUser(ctx, id, updateData)
 	if err != nil {
@@ -119,6 +122,52 @@ func (s *UserService) UpdateUser(ctx context.Context, id primitive.ObjectID, upd
 	// Clear password before returning
 	updatedUser.Password = ""
 	return updatedUser, nil
+}
+
+// UpdateNotificationSettings updates a user's notification settings
+func (s *UserService) UpdateNotificationSettings(ctx context.Context, userID primitive.ObjectID, req *models.UpdateNotificationSettingsRequest) error {
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("user not found")
+	}
+
+	updateFields := bson.M{}
+
+	if req.EmailNotifications != nil {
+		updateFields["notification_settings.email_notifications"] = *req.EmailNotifications
+	}
+	if req.PushNotifications != nil {
+		updateFields["notification_settings.push_notifications"] = *req.PushNotifications
+	}
+	if req.NotifyOnFriendRequest != nil {
+		updateFields["notification_settings.notify_on_friend_request"] = *req.NotifyOnFriendRequest
+	}
+	if req.NotifyOnComment != nil {
+		updateFields["notification_settings.notify_on_comment"] = *req.NotifyOnComment
+	}
+	if req.NotifyOnLike != nil {
+		updateFields["notification_settings.notify_on_like"] = *req.NotifyOnLike
+	}
+	if req.NotifyOnTag != nil {
+		updateFields["notification_settings.notify_on_tag"] = *req.NotifyOnTag
+	}
+	if req.NotifyOnMessage != nil {
+		updateFields["notification_settings.notify_on_message"] = *req.NotifyOnMessage
+	}
+
+	if len(updateFields) == 0 {
+		return nil // No updates
+	}
+
+	_, err = s.userRepo.UpdateUser(ctx, userID, updateFields)
+	if err != nil {
+		return fmt.Errorf("failed to update notification settings: %w", err)
+	}
+
+	return nil
 }
 
 func (s *UserService) ListUsers(ctx context.Context, page, limit int64, search string) (*models.UserListResponse, error) {

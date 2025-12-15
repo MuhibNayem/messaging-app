@@ -1,12 +1,13 @@
 package controllers
 
 import (
-	"github.com/gin-gonic/gin"
 	"messaging-app/internal/models"
 	"messaging-app/internal/services"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -44,13 +45,22 @@ func (c *UserController) GetUser(ctx *gin.Context) {
 	}
 
 	userDTO := models.User{
-		ID:        user.ID,
-		Username:  user.Username,
-		Email:     user.Email,
-		Avatar:    user.Avatar,
-		CreatedAt: user.CreatedAt,
-		Friends:   user.Friends,
-		Blocked:   user.Blocked,
+		ID:                   user.ID,
+		Username:             user.Username,
+		Email:                user.Email,
+		Avatar:               user.Avatar,
+		CoverPicture:         user.CoverPicture,
+		FullName:             user.FullName,
+		Bio:                  user.Bio,
+		Location:             user.Location,
+		PhoneNumber:          user.PhoneNumber,
+		DateOfBirth:          user.DateOfBirth,
+		Gender:               user.Gender,
+		CreatedAt:            user.CreatedAt,
+		Friends:              user.Friends,
+		Blocked:              user.Blocked,
+		PrivacySettings:      user.PrivacySettings,
+		NotificationSettings: user.NotificationSettings,
 	}
 	ctx.JSON(http.StatusOK, userDTO)
 }
@@ -79,11 +89,16 @@ func (c *UserController) GetUserByID(ctx *gin.Context) {
 	}
 
 	publicUser := models.User{
-		ID:        user.ID,
-		Username:  user.Username,
-		Avatar:    user.Avatar,
-		CreatedAt: user.CreatedAt,
+		ID:           user.ID,
+		Username:     user.Username,
+		Avatar:       user.Avatar,
+		CoverPicture: user.CoverPicture,
+		FullName:     user.FullName,
+		Bio:          user.Bio,
+		Location:     user.Location,
+		CreatedAt:    user.CreatedAt,
 	}
+	// Note: We might want to filter fields based on PrivacySettings here in the future
 	ctx.JSON(http.StatusOK, publicUser)
 }
 
@@ -387,6 +402,41 @@ func (c *UserController) UpdatePrivacySettings(ctx *gin.Context) {
 	}
 
 	err = c.userService.UpdatePrivacySettings(ctx.Request.Context(), objID, &req)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// UpdateNotificationSettings godoc
+// @Summary Update user notification settings
+// @Security BearerAuth
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body models.UpdateNotificationSettingsRequest true "Notification settings update data"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/user/notifications [put]
+func (c *UserController) UpdateNotificationSettings(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	var req models.UpdateNotificationSettingsRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = c.userService.UpdateNotificationSettings(ctx.Request.Context(), objID, &req)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

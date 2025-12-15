@@ -119,7 +119,6 @@ func (r *GroupRepository) UpdateGroup(ctx context.Context, groupID primitive.Obj
 	return err
 }
 
-
 func (r *GroupRepository) GetUserGroups(ctx context.Context, userID primitive.ObjectID) ([]*models.Group, error) {
 	groups := []*models.Group{}
 	cursor, err := r.db.Collection("groups").Find(ctx, bson.M{"members": userID})
@@ -132,6 +131,44 @@ func (r *GroupRepository) GetUserGroups(ctx context.Context, userID primitive.Ob
 		return nil, err
 	}
 	return groups, err
+}
+
+func (r *GroupRepository) AddPendingMember(ctx context.Context, groupID, userID primitive.ObjectID) error {
+	_, err := r.db.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$addToSet": bson.M{"pending_members": userID},
+			"$set":      bson.M{"updated_at": time.Now()},
+		},
+	)
+	return err
+}
+
+func (r *GroupRepository) RemovePendingMember(ctx context.Context, groupID, userID primitive.ObjectID) error {
+	_, err := r.db.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$pull": bson.M{"pending_members": userID},
+			"$set":  bson.M{"updated_at": time.Now()},
+		},
+	)
+	return err
+}
+
+func (r *GroupRepository) UpdateGroupSettings(ctx context.Context, groupID primitive.ObjectID, settings models.GroupSettings) error {
+	_, err := r.db.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$set": bson.M{
+				"settings":   settings,
+				"updated_at": time.Now(),
+			},
+		},
+	)
+	return err
 }
 
 // Helper function

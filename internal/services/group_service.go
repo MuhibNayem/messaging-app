@@ -162,6 +162,119 @@ func (s *GroupService) GetUserGroups(ctx context.Context, userID primitive.Objec
 	return groups, err
 }
 
+func (s *GroupService) InviteMember(ctx context.Context, groupID, inviterID, inviteeID primitive.ObjectID) error {
+	group, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("group not found")
+	}
+
+	// Check if inviter is member
+	if !containsID(group.Members, inviterID) {
+		return errors.New("inviter must be a group member")
+	}
+
+	// Check if invitee is already member
+	if containsID(group.Members, inviteeID) {
+		return errors.New("user is already a member")
+	}
+	// Check if invitee is already pending
+	if containsID(group.PendingMembers, inviteeID) {
+		return errors.New("user is already pending approval")
+	}
+
+	// Logic:
+	// If Inviter is Admin -> Add Immediate
+	// If Settings.RequiresApproval is FALSE -> Add Immediate
+	// Else -> Add Pending
+
+	isInviterAdmin := containsID(group.Admins, inviterID)
+	requiresApproval := group.Settings.RequiresApproval
+
+	if isInviterAdmin || !requiresApproval {
+		return s.groupRepo.AddMember(ctx, groupID, inviteeID)
+	}
+
+	// Add to pending
+	return s.groupRepo.AddPendingMember(ctx, groupID, inviteeID)
+}
+
+func (s *GroupService) ApproveMember(ctx context.Context, groupID, adminID, targetUserID primitive.ObjectID) error {
+	group, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("group not found")
+	}
+
+	if !containsID(group.Admins, adminID) {
+		return errors.New("only admins can approve members")
+	}
+
+	if !containsID(group.PendingMembers, targetUserID) {
+		return errors.New("user is not in pending list")
+	}
+
+	// Remove from pending
+	if err := s.groupRepo.RemovePendingMember(ctx, groupID, targetUserID); err != nil {
+		return err
+	}
+	// Add to members
+	return s.groupRepo.AddMember(ctx, groupID, targetUserID)
+}
+
+func (s *GroupService) RejectMember(ctx context.Context, groupID, adminID, targetUserID primitive.ObjectID) error {
+	group, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("group not found")
+	}
+
+	if !containsID(group.Admins, adminID) {
+		return errors.New("only admins can reject members")
+	}
+
+	return s.groupRepo.RemovePendingMember(ctx, groupID, targetUserID)
+}
+
+func (s *GroupService) RemoveAdmin(ctx context.Context, groupID, requesterID, adminID primitive.ObjectID) error {
+	group, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("group not found")
+	}
+
+	if !containsID(group.Admins, requesterID) {
+		return errors.New("only admins can remove admins")
+	}
+
+	if len(group.Admins) <= 1 {
+		return errors.New("cannot remove the last admin")
+	}
+
+	// To remove admin (demote), we assume the repository has a RemoveAdmin method
+	// NOTE: existing RemoveMember removes from BOTH.
+	// We need a specific RemoveAdmin (demote) repo function or custom update.
+	// Since we can't change Repo structure easily repeatedly, let's implement demote logic here via generic Update if possible?
+	// But Repo UpdateGroup is generic.
+	// Better: Add RemoveAdminRole to Repo?
+	// Or use generic UpdateGroup with $pull from admins array.
+	// Actually GroupRepo has UpdateGroup. we can use that.
+
+	updates := bson.M{
+		"$pull": bson.M{"admins": adminID},
+	}
+	return s.groupRepo.UpdateGroup(ctx, groupID, updates)
+}
+
+func (s *GroupService) UpdateGroupSettings(ctx context.Context, groupID, requesterID primitive.ObjectID, settings models.GroupSettings) error {
+	group, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("group not found")
+	}
+
+	if !containsID(group.Admins, requesterID) {
+		return errors.New("only admins can update settings")
+	}
+
+	return s.groupRepo.UpdateGroupSettings(ctx, groupID, settings)
+}
+
 func containsID(ids []primitive.ObjectID, id primitive.ObjectID) bool {
 	for _, i := range ids {
 		if i == id {

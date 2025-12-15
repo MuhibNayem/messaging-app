@@ -32,13 +32,15 @@ type CreateGroupRequest struct {
 }
 
 type GroupResponse struct {
-	ID        primitive.ObjectID  `json:"id"`
-	Name      string              `json:"name"`
-	Creator   UserShortResponse   `json:"creator"`
-	Members   []UserShortResponse `json:"members"`
-	Admins    []UserShortResponse `json:"admins"`
-	CreatedAt time.Time           `json:"created_at"`
-	UpdatedAt time.Time           `json:"updated_at"`
+	ID             primitive.ObjectID   `json:"id"`
+	Name           string               `json:"name"`
+	Creator        UserShortResponse    `json:"creator"`
+	Members        []UserShortResponse  `json:"members"`
+	PendingMembers []UserShortResponse  `json:"pending_members"`
+	Admins         []UserShortResponse  `json:"admins"`
+	Settings       models.GroupSettings `json:"settings"`
+	CreatedAt      time.Time            `json:"created_at"`
+	UpdatedAt      time.Time            `json:"updated_at"`
 }
 
 type UserShortResponse struct {
@@ -286,6 +288,167 @@ func (c *GroupController) GetUserGroups(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, responses)
 }
 
+type UpdateGroupSettingsRequest struct {
+	RequiresApproval bool `json:"requires_approval"`
+}
+
+func (c *GroupController) InviteMember(ctx *gin.Context) {
+	userID, err := utils.GetUserIDFromContext(ctx)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	groupID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid group ID")
+		return
+	}
+
+	var req AddMemberRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	memberID, err := primitive.ObjectIDFromHex(req.UserID)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid user ID format")
+		return
+	}
+
+	if err := c.groupService.InviteMember(ctx, groupID, userID, memberID); err != nil {
+		utils.RespondWithError(ctx, utils.GetStatusCode(err), err.Error())
+		return
+	}
+
+	ctx.Status(http.StatusNoContent)
+}
+
+func (c *GroupController) ApproveMember(ctx *gin.Context) {
+	userID, err := utils.GetUserIDFromContext(ctx)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	groupID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid group ID")
+		return
+	}
+
+	var req AddMemberRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	targetID, err := primitive.ObjectIDFromHex(req.UserID)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid user ID format")
+		return
+	}
+
+	if err := c.groupService.ApproveMember(ctx, groupID, userID, targetID); err != nil {
+		utils.RespondWithError(ctx, utils.GetStatusCode(err), err.Error())
+		return
+	}
+
+	ctx.Status(http.StatusNoContent)
+}
+
+func (c *GroupController) RejectMember(ctx *gin.Context) {
+	userID, err := utils.GetUserIDFromContext(ctx)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	groupID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid group ID")
+		return
+	}
+
+	var req AddMemberRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	targetID, err := primitive.ObjectIDFromHex(req.UserID)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid user ID format")
+		return
+	}
+
+	if err := c.groupService.RejectMember(ctx, groupID, userID, targetID); err != nil {
+		utils.RespondWithError(ctx, utils.GetStatusCode(err), err.Error())
+		return
+	}
+
+	ctx.Status(http.StatusNoContent)
+}
+
+func (c *GroupController) RemoveAdmin(ctx *gin.Context) {
+	userID, err := utils.GetUserIDFromContext(ctx)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	groupID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid group ID")
+		return
+	}
+
+	targetID, err := primitive.ObjectIDFromHex(ctx.Param("user_id"))
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	if err := c.groupService.RemoveAdmin(ctx, groupID, userID, targetID); err != nil {
+		utils.RespondWithError(ctx, utils.GetStatusCode(err), err.Error())
+		return
+	}
+
+	ctx.Status(http.StatusNoContent)
+}
+
+func (c *GroupController) UpdateGroupSettings(ctx *gin.Context) {
+	userID, err := utils.GetUserIDFromContext(ctx)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	groupID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid group ID")
+		return
+	}
+
+	var req UpdateGroupSettingsRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	settings := models.GroupSettings{
+		RequiresApproval: req.RequiresApproval,
+	}
+
+	if err := c.groupService.UpdateGroupSettings(ctx, groupID, userID, settings); err != nil {
+		utils.RespondWithError(ctx, utils.GetStatusCode(err), err.Error())
+		return
+	}
+
+	ctx.Status(http.StatusNoContent)
+}
+
 // Helper methods
 func (c *GroupController) convertGroupToResponse(ctx context.Context, group *models.Group) (*GroupResponse, error) {
 	creator, err := c.userService.GetUserByID(ctx, group.CreatorID)
@@ -304,6 +467,19 @@ func (c *GroupController) convertGroupToResponse(ctx context.Context, group *mod
 			Username: user.Username,
 			Email:    user.Email,
 			Avatar:   user.Avatar,
+		}
+	}
+
+	pendingMembers := make([]UserShortResponse, len(group.PendingMembers))
+	for i, memberID := range group.PendingMembers {
+		user, err := c.userService.GetUserByID(ctx, memberID)
+		if err == nil {
+			pendingMembers[i] = UserShortResponse{
+				ID:       user.ID,
+				Username: user.Username,
+				Email:    user.Email,
+				Avatar:   user.Avatar,
+			}
 		}
 	}
 
@@ -328,9 +504,11 @@ func (c *GroupController) convertGroupToResponse(ctx context.Context, group *mod
 			Username: creator.Username,
 			Email:    creator.Email,
 		},
-		Members:   members,
-		Admins:    admins,
-		CreatedAt: group.CreatedAt,
-		UpdatedAt: group.UpdatedAt,
+		Members:        members,
+		PendingMembers: pendingMembers,
+		Admins:         admins,
+		Settings:       group.Settings,
+		CreatedAt:      group.CreatedAt,
+		UpdatedAt:      group.UpdatedAt,
 	}, nil
 }

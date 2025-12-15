@@ -7,27 +7,40 @@ import (
 )
 
 type User struct {
-	ID               primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
-	Username         string               `bson:"username" json:"username"`
-	Email            string               `bson:"email" json:"email"`
-	Password         string               `bson:"password" json:"password"`
-	Avatar           string               `bson:"avatar" json:"avatar"`
-	FullName         string               `bson:"full_name,omitempty" json:"full_name,omitempty"`
-	Bio              string               `bson:"bio,omitempty" json:"bio,omitempty"`
-	DateOfBirth      *time.Time           `bson:"date_of_birth,omitempty" json:"date_of_birth,omitempty"`
-	Gender           string               `bson:"gender,omitempty" json:"gender,omitempty"`
-	Location         string               `bson:"location,omitempty" json:"location,omitempty"`
-	PhoneNumber      string               `bson:"phone_number,omitempty" json:"phone_number,omitempty"`
-	Friends          []primitive.ObjectID `bson:"friends" json:"friends"`
-	Blocked          []primitive.ObjectID `bson:"blocked" json:"-"`
-	TwoFactorEnabled bool                 `bson:"two_factor_enabled" json:"two_factor_enabled"`
-	EmailVerified    bool                 `bson:"email_verified" json:"email_verified"`
-	IsActive         bool                 `bson:"is_active" json:"is_active"` // For account deactivation
-	LastLogin        *time.Time           `bson:"last_login,omitempty" json:"last_login,omitempty"`
-	CreatedAt        time.Time            `bson:"created_at" json:"created_at"`
-	UpdatedAt        time.Time            `bson:"updated_at" json:"updated_at"`
-	PrivacySettings  UserPrivacySettings  `bson:"privacy_settings" json:"privacy_settings"`
+	ID                   primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
+	Username             string               `bson:"username" json:"username"`
+	Email                string               `bson:"email" json:"email"`
+	Password             string               `bson:"password" json:"password"`
+	Avatar               string               `bson:"avatar" json:"avatar"`
+	CoverPicture         string               `bson:"cover_picture,omitempty" json:"cover_picture,omitempty"`
+	FullName             string               `bson:"full_name,omitempty" json:"full_name,omitempty"`
+	Bio                  string               `bson:"bio,omitempty" json:"bio,omitempty"`
+	DateOfBirth          *time.Time           `bson:"date_of_birth,omitempty" json:"date_of_birth,omitempty"`
+	Gender               string               `bson:"gender,omitempty" json:"gender,omitempty"`
+	Location             string               `bson:"location,omitempty" json:"location,omitempty"`
+	PhoneNumber          string               `bson:"phone_number,omitempty" json:"phone_number,omitempty"`
+	Friends              []primitive.ObjectID `bson:"friends" json:"friends"`
+	Blocked              []primitive.ObjectID `bson:"blocked" json:"-"`
+	TwoFactorEnabled     bool                 `bson:"two_factor_enabled" json:"two_factor_enabled"`
+	EmailVerified        bool                 `bson:"email_verified" json:"email_verified"`
+	IsActive             bool                 `bson:"is_active" json:"is_active"` // For account deactivation
+	LastLogin            *time.Time           `bson:"last_login,omitempty" json:"last_login,omitempty"`
+	CreatedAt            time.Time            `bson:"created_at" json:"created_at"`
+	UpdatedAt            time.Time            `bson:"updated_at" json:"updated_at"`
+	PrivacySettings      UserPrivacySettings  `bson:"privacy_settings" json:"privacy_settings"`
+	NotificationSettings NotificationSettings `bson:"notification_settings" json:"notification_settings"`
 }
+
+type NotificationSettings struct {
+	EmailNotifications    bool `bson:"email_notifications" json:"email_notifications"`
+	PushNotifications     bool `bson:"push_notifications" json:"push_notifications"`
+	NotifyOnFriendRequest bool `bson:"notify_on_friend_request" json:"notify_on_friend_request"`
+	NotifyOnComment       bool `bson:"notify_on_comment" json:"notify_on_comment"`
+	NotifyOnLike          bool `bson:"notify_on_like" json:"notify_on_like"`
+	NotifyOnTag           bool `bson:"notify_on_tag" json:"notify_on_tag"`
+	NotifyOnMessage       bool `bson:"notify_on_message" json:"notify_on_message"`
+}
+
 type Friendship struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	RequesterID primitive.ObjectID `bson:"requester_id" json:"requester_id"`
@@ -59,14 +72,20 @@ const (
 )
 
 type Group struct {
-	ID        primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
-	Name      string               `bson:"name" json:"name"`
-	Avatar    string               `bson:"avatar,omitempty" json:"avatar,omitempty"`
-	CreatorID primitive.ObjectID   `bson:"creator_id" json:"creator_id"`
-	Members   []primitive.ObjectID `bson:"members" json:"members"`
-	Admins    []primitive.ObjectID `bson:"admins" json:"admins"`
-	CreatedAt time.Time            `bson:"created_at" json:"created_at"`
-	UpdatedAt time.Time            `bson:"updated_at" json:"updated_at"`
+	ID             primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
+	Name           string               `bson:"name" json:"name"`
+	Avatar         string               `bson:"avatar,omitempty" json:"avatar,omitempty"`
+	CreatorID      primitive.ObjectID   `bson:"creator_id" json:"creator_id"`
+	Members        []primitive.ObjectID `bson:"members" json:"members"`
+	PendingMembers []primitive.ObjectID `bson:"pending_members" json:"pending_members"`
+	Admins         []primitive.ObjectID `bson:"admins" json:"admins"`
+	Settings       GroupSettings        `bson:"settings" json:"settings"`
+	CreatedAt      time.Time            `bson:"created_at" json:"created_at"`
+	UpdatedAt      time.Time            `bson:"updated_at" json:"updated_at"`
+}
+
+type GroupSettings struct {
+	RequiresApproval bool `bson:"requires_approval" json:"requires_approval"`
 }
 
 type AuthResponse struct {
@@ -91,6 +110,7 @@ type UserUpdateRequest struct {
 	Location        string     `json:"location,omitempty"`
 	PhoneNumber     string     `json:"phone_number,omitempty"`
 	Avatar          string     `json:"avatar,omitempty"`
+	CoverPicture    string     `json:"cover_picture,omitempty"`
 }
 
 type UserListResponse struct {
@@ -174,6 +194,16 @@ type UpdateCustomPrivacyListRequest struct {
 
 type AddRemoveCustomPrivacyListMemberRequest struct {
 	UserID primitive.ObjectID `json:"user_id" binding:"required"`
+}
+
+type UpdateNotificationSettingsRequest struct {
+	EmailNotifications    *bool `json:"email_notifications,omitempty"`
+	PushNotifications     *bool `json:"push_notifications,omitempty"`
+	NotifyOnFriendRequest *bool `json:"notify_on_friend_request,omitempty"`
+	NotifyOnComment       *bool `json:"notify_on_comment,omitempty"`
+	NotifyOnLike          *bool `json:"notify_on_like,omitempty"`
+	NotifyOnTag           *bool `json:"notify_on_tag,omitempty"`
+	NotifyOnMessage       *bool `json:"notify_on_message,omitempty"`
 }
 
 // DTOs for Account Settings

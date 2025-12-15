@@ -185,6 +185,7 @@ func main() {
 	searchController := controllers.NewSearchController(searchService)                   // Initialize SearchController
 	notificationController := controllers.NewNotificationController(notificationService) // Initialize NotificationController
 	conversationController := conversationControllers.NewConversationController(conversationService)
+	uploadController := controllers.NewUploadController(storageService)
 
 	// Initialize WebSocket Hub
 	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, friendshipRepo, messageRepo, messageService)
@@ -283,19 +284,24 @@ func main() {
 	authMiddleware := middleware.AuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
 	wsMiddleware := middleware.WSJwtAuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
 	api := router.Group("/api", authMiddleware)
+
+	// Upload Route
+	api.POST("/upload", uploadController.Upload)
+
 	api.POST("/auth/logout", authController.Logout)
 
 	// User Routes
 	userRoutes := api.Group("/users")
 	{
-		userRoutes.GET("/me", userController.GetUser)                       // Get current user
-		userRoutes.PUT("/me", userController.UpdateUser)                    // Update current user
-		userRoutes.PUT("/me/email", userController.UpdateEmail)             // Update current user email
-		userRoutes.PUT("/me/password", userController.UpdatePassword)       // Update current user password
-		userRoutes.PUT("/me/2fa", userController.ToggleTwoFactor)           // Toggle 2FA for current user
-		userRoutes.PUT("/me/deactivate", userController.DeactivateAccount)  // Deactivate current user account
-		userRoutes.PUT("/me/privacy", userController.UpdatePrivacySettings) // Update current user privacy
-		userRoutes.GET("/me/groups", groupController.GetUserGroups)         // Get current user's groups
+		userRoutes.GET("/me", userController.GetUser)                                  // Get current user
+		userRoutes.PUT("/me", userController.UpdateUser)                               // Update current user
+		userRoutes.PUT("/me/email", userController.UpdateEmail)                        // Update current user email
+		userRoutes.PUT("/me/password", userController.UpdatePassword)                  // Update current user password
+		userRoutes.PUT("/me/2fa", userController.ToggleTwoFactor)                      // Toggle 2FA for current user
+		userRoutes.PUT("/me/deactivate", userController.DeactivateAccount)             // Deactivate current user account
+		userRoutes.PUT("/me/privacy", userController.UpdatePrivacySettings)            // Update current user privacy
+		userRoutes.PUT("/me/notifications", userController.UpdateNotificationSettings) // Update notification settings
+		userRoutes.GET("/me/groups", groupController.GetUserGroups)                    // Get current user's groups
 
 		userRoutes.GET("", userController.ListUsers)                 // List all users
 		userRoutes.GET("/presence", userController.GetUsersPresence) // Get presence status for multiple users
@@ -383,10 +389,17 @@ func main() {
 
 		// Group members
 		groupRoutes.POST("/:id/members", groupController.AddMember)
+		groupRoutes.POST("/:id/invite", groupController.InviteMember)
 		groupRoutes.DELETE("/:id/members/:userId", groupController.RemoveMember)
+		groupRoutes.POST("/:id/approve", groupController.ApproveMember)
+		groupRoutes.POST("/:id/reject", groupController.RejectMember)
+
+		// Group settings
+		groupRoutes.PUT("/:id/settings", groupController.UpdateGroupSettings)
 
 		// Group admins
 		groupRoutes.POST("/:id/admins", groupController.AddAdmin)
+		groupRoutes.DELETE("/:id/admins/:userId", groupController.RemoveAdmin)
 	}
 
 	// Friendship Routes
