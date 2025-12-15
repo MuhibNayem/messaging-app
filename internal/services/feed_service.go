@@ -476,9 +476,8 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 	}
 
 	// --- Notify Post Author ---
-	if err != nil {
-		fmt.Printf("Failed to get post %s for comment notification: %v\n", req.PostID.Hex(), err)
-	} else {
+
+	if post != nil {
 		// Check if the commenter is not the post author
 		if post.UserID != userID {
 			// Check if the post author was already mentioned

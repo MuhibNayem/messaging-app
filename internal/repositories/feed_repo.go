@@ -512,8 +512,6 @@ func (r *FeedRepository) aggregatePostPipeline() mongo.Pipeline {
 		}}},
 		bson.D{{Key: "$unwind", Value: bson.M{"path": "$author_info", "preserveNullAndEmptyArrays": true}}},
 
-
-
 		// Lookup reactions and count by type
 		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "reactions",
@@ -527,8 +525,8 @@ func (r *FeedRepository) aggregatePostPipeline() mongo.Pipeline {
 					"count": bson.M{"$sum": 1},
 				}}},
 				bson.D{{Key: "$project", Value: bson.M{
-					"_id": 0, // Exclude _id from the sub-document
-					"k":   "$_id", // Key for $arrayToObject
+					"_id": 0,        // Exclude _id from the sub-document
+					"k":   "$_id",   // Key for $arrayToObject
 					"v":   "$count", // Value for $arrayToObject
 				}}},
 			},
@@ -545,6 +543,7 @@ func (r *FeedRepository) aggregatePostPipeline() mongo.Pipeline {
 			"content":         1,
 			"media_type":      1,
 			"media_url":       1,
+			"media":           1,
 			"privacy":         1,
 			"custom_audience": 1,
 			"mentions":        1,
@@ -558,8 +557,8 @@ func (r *FeedRepository) aggregatePostPipeline() mongo.Pipeline {
 				"full_name": bson.M{"$ifNull": bson.A{"$author_info.full_name", "Deleted User"}},
 			},
 			"specific_reaction_counts": "$specific_reaction_counts",
-			"total_reactions": "$total_reactions",
-			"total_comments":  "$total_comments",
+			"total_reactions":          "$total_reactions",
+			"total_comments":           "$total_comments",
 		}}},
 	}
 }
@@ -791,4 +790,3 @@ func (r *FeedRepository) DecrementPostCommentCount(ctx context.Context, postID p
 	)
 	return err
 }
-
