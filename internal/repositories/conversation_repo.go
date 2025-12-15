@@ -79,6 +79,28 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"as": "last_message_dm",
 		}}},
 		bson.D{{"$unwind", bson.M{"path": "$last_message_dm", "preserveNullAndEmptyArrays": true}}},
+		// Count unread messages for this direct conversation
+		bson.D{{"$lookup", bson.M{
+			"from": "messages",
+			"let":  bson.M{"u1": userID, "u2": "$other_user_id"},
+			"pipeline": bson.A{
+				bson.M{"$match": bson.M{
+					"$expr": bson.M{
+						"$and": bson.A{
+							bson.M{"$or": bson.A{
+								bson.M{"$and": bson.A{
+									bson.M{"$eq": bson.A{"$sender_id", "$$u2"}},
+									bson.M{"$eq": bson.A{"$receiver_id", "$$u1"}},
+								}},
+							}},
+							bson.M{"$not": bson.M{"$in": bson.A{"$$u1", "$seen_by"}}},
+						},
+					},
+				}},
+				bson.M{"$count": "unread"},
+			},
+			"as": "unread_count_result",
+		}}},
 		// Project into ConversationSummary format
 		bson.D{{"$project", bson.M{
 			"_id":      "$user_info._id",
@@ -105,6 +127,12 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			},
 			"last_message_timestamp": "$last_message_dm.created_at",
 			"last_message_sender_id": "$last_message_dm.sender_id",
+			"unread_count": bson.M{
+				"$ifNull": bson.A{
+					bson.M{"$arrayElemAt": bson.A{"$unread_count_result.unread", 0}},
+					0,
+				},
+			},
 		}}},
 	}) // End of direct message aggregation
 	if err != nil {
@@ -145,6 +173,23 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"as":           "last_message_sender_info",
 		}}},
 		bson.D{{"$unwind", bson.M{"path": "$last_message_sender_info", "preserveNullAndEmptyArrays": true}}},
+		// Count unread messages for this group conversation
+		bson.D{{"$lookup", bson.M{
+			"from": "messages",
+			"let":  bson.M{"groupId": "$_id", "userId": userID},
+			"pipeline": bson.A{
+				bson.M{"$match": bson.M{
+					"$expr": bson.M{
+						"$and": bson.A{
+							bson.M{"$eq": bson.A{"$group_id", "$$groupId"}},
+							bson.M{"$not": bson.M{"$in": bson.A{"$$userId", "$seen_by"}}},
+						},
+					},
+				}},
+				bson.M{"$count": "unread"},
+			},
+			"as": "unread_count_result",
+		}}},
 		// Project into ConversationSummary format
 		bson.D{{"$project", bson.M{
 			"id":       "$_id",
@@ -172,6 +217,12 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"last_message_timestamp":   "$last_message_group.created_at",
 			"last_message_sender_id":   "$last_message_group.sender_id",
 			"last_message_sender_name": "$last_message_sender_info.username",
+			"unread_count": bson.M{
+				"$ifNull": bson.A{
+					bson.M{"$arrayElemAt": bson.A{"$unread_count_result.unread", 0}},
+					0,
+				},
+			},
 		}}},
 	}) // End of group message aggregation
 	if err != nil {

@@ -248,8 +248,29 @@ func (r *MessageRepository) DeleteMessage(
 	mediaDeleter func(ctx context.Context, urls []string) error,
 ) (*models.Message, error) {
 	log.Printf("Deleting message with ID: %s by user: %s", messageID.Hex(), requesterID.Hex())
+
+	// First, fetch the message to check ownership and creation time
+	var existingMessage models.Message
+	err := r.collection.FindOne(ctx, bson.M{
+		"_id":       messageID,
+		"sender_id": requesterID,
+	}).Decode(&existingMessage)
+
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, errors.New("message not found or not owned by user")
+		}
+		return nil, err
+	}
+
+	// Check if message is within 7-day deletion window
+	sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour)
+	if existingMessage.CreatedAt.Before(sevenDaysAgo) {
+		return nil, errors.New("message can only be deleted within 7 days of creation")
+	}
+
 	var deletedMessage models.Message
-	err := r.collection.FindOneAndUpdate(
+	err = r.collection.FindOneAndUpdate(
 		ctx,
 		bson.M{
 			"_id":       messageID,
@@ -301,9 +322,30 @@ func (r *MessageRepository) EditMessage(
 	requesterID primitive.ObjectID,
 	newContent string,
 ) (*models.Message, error) {
+	// First, fetch the message to check ownership and creation time
+	var existingMessage models.Message
+	err := r.collection.FindOne(ctx, bson.M{
+		"_id":        messageID,
+		"sender_id":  requesterID,
+		"is_deleted": false,
+	}).Decode(&existingMessage)
+
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, errors.New("message not found, not owned by user, or already deleted")
+		}
+		return nil, err
+	}
+
+	// Check if message is within 1-hour edit window
+	oneHourAgo := time.Now().Add(-1 * time.Hour)
+	if existingMessage.CreatedAt.Before(oneHourAgo) {
+		return nil, errors.New("message can only be edited within 1 hour of creation")
+	}
+
 	var updatedMessage models.Message
 	now := time.Now()
-	err := r.collection.FindOneAndUpdate(
+	err = r.collection.FindOneAndUpdate(
 		ctx,
 		bson.M{
 			"_id":        messageID,

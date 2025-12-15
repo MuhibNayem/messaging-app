@@ -172,7 +172,9 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 	msg.CreatedAt = now
 	msg.UpdatedAt = now
 	if msg.SeenBy == nil {
-		msg.SeenBy = []primitive.ObjectID{}
+		msg.SeenBy = []primitive.ObjectID{msg.SenderID}
+	} else {
+		msg.SeenBy = append(msg.SeenBy, msg.SenderID)
 	}
 	if msg.DeliveredTo == nil {
 		msg.DeliveredTo = []primitive.ObjectID{}
@@ -201,21 +203,7 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 		return nil, err
 	}
 
-	// Publish to Kafka
-	msgBytes, err := json.Marshal(createdMsg)
-	if err != nil {
-		log.Printf("Failed to marshal group message for Kafka: %v", err)
-	} else {
-		kafkaMsg := kafkago.Message{
-			Key:   []byte(createdMsg.GroupID.Hex()),
-			Value: msgBytes,
-			Time:  time.Now(),
-		}
-		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
-			// Log error but don't fail the operation
-			log.Printf("Failed to produce message to Kafka: %v", err)
-		}
-	}
+	// Publish to Kafka block removed to prevent duplicate messages (WebSocket already receives via Redis)
 
 	// Send Notifications for Mentions
 	for _, mentionedID := range mentionedUserIDs {
@@ -288,7 +276,9 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 	msg.CreatedAt = now
 	msg.UpdatedAt = now
 	if msg.SeenBy == nil {
-		msg.SeenBy = []primitive.ObjectID{}
+		msg.SeenBy = []primitive.ObjectID{msg.SenderID}
+	} else {
+		msg.SeenBy = append(msg.SeenBy, msg.SenderID)
 	}
 	if msg.DeliveredTo == nil {
 		msg.DeliveredTo = []primitive.ObjectID{}
@@ -317,20 +307,7 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 		return nil, err
 	}
 
-	// Publish to Kafka
-	msgBytes, err := json.Marshal(createdMsg)
-	if err != nil {
-		log.Printf("Failed to marshal direct message for Kafka: %v", err)
-	} else {
-		kafkaMsg := kafkago.Message{
-			Key:   []byte(createdMsg.ReceiverID.Hex()),
-			Value: msgBytes,
-			Time:  time.Now(),
-		}
-		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
-			log.Printf("Failed to produce message to Kafka: %v", err)
-		}
-	}
+	// Publish to Kafka block removed to prevent duplicate messages (WebSocket already receives via Redis)
 
 	// Update last message cache
 	s.redisClient.Set(ctx,

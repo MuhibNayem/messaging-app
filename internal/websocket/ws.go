@@ -533,7 +533,19 @@ func (h *Hub) run() {
 
 		case ev := <-h.MessageEditedEvents:
 			go func(ev models.MessageEditedEvent) {
-				h.broadcastToParticipants(ev.MessageID, models.WebSocketEvent{Type: "MESSAGE_EDITED_UPDATE", Data: json.RawMessage(fmt.Sprintf(`{"message_id": "%s", "new_content": "%s"}`, ev.MessageID.Hex(), ev.NewContent))})
+				data := map[string]string{
+					"message_id":  ev.MessageID.Hex(),
+					"new_content": ev.NewContent,
+				}
+				dataBytes, err := json.Marshal(data)
+				if err != nil {
+					log.Printf("Error marshaling MESSAGE_EDITED_UPDATE data: %v", err)
+					return
+				}
+				h.broadcastToParticipants(ev.MessageID, models.WebSocketEvent{
+					Type: "MESSAGE_EDITED_UPDATE",
+					Data: json.RawMessage(dataBytes),
+				})
 			}(ev)
 
 		case conversationSeenEvent := <-h.ConversationSeenEvents:
@@ -768,8 +780,13 @@ func (h *Hub) sendToClients(clients []*Client, msg models.Message) {
 		return
 	}
 
+	eventType := "MESSAGE_CREATED"
+	if msg.ContentType == "deleted" || msg.ContentType == models.ContentTypeDeleted {
+		eventType = "MESSAGE_DELETED"
+	}
+
 	wsEvent := models.WebSocketEvent{
-		Type: "MESSAGE_CREATED",
+		Type: eventType,
 		Data: msgData,
 	}
 

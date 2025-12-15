@@ -384,9 +384,14 @@ func (c *MessageController) DeleteMessage(ctx *gin.Context) {
 	_, err = c.messageService.DeleteMessage(ctx.Request.Context(), objID.Hex(), currentUserID)
 	if err != nil {
 		switch err.Error() {
-		case "message not found":
+		case "message not found", "message not found or not owned by user":
 			ctx.JSON(http.StatusNotFound, models.ErrorResponse{Error: err.Error()})
+		case "message can only be deleted within 7 days of creation":
+			ctx.JSON(http.StatusForbidden, models.ErrorResponse{Error: err.Error()})
+		default:
+			ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
 		}
+		return
 	}
 	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
 }
@@ -422,6 +427,8 @@ func (c *MessageController) EditMessage(ctx *gin.Context) {
 		switch err.Error() {
 		case "message not found, not owned by user, or already deleted":
 			ctx.JSON(http.StatusNotFound, models.ErrorResponse{Error: err.Error()})
+		case "message can only be edited within 1 hour of creation":
+			ctx.JSON(http.StatusForbidden, models.ErrorResponse{Error: err.Error()})
 		case "invalid message ID format", "invalid requester ID format":
 			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
 		default:

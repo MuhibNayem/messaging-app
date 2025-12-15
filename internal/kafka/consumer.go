@@ -68,9 +68,12 @@ func (c *MessageConsumer) ConsumeMessages(ctx context.Context) {
 			log.Printf("Received Kafka message of type: Message for topic %s at offset %d", m.Topic, m.Offset)
 			c.hub.Broadcast <- msg
 		} else {
-			// If not a Message, attempt to unmarshal as a ReactionEvent
+			// If not a Message, check for other types.
+			// ReactionEvent and MessageEditedEvent share 'message_id' key, so we need strict checks.
+
+			// Check for ReactionEvent: Must have Emoji and Action
 			var reactionEvent models.ReactionEvent
-			if err := json.Unmarshal(m.Value, &reactionEvent); err == nil && !reactionEvent.MessageID.IsZero() {
+			if err := json.Unmarshal(m.Value, &reactionEvent); err == nil && !reactionEvent.MessageID.IsZero() && reactionEvent.Emoji != "" {
 				log.Printf("Received Kafka message of type: ReactionEvent for topic %s at offset %d", m.Topic, m.Offset)
 				c.hub.ReactionEvents <- reactionEvent
 			} else {
@@ -82,13 +85,16 @@ func (c *MessageConsumer) ConsumeMessages(ctx context.Context) {
 				} else {
 					// If not a ReadReceiptEvent, attempt to unmarshal as a MessageEditedEvent
 					var messageEditedEvent models.MessageEditedEvent
-					if err := json.Unmarshal(m.Value, &messageEditedEvent); err == nil && !messageEditedEvent.MessageID.IsZero() {
+					// Must have NewContent or EditorID. Note: Content could be empty string potentially?
+					// But usually not. Let's check EditorID too.
+					if err := json.Unmarshal(m.Value, &messageEditedEvent); err == nil && !messageEditedEvent.MessageID.IsZero() && !messageEditedEvent.EditorID.IsZero() {
 						log.Printf("Received Kafka message of type: MessageEditedEvent for topic %s at offset %d", m.Topic, m.Offset)
 						c.hub.MessageEditedEvents <- messageEditedEvent
 					} else {
 						// If not a MessageEditedEvent, attempt to unmarshal as a ConversationSeenEvent
 						var conversationSeenEvent models.ConversationSeenEvent
 						if err := json.Unmarshal(m.Value, &conversationSeenEvent); err == nil && !conversationSeenEvent.ConversationID.IsZero() {
+
 							log.Printf("Received Kafka message of type: ConversationSeenEvent for topic %s at offset %d", m.Topic, m.Offset)
 							c.hub.ConversationSeenEvents <- conversationSeenEvent
 						} else {

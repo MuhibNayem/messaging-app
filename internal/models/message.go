@@ -151,4 +151,5 @@ type ConversationSummary struct {
 	LastMessageSenderName string             `bson:"last_message_sender_name" json:"last_message_sender_name,omitempty"`
 	LastMessageContent    string             `bson:"last_message_content" json:"last_message_content,omitempty"`
 	LastMessageTimestamp  *time.Time         `bson:"last_message_timestamp" json:"last_message_timestamp,omitempty"`
+	UnreadCount           int64              `bson:"unread_count" json:"unread_count"`
 }
