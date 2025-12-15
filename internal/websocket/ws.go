@@ -74,59 +74,61 @@ type Hub struct {
 	userClients  map[string]map[*Client]bool
 	groupClients map[string]map[*Client]bool
 
-	groupRepo    *repositories.GroupRepository
-	feedRepo     *repositories.FeedRepository // New
-	userRepo     *repositories.UserRepository // New
-	messageRepo  *repositories.MessageRepository
-	redisClient  *redis.ClusterClient
-	messageCache *MessageCache
+	groupRepo      *repositories.GroupRepository
+	feedRepo       *repositories.FeedRepository
+	userRepo       *repositories.UserRepository
+	friendshipRepo *repositories.FriendshipRepository // New
+	messageRepo    *repositories.MessageRepository
+	redisClient    *redis.ClusterClient
+	messageCache   *MessageCache
 
-	register            chan *Client
-	unregister          chan *Client
-	Broadcast           chan models.Message
-	FeedEvents          chan models.WebSocketEvent // New
-	NotificationEvents  chan models.Notification   // New for notifications
-	typingEvents        chan models.TypingEvent
-	ReactionEvents      chan models.ReactionEvent      // New channel for reaction events
-	ReadReceiptEvents   chan models.ReadReceiptEvent   // New channel for read receipt events
-	MessageEditedEvents chan models.MessageEditedEvent // New channel for message edited events
-	DeliveredEvents     chan models.DeliveredEvent     // New channel for delivered events
-	ConversationSeenEvents chan models.ConversationSeenEvent // New channel for conversation seen events
+	register               chan *Client
+	unregister             chan *Client
+	Broadcast              chan models.Message
+	FeedEvents             chan models.WebSocketEvent
+	NotificationEvents     chan models.Notification
+	typingEvents           chan models.TypingEvent
+	ReactionEvents         chan models.ReactionEvent
+	ReadReceiptEvents      chan models.ReadReceiptEvent
+	MessageEditedEvents    chan models.MessageEditedEvent
+	DeliveredEvents        chan models.DeliveredEvent
+	ConversationSeenEvents chan models.ConversationSeenEvent
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	mu sync.RWMutex
 
-	messageUpdater MessageUpdater // Use interface instead of concrete type
+	messageUpdater MessageUpdater
 }
 
 // NewHub creates a new Hub and starts its goroutines
-func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository, feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, messageRepo *repositories.MessageRepository, messageUpdater MessageUpdater) *Hub {
+func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository, feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, friendshipRepo *repositories.FriendshipRepository, messageRepo *repositories.MessageRepository, messageUpdater MessageUpdater) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
-		userClients:         make(map[string]map[*Client]bool),
-		groupClients:        make(map[string]map[*Client]bool),
-		groupRepo:           groupRepo,
-		feedRepo:            feedRepo, // New
-		userRepo:            userRepo, // New
-		messageRepo:         messageRepo,
-		redisClient:         redisClient,
-		messageCache:        NewMessageCache(redisClient),
-		register:            make(chan *Client),
-		unregister:          make(chan *Client),
-		Broadcast:           make(chan models.Message, 10000),
-		FeedEvents:          make(chan models.WebSocketEvent, 10000), // New
-		NotificationEvents:  make(chan models.Notification, 10000),   // New for notifications
-		typingEvents:        make(chan models.TypingEvent, 1000),
-		ReactionEvents:      make(chan models.ReactionEvent, 10000),      // Initialize new channel
-		ReadReceiptEvents:   make(chan models.ReadReceiptEvent, 10000),   // Initialize new channel
-		MessageEditedEvents: make(chan models.MessageEditedEvent, 10000), // Initialize new channel
-		DeliveredEvents:     make(chan models.DeliveredEvent, 10000),     // Initialize new channel
-		ConversationSeenEvents: make(chan models.ConversationSeenEvent, 10000), // Initialize new channel
-		ctx:                 ctx,
-		cancel:              cancel,
-		messageUpdater:      messageUpdater, // Assign MessageUpdater
+		userClients:            make(map[string]map[*Client]bool),
+		groupClients:           make(map[string]map[*Client]bool),
+		groupRepo:              groupRepo,
+		feedRepo:               feedRepo,
+		userRepo:               userRepo,
+		friendshipRepo:         friendshipRepo, // Initialize
+		messageRepo:            messageRepo,
+		redisClient:            redisClient,
+		messageCache:           NewMessageCache(redisClient),
+		register:               make(chan *Client),
+		unregister:             make(chan *Client),
+		Broadcast:              make(chan models.Message, 10000),
+		FeedEvents:             make(chan models.WebSocketEvent, 10000),
+		NotificationEvents:     make(chan models.Notification, 10000),
+		typingEvents:           make(chan models.TypingEvent, 1000),
+		ReactionEvents:         make(chan models.ReactionEvent, 10000),
+		ReadReceiptEvents:      make(chan models.ReadReceiptEvent, 10000),
+		MessageEditedEvents:    make(chan models.MessageEditedEvent, 10000),
+		DeliveredEvents:        make(chan models.DeliveredEvent, 10000),
+		ConversationSeenEvents: make(chan models.ConversationSeenEvent, 10000),
+		ctx:                    ctx,
+		cancel:                 cancel,
+		messageUpdater:         messageUpdater,
 	}
 	go h.run()
 	go h.subscribeToRedis()
@@ -181,28 +183,80 @@ func (h *Hub) run() {
 
 			// Set presence in Redis
 			presenceData, _ := json.Marshal(map[string]interface{}{"status": "online", "last_seen": time.Now().Unix()})
-			h.redisClient.Set(h.ctx, "presence:"+c.userID, presenceData, 24*time.Hour) // Keep presence for 24 hours
+			h.redisClient.Set(h.ctx, "presence:"+c.userID, presenceData, 24*time.Hour)
 
-			// Broadcast presence update
-			presenceEvent := models.WebSocketEvent{
+			// 1. Fetch friends to send THEIR presence to the new client
+			//    and to send the new client's presence to THEM.
+			friends, err := h.friendshipRepo.GetFriends(h.ctx, func() primitive.ObjectID {
+				oid, _ := primitive.ObjectIDFromHex(c.userID)
+				return oid
+			}())
+
+			if err != nil {
+				log.Printf("Error getting friends for presence: %v", err)
+			}
+
+			// Prepare presence event for the new user
+			myPresenceEvent := models.WebSocketEvent{
 				Type: "presence_update",
 				Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "online", "last_seen": %d}`, c.userID, time.Now().Unix())),
 			}
-			h.broadcastToAllUsers(presenceEvent)
+			myPresenceNumBytes, _ := json.Marshal(myPresenceEvent)
+
+			// List of friend IDs to notify
+			friendIDs := make([]string, 0)
+			if err == nil {
+				for _, f := range friends {
+					friendIDs = append(friendIDs, f.ID.Hex())
+
+					// Check if friend is online
+					h.mu.RLock()
+					_, isOnline := h.userClients[f.ID.Hex()]
+					h.mu.RUnlock()
+
+					if isOnline {
+						// Send friend's status to me
+						friendPresence := models.WebSocketEvent{
+							Type: "presence_update",
+							Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "online", "last_seen": %d}`, f.ID.Hex(), time.Now().Unix())),
+						}
+						friendPresenceBytes, _ := json.Marshal(friendPresence)
+						c.send <- friendPresenceBytes
+					}
+				}
+			}
+
+			// 2. Broadcast my presence ONLY to my friends
+			for _, fid := range friendIDs {
+				h.sendToUser(fid, myPresenceNumBytes)
+			}
+			// Also send to self to confirm connection (optional but good for consistency)
+			c.send <- myPresenceNumBytes
 
 		case c := <-h.unregister:
 			h.removeClient(c)
 
 			// Set presence in Redis
 			presenceData, _ := json.Marshal(map[string]interface{}{"status": "offline", "last_seen": time.Now().Unix()})
-			h.redisClient.Set(h.ctx, "presence:"+c.userID, presenceData, 24*time.Hour) // Keep presence for 24 hours
+			h.redisClient.Set(h.ctx, "presence:"+c.userID, presenceData, 24*time.Hour)
 
-			// Broadcast presence update
-			presenceEvent := models.WebSocketEvent{
-				Type: "presence_update",
-				Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "offline", "last_seen": %d}`, c.userID, time.Now().Unix())),
+			// Broadcast offline status ONLY to friends
+			friends, err := h.friendshipRepo.GetFriends(h.ctx, func() primitive.ObjectID {
+				oid, _ := primitive.ObjectIDFromHex(c.userID)
+				return oid
+			}())
+
+			if err == nil {
+				offlineEvent := models.WebSocketEvent{
+					Type: "presence_update",
+					Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "offline", "last_seen": %d}`, c.userID, time.Now().Unix())),
+				}
+				offlineEventBytes, _ := json.Marshal(offlineEvent)
+
+				for _, f := range friends {
+					h.sendToUser(f.ID.Hex(), offlineEventBytes)
+				}
 			}
-			h.broadcastToAllUsers(presenceEvent)
 
 		case event := <-h.FeedEvents:
 			switch event.Type {
@@ -212,23 +266,37 @@ func (h *Hub) run() {
 					log.Printf("Error unmarshaling PostCreated data: %v", err)
 					continue
 				}
-				// For simplicity, broadcast new posts to all connected clients.
-				// In a real application, this would involve more sophisticated routing
-				// based on user's feed preferences, friendships, etc.
-				for clientID := range h.userClients { // Iterate through all users with active connections
-					for conn := range h.userClients[clientID] { // Iterate through connections for each user
-						select {
-						case conn.send <- event.Data: // Send the original event data
-						default:
-							close(conn.send)
-							delete(h.userClients[clientID], conn)
-							if len(h.userClients[clientID]) == 0 {
-								delete(h.userClients, clientID)
-							}
-						}
+
+				// Handle privacy-aware broadcasting
+				switch post.Privacy {
+				case models.PrivacySettingPublic:
+					// Broadcast to all connected clients
+					h.broadcastToAllUsers(event)
+				case models.PrivacySettingOnlyMe:
+					// Send only to the post author
+					h.sendToUser(post.UserID.Hex(), event.Data)
+				case models.PrivacySettingFriends:
+					// Send to author
+					h.sendToUser(post.UserID.Hex(), event.Data)
+
+					// Get friends of the post author
+					// Note: Using background context here, might consider passing a context if available
+					friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
+					if err != nil {
+						log.Printf("Error getting friends for post broadcast: %v", err)
+						continue
 					}
+
+					// Send to each friend
+					for _, friend := range friends {
+						h.sendToUser(friend.ID.Hex(), event.Data)
+					}
+				default:
+					// Default to author only for unknown privacy settings (fail safe)
+					h.sendToUser(post.UserID.Hex(), event.Data)
 				}
-				log.Printf("Broadcasted PostCreated event for post %s", post.ID.Hex())
+
+				log.Printf("Broadcasted PostCreated event for post %s (Privacy: %s)", post.ID.Hex(), post.Privacy)
 
 			case "CommentCreated":
 				var comment models.Comment
@@ -243,7 +311,21 @@ func (h *Hub) run() {
 					continue
 				}
 				h.sendToUser(post.UserID.Hex(), event.Data) // Send to post owner
-				log.Printf("Sent CommentCreated event for comment %s on post %s to post owner %s", comment.ID.Hex(), comment.PostID.Hex(), post.UserID.Hex())
+
+				// Also broadcast to others who can view the post (same logic as PostCreated)
+				switch post.Privacy {
+				case models.PrivacySettingPublic:
+					h.broadcastToAllUsers(event)
+				case models.PrivacySettingFriends:
+					friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
+					if err == nil {
+						for _, friend := range friends {
+							h.sendToUser(friend.ID.Hex(), event.Data)
+						}
+					}
+				}
+
+				log.Printf("Broadcasted CommentCreated event for comment %s on post %s", comment.ID.Hex(), comment.PostID.Hex())
 
 			case "ReplyCreated":
 				var reply models.Reply
@@ -258,7 +340,28 @@ func (h *Hub) run() {
 					continue
 				}
 				h.sendToUser(comment.UserID.Hex(), event.Data) // Send to comment owner
-				log.Printf("Sent ReplyCreated event for reply %s on comment %s to comment owner %s", reply.ID.Hex(), reply.CommentID.Hex(), comment.UserID.Hex())
+
+				// Fetch post to check privacy for broader broadcast
+				post, err := h.feedRepo.GetPostByID(context.Background(), comment.PostID)
+				if err != nil {
+					log.Printf("Error getting post %s for reply broadcast: %v", comment.PostID.Hex(), err)
+				} else {
+					h.sendToUser(post.UserID.Hex(), event.Data) // Send to post owner as well
+
+					switch post.Privacy {
+					case models.PrivacySettingPublic:
+						h.broadcastToAllUsers(event)
+					case models.PrivacySettingFriends:
+						friends, err := h.friendshipRepo.GetFriends(context.Background(), post.UserID)
+						if err == nil {
+							for _, friend := range friends {
+								h.sendToUser(friend.ID.Hex(), event.Data)
+							}
+						}
+					}
+				}
+
+				log.Printf("Broadcasted ReplyCreated event for reply %s on comment %s", reply.ID.Hex(), reply.CommentID.Hex())
 
 			case "ReactionCreated":
 				var reaction models.Reaction
@@ -536,7 +639,15 @@ func (h *Hub) broadcastToAllUsers(event models.WebSocketEvent) {
 func (h *Hub) dispatchMessage(msg models.Message) {
 	// direct
 	if !msg.ReceiverID.IsZero() {
-		h.sendToClients(h.getClientsByUser(msg.ReceiverID.Hex()), msg)
+		clients := h.getClientsByUser(msg.ReceiverID.Hex())
+		h.sendToClients(clients, msg)
+
+		// If user is offline (no active clients), queue the message for delivery upon reconnection
+		if len(clients) == 0 {
+			if err := h.messageCache.AddPendingDirectMessage(h.ctx, msg.ReceiverID.Hex(), msg.ID.Hex()); err != nil {
+				log.Printf("Failed to queue pending direct message for %s: %v", msg.ReceiverID.Hex(), err)
+			}
+		}
 		return
 	}
 	// group

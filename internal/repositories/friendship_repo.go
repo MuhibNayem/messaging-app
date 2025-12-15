@@ -55,7 +55,8 @@ func (r *FriendshipRepository) CreateRequest(ctx context.Context, requesterID, r
 	}
 
 	// Check for existing request in either direction
-	existing, err := r.db.Collection("friendships").CountDocuments(ctx, bson.M{
+	var existingFriendship models.Friendship
+	err := r.db.Collection("friendships").FindOne(ctx, bson.M{
 		"$or": []bson.M{
 			{
 				"requester_id": requesterID,
@@ -66,14 +67,40 @@ func (r *FriendshipRepository) CreateRequest(ctx context.Context, requesterID, r
 				"receiver_id":  requesterID,
 			},
 		},
-	})
-	if err != nil {
+	}).Decode(&existingFriendship)
+
+	if err == nil {
+		// Found an existing record
+		if existingFriendship.Status == models.FriendshipStatusRejected {
+			// If rejected, we can reactivate it as a new pending request from the current requester
+			_, err := r.db.Collection("friendships").UpdateOne(ctx,
+				bson.M{"_id": existingFriendship.ID},
+				bson.M{
+					"$set": bson.M{
+						"requester_id": requesterID,
+						"receiver_id":  receiverID,
+						"status":       models.FriendshipStatusPending,
+						"updated_at":   time.Now(),
+					},
+				},
+			)
+			if err != nil {
+				return nil, err
+			}
+			// Return updated friendship
+			existingFriendship.Status = models.FriendshipStatusPending
+			existingFriendship.RequesterID = requesterID
+			existingFriendship.ReceiverID = receiverID
+			return &existingFriendship, nil
+		}
+		// Otherwise (Pending, Accepted, Blocked), it's a conflict
+		return nil, ErrFriendRequestExists
+	} else if err != mongo.ErrNoDocuments {
+		// Real DB error
 		return nil, err
 	}
-	if existing > 0 {
-		return nil, ErrFriendRequestExists
-	}
 
+	// No existing record, create new
 	friendship := &models.Friendship{
 		RequesterID: requesterID,
 		ReceiverID:  receiverID,
@@ -224,7 +251,7 @@ func (r *FriendshipRepository) GetFriendRequests(ctx context.Context, userID pri
 	}
 	defer cursor.Close(ctx)
 
-	var requests []models.PopulatedFriendship
+	requests := make([]models.PopulatedFriendship, 0)
 	if err := cursor.All(ctx, &requests); err != nil {
 		log.Printf("[FriendshipRepository] Error decoding cursor: %v", err)
 		return nil, 0, fmt.Errorf("failed to decode requests: %w", err)
@@ -453,20 +480,20 @@ func (r *FriendshipRepository) GetFriends(ctx context.Context, userID primitive.
 
 // GetPendingFriendshipByID finds a pending friendship by its ID for a specific receiver
 func (r *FriendshipRepository) GetPendingFriendshipByID(ctx context.Context, friendshipID, receiverID primitive.ObjectID) (*models.Friendship, error) {
-    var friendship models.Friendship
-    err := r.db.Collection("friendships").FindOne(ctx, bson.M{
-        "_id":         friendshipID,
-        "receiver_id": receiverID,
-        "status":      models.FriendshipStatusPending,
-    }).Decode(&friendship)
+	var friendship models.Friendship
+	err := r.db.Collection("friendships").FindOne(ctx, bson.M{
+		"_id":         friendshipID,
+		"receiver_id": receiverID,
+		"status":      models.FriendshipStatusPending,
+	}).Decode(&friendship)
 
-    if err != nil {
-        if errors.Is(err, mongo.ErrNoDocuments) {
-            return nil, ErrFriendRequestNotFound
-        }
-        return nil, err
-    }
-    return &friendship, nil
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, ErrFriendRequestNotFound
+		}
+		return nil, err
+	}
+	return &friendship, nil
 }
 
 // Custom errors

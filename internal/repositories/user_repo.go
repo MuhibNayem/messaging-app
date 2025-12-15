@@ -171,11 +171,31 @@ func (r *UserRepository) AddFriend(ctx context.Context, userID1, userID2 primiti
 
 	// Transaction to ensure both updates succeed or fail together
 	_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+		// Initialize friends array if null for userID1
+		_, err = r.db.Collection("users").UpdateOne(
+			sessCtx,
+			bson.M{"_id": userID1, "friends": nil},
+			bson.M{"$set": bson.M{"friends": []primitive.ObjectID{}}},
+		)
+		if err != nil {
+			return nil, err
+		}
+
 		// Add userID2 to userID1's friends list
-		_, err := r.db.Collection("users").UpdateOne(
+		_, err = r.db.Collection("users").UpdateOne(
 			sessCtx,
 			bson.M{"_id": userID1},
 			bson.M{"$addToSet": bson.M{"friends": userID2}},
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Initialize friends array if null for userID2
+		_, err = r.db.Collection("users").UpdateOne(
+			sessCtx,
+			bson.M{"_id": userID2, "friends": nil},
+			bson.M{"$set": bson.M{"friends": []primitive.ObjectID{}}},
 		)
 		if err != nil {
 			return nil, err

@@ -91,6 +91,15 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 	}
 
 	// Publish PostCreated event to Kafka
+	if senderUser != nil {
+		createdPost.Author = models.PostAuthor{
+			ID:       senderUser.ID.Hex(),
+			Username: senderUser.Username,
+			Avatar:   senderUser.Avatar,
+			FullName: senderUser.FullName,
+		}
+	}
+
 	postDataBytes, err := json.Marshal(createdPost)
 	if err != nil {
 		fmt.Printf("Failed to marshal createdPost for WebSocketEvent: %v\n", err)
@@ -445,6 +454,15 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 	}
 
 	// Publish CommentCreated event to Kafka
+	if senderUser != nil {
+		createdComment.Author = models.PostAuthor{
+			ID:       senderUser.ID.Hex(),
+			Username: senderUser.Username,
+			Avatar:   senderUser.Avatar,
+			FullName: senderUser.FullName,
+		}
+	}
+
 	commentDataBytes, err := json.Marshal(createdComment)
 	if err != nil {
 		fmt.Printf("Failed to marshal createdComment for WebSocketEvent: %v\n", err)
@@ -564,12 +582,12 @@ func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID
 	}
 
 	reply := &models.Reply{
-		CommentID:     req.CommentID,
-		UserID:        userID,
-		Content:       req.Content,
-		MediaType:     req.MediaType,
-		MediaURL:      req.MediaURL,
-		Mentions:      mentionedUserIDs,
+		CommentID: req.CommentID,
+		UserID:    userID,
+		Content:   req.Content,
+		MediaType: req.MediaType,
+		MediaURL:  req.MediaURL,
+		Mentions:  mentionedUserIDs,
 	}
 
 	createdReply, err := s.feedRepo.CreateReply(ctx, reply)
@@ -629,6 +647,15 @@ func (s *FeedService) CreateReply(ctx context.Context, userID primitive.ObjectID
 	}
 
 	// Publish ReplyCreated event to Kafka
+	if senderUser != nil {
+		createdReply.Author = models.PostAuthor{
+			ID:       senderUser.ID.Hex(),
+			Username: senderUser.Username,
+			Avatar:   senderUser.Avatar,
+			FullName: senderUser.FullName,
+		}
+	}
+
 	replyDataBytes, err := json.Marshal(createdReply)
 	if err != nil {
 		fmt.Printf("Failed to marshal createdReply for WebSocketEvent: %v\n", err)

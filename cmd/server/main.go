@@ -183,7 +183,7 @@ func main() {
 	conversationController := conversationControllers.NewConversationController(conversationService)
 
 	// Initialize WebSocket Hub
-	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, messageRepo, messageService)
+	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, friendshipRepo, messageRepo, messageService)
 
 	// Initialize Kafka Consumers
 	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
@@ -272,13 +272,14 @@ func main() {
 		authRoutes.POST("/register", authController.Register)
 		authRoutes.POST("/login", authController.Login)
 		authRoutes.POST("/refresh", authController.Refresh)
-		authRoutes.POST("/logout", authController.Logout)
+
 	}
 
 	// Protected routes
 	authMiddleware := middleware.AuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
 	wsMiddleware := middleware.WSJwtAuthMiddleware(cfg.JWTSecret, redisClient.GetClient())
 	api := router.Group("/api", authMiddleware)
+	api.POST("/auth/logout", authController.Logout)
 
 	// User Routes
 	userRoutes := api.Group("/users")
@@ -292,10 +293,10 @@ func main() {
 		userRoutes.PUT("/me/privacy", userController.UpdatePrivacySettings) // Update current user privacy
 		userRoutes.GET("/me/groups", groupController.GetUserGroups)         // Get current user's groups
 
-		userRoutes.GET("", userController.ListUsers)                // List all users
+		userRoutes.GET("", userController.ListUsers)                 // List all users
 		userRoutes.GET("/presence", userController.GetUsersPresence) // Get presence status for multiple users
-		userRoutes.GET("/:id", userController.GetUserByID)          // Get specific user by ID
-		userRoutes.GET("/:id/status", userController.GetUserStatus) // Get user status
+		userRoutes.GET("/:id", userController.GetUserByID)           // Get specific user by ID
+		userRoutes.GET("/:id/status", userController.GetUserStatus)  // Get user status
 	}
 
 	// Feed Routes
