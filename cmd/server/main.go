@@ -161,10 +161,10 @@ func main() {
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
 	userService := services.NewUserService(userRepo, redisClient.GetClient())
-	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo)
 	groupService := services.NewGroupService(groupRepo, userRepo)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
 	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
+	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService)
 	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
 	storageService, err := services.NewStorageService(cfg)
@@ -179,7 +179,7 @@ func main() {
 	userController := controllers.NewUserController(userService)
 	friendshipController := controllers.NewFriendshipController(friendshipService)
 	groupController := controllers.NewGroupController(groupService, userService)
-	messageController := controllers.NewMessageController(messageService)
+	messageController := controllers.NewMessageController(messageService, storageService)
 	feedController := controllers.NewFeedController(feedService, userService, privacyService, storageService)
 	privacyController := controllers.NewPrivacyController(privacyService, userService)
 	searchController := controllers.NewSearchController(searchService)                   // Initialize SearchController

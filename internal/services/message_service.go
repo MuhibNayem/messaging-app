@@ -8,7 +8,9 @@ import (
 	"log"
 	"messaging-app/internal/kafka"
 	"messaging-app/internal/models"
+	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/repositories"
+	"messaging-app/pkg/utils"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -17,12 +19,13 @@ import (
 )
 
 type MessageService struct {
-	messageRepo    *repositories.MessageRepository
-	groupRepo      *repositories.GroupRepository
-	friendshipRepo *repositories.FriendshipRepository
-	producer       *kafka.MessageProducer
-	redisClient    *redis.ClusterClient
-	userRepo       *repositories.UserRepository
+	messageRepo         *repositories.MessageRepository
+	groupRepo           *repositories.GroupRepository
+	friendshipRepo      *repositories.FriendshipRepository
+	producer            *kafka.MessageProducer
+	redisClient         *redis.ClusterClient
+	userRepo            *repositories.UserRepository
+	notificationService *notifications.NotificationService
 }
 
 func NewMessageService(
@@ -32,14 +35,16 @@ func NewMessageService(
 	producer *kafka.MessageProducer,
 	redisClient *redis.ClusterClient,
 	userRepo *repositories.UserRepository,
+	notificationService *notifications.NotificationService,
 ) *MessageService {
 	return &MessageService{
-		messageRepo:    messageRepo,
-		groupRepo:      groupRepo,
-		friendshipRepo: friendshipRepo,
-		producer:       producer,
-		redisClient:    redisClient,
-		userRepo:       userRepo,
+		messageRepo:         messageRepo,
+		groupRepo:           groupRepo,
+		friendshipRepo:      friendshipRepo,
+		producer:            producer,
+		redisClient:         redisClient,
+		userRepo:            userRepo,
+		notificationService: notificationService,
 	}
 }
 
@@ -74,16 +79,21 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 	// Check group membership using Redis cache first
 	cacheKey := "group:" + groupID + ":members"
 	members, err := s.redisClient.SMembers(ctx, cacheKey).Result()
-	if err == nil && len(members) > 0 {
-		// Check cache
-		found := false
+
+	// Helper to check membership
+	checkMembership := func(members []string, target string) bool {
 		for _, m := range members {
-			if m == msg.SenderID.Hex() {
-				found = true
-				break
+			if m == target {
+				return true
 			}
 		}
-		if !found {
+		return false
+	}
+
+	var memberList []string
+	if err == nil && len(members) > 0 {
+		memberList = members
+		if !checkMembership(members, msg.SenderID.Hex()) {
 			return nil, errors.New("not a group member")
 		}
 	} else {
@@ -95,9 +105,9 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 
 		isMember := false
 		for _, m := range group.Members {
+			memberList = append(memberList, m.Hex()) // Store as hex for consistency
 			if m == msg.SenderID {
 				isMember = true
-				break
 			}
 		}
 
@@ -122,17 +132,34 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 
 	// Get sender info from cache or DB
 	senderName, err := s.redisClient.Get(ctx, "user:"+msg.SenderID.Hex()+":username").Result()
+	senderUser, userErr := s.userRepo.FindUserByID(ctx, msg.SenderID)
 	if err != nil {
-		user, userErr := s.userRepo.FindUserByID(ctx, msg.SenderID)
 		if userErr != nil {
 			log.Printf("Failed to find sender user %s: %v", msg.SenderID.Hex(), userErr)
 			senderName = "Unknown"
 		} else {
-			senderName = user.Username
+			senderName = senderUser.Username
 			s.redisClient.Set(ctx, "user:"+msg.SenderID.Hex()+":username", senderName, 24*time.Hour)
 		}
 	}
 	msg.SenderName = senderName
+
+	// --- Mention Logic ---
+	mentionedUsernames := utils.ExtractMentions(msg.Content)
+	var mentionedUserIDs []primitive.ObjectID
+	if len(mentionedUsernames) > 0 {
+		mentionedUsers, err := s.userRepo.FindUsersByUserNames(ctx, mentionedUsernames)
+		if err == nil {
+			for _, user := range mentionedUsers {
+				// Verify if mentioned user is in the group
+				if checkMembership(memberList, user.ID.Hex()) {
+					mentionedUserIDs = append(mentionedUserIDs, user.ID)
+				}
+			}
+		}
+	}
+	msg.Mentions = mentionedUserIDs
+	// --- End Mention Logic ---
 
 	// Save to database
 	createdMsg, err := s.messageRepo.CreateMessage(ctx, msg)
@@ -153,6 +180,26 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 		if err := s.producer.ProduceMessage(ctx, kafkaMsg); err != nil {
 			// Log error but don't fail the operation
 			log.Printf("Failed to produce message to Kafka: %v", err)
+		}
+	}
+
+	// Send Notifications for Mentions
+	for _, mentionedID := range mentionedUserIDs {
+		// Don't notify if self-mention
+		if mentionedID == msg.SenderID {
+			continue
+		}
+		notificationReq := &models.CreateNotificationRequest{
+			RecipientID: mentionedID,
+			SenderID:    msg.SenderID,
+			Type:        models.NotificationTypeMention,
+			TargetID:    createdMsg.ID,
+			TargetType:  "message", // Assuming 'message' type exists or UI can handle it. If not, maybe use 'group_message' or 'conversation'
+			Content:     fmt.Sprintf("%s mentioned you in %s", senderName, groupName),
+		}
+		_, err := s.notificationService.CreateNotification(ctx, notificationReq)
+		if err != nil {
+			log.Printf("Failed to create mention notification for user %s: %v", mentionedID.Hex(), err)
 		}
 	}
 

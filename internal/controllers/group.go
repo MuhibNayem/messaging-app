@@ -45,6 +45,7 @@ type UserShortResponse struct {
 	ID       primitive.ObjectID `json:"id"`
 	Username string             `json:"username"`
 	Email    string             `json:"email"`
+	Avatar   string             `json:"avatar"`
 }
 
 type AddMemberRequest struct {
@@ -302,6 +303,7 @@ func (c *GroupController) convertGroupToResponse(ctx context.Context, group *mod
 			ID:       user.ID,
 			Username: user.Username,
 			Email:    user.Email,
+			Avatar:   user.Avatar,
 		}
 	}
 
@@ -319,8 +321,8 @@ func (c *GroupController) convertGroupToResponse(ctx context.Context, group *mod
 	}
 
 	return &GroupResponse{
-		ID:        group.ID,
-		Name:      group.Name,
+		ID:   group.ID,
+		Name: group.Name,
 		Creator: UserShortResponse{
 			ID:       creator.ID,
 			Username: creator.Username,

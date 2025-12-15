@@ -32,6 +32,8 @@ type Message struct {
 	EditedAt         *time.Time           `bson:"edited_at,omitempty" json:"edited_at,omitempty"`                     // New field for message editing
 	Reactions        []MessageReaction    `bson:"reactions,omitempty" json:"reactions,omitempty"`                     // New field for reactions
 	ReplyToMessageID *primitive.ObjectID  `bson:"reply_to_message_id,omitempty" json:"reply_to_message_id,omitempty"` // New field for replies
+	Mentions         []primitive.ObjectID `bson:"mentions,omitempty" json:"mentions,omitempty"`
+	MentionedUsers   []PostAuthor         `bson:"-" json:"mentioned_users,omitempty"`
 	CreatedAt        time.Time            `bson:"created_at" json:"created_at"`
 	UpdatedAt        time.Time            `bson:"updated_at,omitempty" json:"updated_at,omitempty"`
 }
@@ -46,14 +48,14 @@ type MessageQuery struct {
 }
 
 type MessageRequest struct {
-	SenderName       string   `bson:"sender_name,omitempty" json:"sender_name,omitempty"`
-	ReceiverID       string   `json:"receiver_id,omitempty"`
-	SenderID         string   `json:"sender_id"`
-	GroupID          string   `json:"group_id,omitempty"`
-	Content          string   `json:"content,omitempty"`
-	ContentType      string   `json:"content_type"`
-	MediaURLs        []string `json:"media_urls,omitempty"`
-	ReplyToMessageID string   `json:"reply_to_message_id,omitempty"` // New field for replies
+	SenderName       string   `bson:"sender_name,omitempty" json:"sender_name,omitempty" form:"sender_name"`
+	ReceiverID       string   `json:"receiver_id,omitempty" form:"receiver_id"`
+	SenderID         string   `json:"sender_id" form:"sender_id"`
+	GroupID          string   `json:"group_id,omitempty" form:"group_id"`
+	Content          string   `json:"content,omitempty" form:"content"`
+	ContentType      string   `json:"content_type" form:"content_type"`
+	MediaURLs        []string `json:"media_urls,omitempty" form:"media_urls"`
+	ReplyToMessageID string   `json:"reply_to_message_id,omitempty" form:"reply_to_message_id"` // New field for replies
 }
 
 type MessageResponse struct {
