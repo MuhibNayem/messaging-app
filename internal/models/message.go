@@ -34,6 +34,7 @@ type Message struct {
 	ReplyToMessageID *primitive.ObjectID  `bson:"reply_to_message_id,omitempty" json:"reply_to_message_id,omitempty"` // New field for replies
 	Mentions         []primitive.ObjectID `bson:"mentions,omitempty" json:"mentions,omitempty"`
 	MentionedUsers   []PostAuthor         `bson:"-" json:"mentioned_users,omitempty"`
+	Sender           *SafeUserResponse    `bson:"sender,omitempty" json:"sender,omitempty"`
 	CreatedAt        time.Time            `bson:"created_at" json:"created_at"`
 	UpdatedAt        time.Time            `bson:"updated_at,omitempty" json:"updated_at,omitempty"`
 }

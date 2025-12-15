@@ -99,9 +99,17 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 		bson.D{{Key: "$unwind", Value: bson.M{"path": "$sender_info", "preserveNullAndEmptyArrays": true}}},
 		// Project fields to match models.Message struct
 		bson.D{{Key: "$project", Value: bson.M{
-			"_id":                 1,
-			"sender_id":           1,
-			"sender_name":         "$sender_info.username", // Populate sender_name
+			"_id":         1,
+			"sender_id":   1,
+			"sender_name": "$sender_info.username", // Populate sender_name
+			"sender": bson.M{
+				"_id":       "$sender_info._id",
+				"username":  "$sender_info.username",
+				"email":     "$sender_info.email",
+				"avatar":    "$sender_info.avatar",
+				"full_name": "$sender_info.full_name",
+				"bio":       "$sender_info.bio",
+			},
 			"receiver_id":         1,
 			"group_id":            1,
 			"group_name":          1,
