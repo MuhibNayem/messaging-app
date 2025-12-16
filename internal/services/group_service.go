@@ -2,11 +2,14 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"messaging-app/internal/kafka"
 	"messaging-app/internal/models"
 	"messaging-app/internal/repositories"
 
+	kafkago "github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -14,16 +17,18 @@ import (
 type GroupService struct {
 	groupRepo *repositories.GroupRepository
 	userRepo  *repositories.UserRepository
+	producer  *kafka.MessageProducer
 }
 
-func NewGroupService(groupRepo *repositories.GroupRepository, userRepo *repositories.UserRepository) *GroupService {
+func NewGroupService(groupRepo *repositories.GroupRepository, userRepo *repositories.UserRepository, producer *kafka.MessageProducer) *GroupService {
 	return &GroupService{
 		groupRepo: groupRepo,
 		userRepo:  userRepo,
+		producer:  producer,
 	}
 }
 
-func (s *GroupService) CreateGroup(ctx context.Context, creatorID primitive.ObjectID, name string, memberIDs []primitive.ObjectID) (*models.Group, error) {
+func (s *GroupService) CreateGroup(ctx context.Context, creatorID primitive.ObjectID, name string, avatar string, memberIDs []primitive.ObjectID) (*models.Group, error) {
 	// Verify creator exists
 	if _, err := s.userRepo.FindUserByID(ctx, creatorID); err != nil {
 		return nil, fmt.Errorf("creator user not found")
@@ -44,6 +49,7 @@ func (s *GroupService) CreateGroup(ctx context.Context, creatorID primitive.Obje
 
 	group := &models.Group{
 		Name:      name,
+		Avatar:    avatar,
 		CreatorID: creatorID,
 		Members:   members,
 		Admins:    []primitive.ObjectID{creatorID},
@@ -137,6 +143,7 @@ func (s *GroupService) UpdateGroup(ctx context.Context, groupID, requesterID pri
 	// Filter allowed fields to update
 	allowedFields := map[string]bool{
 		"name":       true,
+		"avatar":     true,
 		"updated_at": true,
 	}
 
@@ -151,7 +158,32 @@ func (s *GroupService) UpdateGroup(ctx context.Context, groupID, requesterID pri
 		return errors.New("no valid fields to update")
 	}
 
-	return s.groupRepo.UpdateGroup(ctx, groupID, filteredUpdates)
+	if err := s.groupRepo.UpdateGroup(ctx, groupID, filteredUpdates); err != nil {
+		return err
+	}
+
+	// Fetch updated group to broadcast
+	updatedGroup, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err == nil {
+		// Broadcast update
+		event := map[string]interface{}{
+			"type": "GROUP_UPDATED",
+			"data": updatedGroup,
+		}
+
+		eventBytes, err := json.Marshal(event)
+		if err == nil {
+			msg := kafkago.Message{
+				Key:   []byte(groupID.Hex()),
+				Value: eventBytes,
+			}
+			if err := s.producer.ProduceMessage(ctx, msg); err != nil {
+				fmt.Printf("Failed to publish group update event: %v\n", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *GroupService) GetUserGroups(ctx context.Context, userID primitive.ObjectID) ([]*models.Group, error) {

@@ -180,6 +180,23 @@ func (s *MessageService) handleGroupMessage(ctx context.Context, msg *models.Mes
 		msg.DeliveredTo = []primitive.ObjectID{}
 	}
 
+	// Fetch sender details to populate the response for the frontend
+	sender, err := s.userRepo.FindUserByID(ctx, msg.SenderID)
+	if err == nil {
+		msg.Sender = &models.SafeUserResponse{
+			ID:       sender.ID,
+			Username: sender.Username,
+			FullName: sender.FullName,
+			Avatar:   sender.Avatar,
+		}
+		// Also ensure SenderName is set if missing (fallback)
+		if msg.SenderName == "" {
+			msg.SenderName = sender.Username
+		}
+	} else {
+		log.Printf("Failed to fetch sender details for message broadcast: %v", err)
+	}
+
 	msgBytesOptimistic, err := json.Marshal(msg)
 	if err == nil {
 		s.redisClient.Publish(ctx, "messages", msgBytesOptimistic)

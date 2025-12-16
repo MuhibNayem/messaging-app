@@ -161,7 +161,7 @@ func main() {
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
 	userService := services.NewUserService(userRepo, redisClient.GetClient())
-	groupService := services.NewGroupService(groupRepo, userRepo)
+	groupService := services.NewGroupService(groupRepo, userRepo, kafkaProducer)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
 	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
 	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService)
@@ -385,7 +385,7 @@ func main() {
 	{
 		groupRoutes.POST("", groupController.CreateGroup)
 		groupRoutes.GET("/:id", groupController.GetGroup)
-		groupRoutes.PATCH("/:id", groupController.UpdateGroup)
+		groupRoutes.PUT("/:id", groupController.UpdateGroup)
 
 		// Group members
 		groupRoutes.POST("/:id/members", groupController.AddMember)

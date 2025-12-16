@@ -29,11 +29,13 @@ func NewGroupController(groupService *services.GroupService, userService *servic
 type CreateGroupRequest struct {
 	Name      string   `json:"name" binding:"required,min=3,max=50"`
 	MemberIDs []string `json:"member_ids" binding:"required,min=1,dive"`
+	Avatar    string   `json:"avatar"`
 }
 
 type GroupResponse struct {
 	ID             primitive.ObjectID   `json:"id"`
 	Name           string               `json:"name"`
+	Avatar         string               `json:"avatar,omitempty"`
 	Creator        UserShortResponse    `json:"creator"`
 	Members        []UserShortResponse  `json:"members"`
 	PendingMembers []UserShortResponse  `json:"pending_members"`
@@ -55,7 +57,8 @@ type AddMemberRequest struct {
 }
 
 type UpdateGroupRequest struct {
-	Name string `json:"name" binding:"omitempty,min=3,max=50"`
+	Name   string `json:"name" binding:"omitempty,min=3,max=50"`
+	Avatar string `json:"avatar"`
 }
 
 // Handlers
@@ -83,7 +86,7 @@ func (c *GroupController) CreateGroup(ctx *gin.Context) {
 		memberObjectIDs[i] = id
 	}
 
-	group, err := c.groupService.CreateGroup(ctx, userID, req.Name, memberObjectIDs)
+	group, err := c.groupService.CreateGroup(ctx, userID, req.Name, req.Avatar, memberObjectIDs)
 	if err != nil {
 		utils.RespondWithError(ctx, utils.GetStatusCode(err), err.Error())
 		return
@@ -235,6 +238,9 @@ func (c *GroupController) UpdateGroup(ctx *gin.Context) {
 	updates := make(map[string]interface{})
 	if req.Name != "" {
 		updates["name"] = req.Name
+	}
+	if req.Avatar != "" {
+		updates["avatar"] = req.Avatar
 	}
 
 	if len(updates) == 0 {
