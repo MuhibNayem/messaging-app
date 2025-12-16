@@ -33,6 +33,7 @@ type User struct {
 	EncryptedPrivateKey  string               `bson:"encrypted_private_key,omitempty" json:"encrypted_private_key,omitempty"` // E2EE Backup
 	KeyBackupIV          string               `bson:"key_backup_iv,omitempty" json:"key_backup_iv,omitempty"`                 // E2EE Backup
 	KeyBackupSalt        string               `bson:"key_backup_salt,omitempty" json:"key_backup_salt,omitempty"`             // E2EE Backup
+	IsEncryptionEnabled  bool                 `bson:"is_encryption_enabled" json:"is_encryption_enabled"`                     // Persistent Toggle
 }
 
 type NotificationSettings struct {
@@ -124,18 +125,19 @@ type GroupResponse struct {
 	UpdatedAt      time.Time           `json:"updated_at"`
 }
 type UserUpdateRequest struct {
-	Username        string     `json:"username,omitempty"`
-	Email           string     `json:"email,omitempty"`
-	CurrentPassword string     `json:"current_password,omitempty"`
-	NewPassword     string     `json:"new_password,omitempty"`
-	FullName        string     `json:"full_name,omitempty"`
-	Bio             string     `json:"bio,omitempty"`
-	DateOfBirth     *time.Time `json:"date_of_birth,omitempty"`
-	Gender          string     `json:"gender,omitempty"`
-	Location        string     `json:"location,omitempty"`
-	PhoneNumber     string     `json:"phone_number,omitempty"`
-	Avatar          string     `json:"avatar,omitempty"`
-	CoverPicture    string     `json:"cover_picture,omitempty"`
+	Username            string     `json:"username,omitempty"`
+	Email               string     `json:"email,omitempty"`
+	CurrentPassword     string     `json:"current_password,omitempty"`
+	NewPassword         string     `json:"new_password,omitempty"`
+	FullName            string     `json:"full_name,omitempty"`
+	Bio                 string     `json:"bio,omitempty"`
+	DateOfBirth         *time.Time `json:"date_of_birth,omitempty"`
+	Gender              string     `json:"gender,omitempty"`
+	Location            string     `json:"location,omitempty"`
+	PhoneNumber         string     `json:"phone_number,omitempty"`
+	Avatar              string     `json:"avatar,omitempty"`
+	CoverPicture        string     `json:"cover_picture,omitempty"`
+	IsEncryptionEnabled *bool      `json:"is_encryption_enabled,omitempty"` // Pointer to allow false
 }
 
 type UserListResponse struct {
@@ -166,6 +168,7 @@ type SafeUserResponse struct {
 	EncryptedPrivateKey string               `json:"encrypted_private_key,omitempty"`
 	KeyBackupIV         string               `json:"key_backup_iv,omitempty"`
 	KeyBackupSalt       string               `json:"key_backup_salt,omitempty"`
+	IsEncryptionEnabled bool                 `json:"is_encryption_enabled"`
 }
 
 type UserPrivacySettings struct {
@@ -267,25 +270,27 @@ func (u *User) SetDefaultPrivacySettings() {
 		CanTagMeInPosts:         PrivacySettingEveryone,
 		LastUpdated:             time.Now(),
 	}
+	u.IsEncryptionEnabled = false // Default to disabled
 }
 
 func (u *User) ToSafeResponse() SafeUserResponse {
 	return SafeUserResponse{
-		ID:               u.ID,
-		Username:         u.Username,
-		Email:            u.Email,
-		Avatar:           u.Avatar,
-		FullName:         u.FullName,
-		Bio:              u.Bio,
-		DateOfBirth:      u.DateOfBirth,
-		Gender:           u.Gender,
-		Location:         u.Location,
-		PhoneNumber:      u.PhoneNumber,
-		Friends:          u.Friends,
-		TwoFactorEnabled: u.TwoFactorEnabled,
-		EmailVerified:    u.EmailVerified,
-		IsActive:         u.IsActive,
-		LastLogin:        u.LastLogin,
-		CreatedAt:        u.CreatedAt,
+		ID:                  u.ID,
+		Username:            u.Username,
+		Email:               u.Email,
+		Avatar:              u.Avatar,
+		FullName:            u.FullName,
+		Bio:                 u.Bio,
+		DateOfBirth:         u.DateOfBirth,
+		Gender:              u.Gender,
+		Location:            u.Location,
+		PhoneNumber:         u.PhoneNumber,
+		Friends:             u.Friends,
+		TwoFactorEnabled:    u.TwoFactorEnabled,
+		EmailVerified:       u.EmailVerified,
+		IsActive:            u.IsActive,
+		LastLogin:           u.LastLogin,
+		KeyBackupSalt:       u.KeyBackupSalt,
+		IsEncryptionEnabled: u.IsEncryptionEnabled,
 	}
 }

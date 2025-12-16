@@ -113,6 +113,9 @@ func (s *UserService) UpdateUser(ctx context.Context, id primitive.ObjectID, upd
 	if update.CoverPicture != "" {
 		updateData["cover_picture"] = update.CoverPicture
 	}
+	if update.IsEncryptionEnabled != nil {
+		updateData["is_encryption_enabled"] = *update.IsEncryptionEnabled
+	}
 
 	updatedUser, err := s.userRepo.UpdateUser(ctx, id, updateData)
 	if err != nil {
