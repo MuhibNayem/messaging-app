@@ -217,7 +217,7 @@ func main() {
 
 	// Custom CORS configuration
 	corsConfig := cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173"}, // Allow your SvelteKit frontend origin
+		AllowAllOrigins:  true, // Allow any origin (e.g. ngrok, localtunnel, valid for dev)
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
