@@ -306,6 +306,7 @@ func main() {
 		userRoutes.PUT("/me/deactivate", userController.DeactivateAccount)             // Deactivate current user account
 		userRoutes.PUT("/me/privacy", userController.UpdatePrivacySettings)            // Update current user privacy
 		userRoutes.PUT("/me/notifications", userController.UpdateNotificationSettings) // Update notification settings
+		userRoutes.PUT("/me/keys", userController.UpdatePublicKey)                     // Update E2EE public key
 		userRoutes.GET("/me/groups", groupController.GetUserGroups)                    // Get current user's groups
 
 		userRoutes.GET("", userController.ListUsers)                 // List all users

@@ -97,6 +97,7 @@ func (c *UserController) GetUserByID(ctx *gin.Context) {
 		Bio:          user.Bio,
 		Location:     user.Location,
 		CreatedAt:    user.CreatedAt,
+		PublicKey:    user.PublicKey, // E2EE Public Key
 	}
 	// Note: We might want to filter fields based on PrivacySettings here in the future
 	ctx.JSON(http.StatusOK, publicUser)
@@ -242,6 +243,46 @@ func (c *UserController) ListUsers(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, response)
+}
+
+// UpdatePublicKey godoc
+// @Summary Update user's E2EE public key and backup
+// @Security BearerAuth
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param body body map[string]string true "Keys {public_key, encrypted_private_key, key_backup_iv, key_backup_salt}"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/user/keys [put]
+func (c *UserController) UpdatePublicKey(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	var req struct {
+		PublicKey           string `json:"public_key" binding:"required"`
+		EncryptedPrivateKey string `json:"encrypted_private_key"`
+		KeyBackupIV         string `json:"key_backup_iv"`
+		KeyBackupSalt       string `json:"key_backup_salt"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = c.userService.UpdatePublicKey(ctx.Request.Context(), objID, req.PublicKey, req.EncryptedPrivateKey, req.KeyBackupIV, req.KeyBackupSalt)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
 }
 
 // UpdateEmail godoc

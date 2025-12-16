@@ -54,6 +54,8 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID primitive.Obj
 		Content:     req.Content,
 		ContentType: req.ContentType,
 		MediaURLs:   req.MediaURLs,
+		IsEncrypted: req.IsEncrypted,
+		IV:          req.IV,
 	}
 
 	if req.ReplyToMessageID != "" {

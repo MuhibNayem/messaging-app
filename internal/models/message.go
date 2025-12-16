@@ -37,6 +37,9 @@ type Message struct {
 	Sender           *SafeUserResponse    `bson:"sender,omitempty" json:"sender,omitempty"`
 	CreatedAt        time.Time            `bson:"created_at" json:"created_at"`
 	UpdatedAt        time.Time            `bson:"updated_at,omitempty" json:"updated_at,omitempty"`
+	IsEncrypted      bool                 `bson:"is_encrypted" json:"is_encrypted"`                         // E2EE
+	IV               string               `bson:"iv,omitempty" json:"iv,omitempty"`                         // E2EE
+	EncryptedKeys    map[string]string    `bson:"encrypted_keys,omitempty" json:"encrypted_keys,omitempty"` // E2EE
 }
 
 type MessageQuery struct {
@@ -57,6 +60,9 @@ type MessageRequest struct {
 	ContentType      string   `json:"content_type" form:"content_type"`
 	MediaURLs        []string `json:"media_urls,omitempty" form:"media_urls"`
 	ReplyToMessageID string   `json:"reply_to_message_id,omitempty" form:"reply_to_message_id"` // New field for replies
+	IsEncrypted      bool     `json:"is_encrypted" form:"is_encrypted"`
+	IV               string   `json:"iv,omitempty" form:"iv"`
+	EncryptedKeys    string   `json:"encrypted_keys,omitempty" form:"encrypted_keys"` // JSON string for map
 }
 
 type MessageResponse struct {
@@ -144,13 +150,14 @@ func IsValidContentType(contentType string) bool {
 
 // ConversationSummary represents a summary of a chat conversation for the list view
 type ConversationSummary struct {
-	ID                    primitive.ObjectID `bson:"_id" json:"id"`
-	Name                  string             `bson:"name" json:"name"`
-	Avatar                string             `bson:"avatar" json:"avatar,omitempty"`
-	IsGroup               bool               `bson:"is_group" json:"is_group"`
-	LastMessageSenderID   primitive.ObjectID `bson:"last_message_sender_id" json:"last_message_sender_id,omitempty"`
-	LastMessageSenderName string             `bson:"last_message_sender_name" json:"last_message_sender_name,omitempty"`
-	LastMessageContent    string             `bson:"last_message_content" json:"last_message_content,omitempty"`
-	LastMessageTimestamp  *time.Time         `bson:"last_message_timestamp" json:"last_message_timestamp,omitempty"`
-	UnreadCount           int64              `bson:"unread_count" json:"unread_count"`
+	ID                     primitive.ObjectID `bson:"_id" json:"id"`
+	Name                   string             `bson:"name" json:"name"`
+	Avatar                 string             `bson:"avatar" json:"avatar,omitempty"`
+	IsGroup                bool               `bson:"is_group" json:"is_group"`
+	LastMessageSenderID    primitive.ObjectID `bson:"last_message_sender_id" json:"last_message_sender_id,omitempty"`
+	LastMessageSenderName  string             `bson:"last_message_sender_name" json:"last_message_sender_name,omitempty"`
+	LastMessageContent     string             `bson:"last_message_content" json:"last_message_content,omitempty"`
+	LastMessageTimestamp   *time.Time         `bson:"last_message_timestamp" json:"last_message_timestamp,omitempty"`
+	LastMessageIsEncrypted bool               `bson:"last_message_is_encrypted" json:"last_message_is_encrypted"`
+	UnreadCount            int64              `bson:"unread_count" json:"unread_count"`
 }

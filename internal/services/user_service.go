@@ -328,6 +328,32 @@ func (s *UserService) DeactivateAccount(ctx context.Context, userID primitive.Ob
 	return nil
 }
 
+// UpdatePublicKey updates a user's E2EE public key and encrypted private key backup
+func (s *UserService) UpdatePublicKey(ctx context.Context, userID primitive.ObjectID, publicKey, encryptedPrivateKey, iv, salt string) error {
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("user not found")
+	}
+
+	updateData := bson.M{
+		"public_key":            publicKey,
+		"encrypted_private_key": encryptedPrivateKey,
+		"key_backup_iv":         iv,
+		"key_backup_salt":       salt,
+		"updated_at":            time.Now(),
+	}
+
+	_, err = s.userRepo.UpdateUser(ctx, userID, updateData)
+	if err != nil {
+		return fmt.Errorf("failed to update keys: %w", err)
+	}
+
+	return nil
+}
+
 // GetUsersPresence retrieves the presence status for a list of user IDs
 func (s *UserService) GetUsersPresence(ctx context.Context, userIDs []primitive.ObjectID) (map[string]map[string]interface{}, error) {
 	presenceMap := make(map[string]map[string]interface{})

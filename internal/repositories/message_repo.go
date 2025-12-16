@@ -127,6 +127,8 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 			"reply_to_message_id": 1,
 			"created_at":          1,
 			"updated_at":          1,
+			"is_encrypted":        1,
+			"iv":                  1,
 		}}},
 		bson.D{{Key: "$sort", Value: bson.D{{Key: "created_at", Value: -1}}}}, // Sort by creation time descending
 		bson.D{{Key: "$skip", Value: int64((query.Page - 1) * query.Limit)}},

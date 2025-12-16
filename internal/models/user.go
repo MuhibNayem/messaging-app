@@ -29,6 +29,10 @@ type User struct {
 	UpdatedAt            time.Time            `bson:"updated_at" json:"updated_at"`
 	PrivacySettings      UserPrivacySettings  `bson:"privacy_settings" json:"privacy_settings"`
 	NotificationSettings NotificationSettings `bson:"notification_settings" json:"notification_settings"`
+	PublicKey            string               `bson:"public_key,omitempty" json:"public_key,omitempty"`                       // E2EE Public Key
+	EncryptedPrivateKey  string               `bson:"encrypted_private_key,omitempty" json:"encrypted_private_key,omitempty"` // E2EE Backup
+	KeyBackupIV          string               `bson:"key_backup_iv,omitempty" json:"key_backup_iv,omitempty"`                 // E2EE Backup
+	KeyBackupSalt        string               `bson:"key_backup_salt,omitempty" json:"key_backup_salt,omitempty"`             // E2EE Backup
 }
 
 type NotificationSettings struct {
@@ -99,11 +103,12 @@ type RefreshRequest struct {
 }
 
 type UserShortResponse struct {
-	ID       primitive.ObjectID `bson:"_id" json:"id"`
-	Username string             `bson:"username" json:"username"`
-	Email    string             `bson:"email" json:"email"`
-	FullName string             `bson:"full_name,omitempty" json:"full_name,omitempty"`
-	Avatar   string             `bson:"avatar,omitempty" json:"avatar,omitempty"`
+	ID        primitive.ObjectID `bson:"_id" json:"id"`
+	Username  string             `bson:"username" json:"username"`
+	Email     string             `bson:"email" json:"email"`
+	FullName  string             `bson:"full_name,omitempty" json:"full_name,omitempty"`
+	Avatar    string             `bson:"avatar,omitempty" json:"avatar,omitempty"`
+	PublicKey string             `bson:"public_key,omitempty" json:"public_key,omitempty"`
 }
 
 type GroupResponse struct {
@@ -141,22 +146,26 @@ type UserListResponse struct {
 }
 
 type SafeUserResponse struct {
-	ID               primitive.ObjectID   `bson:"_id" json:"id"`
-	Username         string               `json:"username"`
-	Email            string               `json:"email"`
-	Avatar           string               `json:"avatar,omitempty"`
-	FullName         string               `json:"full_name,omitempty"`
-	Bio              string               `json:"bio,omitempty"`
-	DateOfBirth      *time.Time           `json:"date_of_birth,omitempty"`
-	Gender           string               `json:"gender,omitempty"`
-	Location         string               `json:"location,omitempty"`
-	PhoneNumber      string               `json:"phone_number,omitempty"`
-	Friends          []primitive.ObjectID `json:"friends,omitempty"`
-	TwoFactorEnabled bool                 `json:"two_factor_enabled"`
-	EmailVerified    bool                 `json:"email_verified"`
-	IsActive         bool                 `json:"is_active"`
-	LastLogin        *time.Time           `json:"last_login,omitempty"`
-	CreatedAt        time.Time            `json:"created_at"`
+	ID                  primitive.ObjectID   `bson:"_id" json:"id"`
+	Username            string               `json:"username"`
+	Email               string               `json:"email"`
+	Avatar              string               `json:"avatar,omitempty"`
+	FullName            string               `json:"full_name,omitempty"`
+	Bio                 string               `json:"bio,omitempty"`
+	DateOfBirth         *time.Time           `json:"date_of_birth,omitempty"`
+	Gender              string               `json:"gender,omitempty"`
+	Location            string               `json:"location,omitempty"`
+	PhoneNumber         string               `json:"phone_number,omitempty"`
+	Friends             []primitive.ObjectID `json:"friends,omitempty"`
+	TwoFactorEnabled    bool                 `json:"two_factor_enabled"`
+	EmailVerified       bool                 `json:"email_verified"`
+	IsActive            bool                 `json:"is_active"`
+	LastLogin           *time.Time           `json:"last_login,omitempty"`
+	CreatedAt           time.Time            `json:"created_at"`
+	PublicKey           string               `json:"public_key,omitempty"`
+	EncryptedPrivateKey string               `json:"encrypted_private_key,omitempty"`
+	KeyBackupIV         string               `json:"key_backup_iv,omitempty"`
+	KeyBackupSalt       string               `json:"key_backup_salt,omitempty"`
 }
 
 type UserPrivacySettings struct {

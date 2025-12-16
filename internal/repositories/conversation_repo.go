@@ -125,8 +125,9 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 					}},
 				},
 			},
-			"last_message_timestamp": "$last_message_dm.created_at",
-			"last_message_sender_id": "$last_message_dm.sender_id",
+			"last_message_timestamp":    "$last_message_dm.created_at",
+			"last_message_sender_id":    "$last_message_dm.sender_id",
+			"last_message_is_encrypted": bson.M{"$ifNull": bson.A{"$last_message_dm.is_encrypted", false}},
 			"unread_count": bson.M{
 				"$ifNull": bson.A{
 					bson.M{"$arrayElemAt": bson.A{"$unread_count_result.unread", 0}},
@@ -214,9 +215,10 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 					}},
 				},
 			},
-			"last_message_timestamp":   "$last_message_group.created_at",
-			"last_message_sender_id":   "$last_message_group.sender_id",
-			"last_message_sender_name": "$last_message_sender_info.username",
+			"last_message_timestamp":    "$last_message_group.created_at",
+			"last_message_sender_id":    "$last_message_group.sender_id",
+			"last_message_sender_name":  "$last_message_sender_info.username",
+			"last_message_is_encrypted": bson.M{"$ifNull": bson.A{"$last_message_group.is_encrypted", false}},
 			"unread_count": bson.M{
 				"$ifNull": bson.A{
 					bson.M{"$arrayElemAt": bson.A{"$unread_count_result.unread", 0}},
