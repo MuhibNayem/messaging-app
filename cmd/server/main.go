@@ -56,8 +56,9 @@ func createIndexes(ctx context.Context, db *mongo.Database) error {
 		Keys: bson.D{
 			{Key: "content", Value: "text"},
 			{Key: "hashtags", Value: "text"},
+			{Key: "community_id", Value: 1}, // Index for efficient filtering by community
 		},
-		Options: options.Index().SetName("post_text_index").SetWeights(bson.D{
+		Options: options.Index().SetName("post_text_index_v2").SetWeights(bson.D{
 			{Key: "content", Value: 10},
 			{Key: "hashtags", Value: 5},
 		}),
@@ -76,7 +77,8 @@ func createIndexes(ctx context.Context, db *mongo.Database) error {
 	}
 	log.Println("User text index created successfully.")
 
-	// Create indexes for posts collection
+	_, _ = db.Collection("posts").Indexes().DropOne(ctx, "post_text_index")
+
 	_, err = db.Collection("posts").Indexes().CreateOne(ctx, postIndexModel)
 	if err != nil {
 		return fmt.Errorf("failed to create post text index: %w", err)
@@ -149,6 +151,7 @@ func main() {
 	privacyRepo := repositories.NewPrivacyRepository(db)
 	notificationRepo := repositories.NewNotificationRepository(db)
 	conversationRepo := conversationRepositories.NewConversationRepository(db, userRepo, groupRepo)
+	communityRepo := repositories.NewCommunityRepository(db)
 
 	// Initialize Kafka Producer
 	kafkaProducer := kafka.NewMessageProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -173,6 +176,7 @@ func main() {
 	}
 	searchService := services.NewSearchService(userRepo, feedRepo) // Initialize SearchService
 	conversationService := conversationServices.NewConversationService(conversationRepo)
+	communityService := services.NewCommunityService(communityRepo, userRepo)
 
 	// Initialize Controllers
 	authController := controllers.NewAuthController(authService)
@@ -186,6 +190,7 @@ func main() {
 	notificationController := controllers.NewNotificationController(notificationService) // Initialize NotificationController
 	conversationController := conversationControllers.NewConversationController(conversationService)
 	uploadController := controllers.NewUploadController(storageService)
+	communityController := controllers.NewCommunityController(communityService)
 
 	// Initialize WebSocket Hub
 	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, friendshipRepo, messageRepo, messageService)
@@ -310,7 +315,7 @@ func main() {
 	}
 
 	// Feed Routes
-	feedRoutes := api.Group("/feed")
+	feedRoutes := api.Group("")
 	{
 		// Post routes
 		feedRoutes.POST("/posts", feedController.CreatePost)
@@ -437,6 +442,24 @@ func main() {
 		notificationRoutes.GET("", notificationController.ListNotifications)
 		notificationRoutes.PUT("/:id/read", notificationController.MarkNotificationAsRead)
 		notificationRoutes.GET("/unread", notificationController.GetUnreadNotificationCount)
+	}
+
+	// Community Routes
+	communityRoutes := api.Group("/communities")
+	{
+		communityRoutes.POST("", communityController.CreateCommunity)
+		communityRoutes.GET("", communityController.ListCommunities)
+		communityRoutes.GET("/user/me", communityController.GetUserCommunities) // Get current user's communities
+		communityRoutes.GET("/user/:userId", communityController.GetUserCommunities)
+		communityRoutes.GET("/:id", communityController.GetCommunity)
+		communityRoutes.PUT("/:id/settings", communityController.UpdateSettings)
+		communityRoutes.POST("/:id/join", communityController.JoinCommunity)
+		communityRoutes.POST("/:id/leave", communityController.LeaveCommunity)
+		communityRoutes.POST("/:id/approve", communityController.ApproveMember)
+		communityRoutes.POST("/:id/reject", communityController.RejectMember)
+		communityRoutes.GET("/:id/members", communityController.ListMembers)
+		communityRoutes.GET("/:id/admins", communityController.GetAdmins)
+		communityRoutes.GET("/:id/pending-members", communityController.GetPendingMembers)
 	}
 
 	// WebSocket endpoint

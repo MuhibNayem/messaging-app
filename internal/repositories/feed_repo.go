@@ -187,6 +187,9 @@ func (r *FeedRepository) ListPosts(ctx context.Context, filter bson.M, opts *opt
 	if err := cur.All(ctx, &posts); err != nil {
 		return nil, err
 	}
+	if posts == nil {
+		posts = []models.Post{}
+	}
 	return posts, nil
 }
 

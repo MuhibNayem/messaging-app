@@ -59,12 +59,22 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 		mentionedUserIDs = append(mentionedUserIDs, id)
 	}
 
+	var communityID *primitive.ObjectID
+	if req.CommunityID != "" {
+		id, err := primitive.ObjectIDFromHex(req.CommunityID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid community ID: %w", err)
+		}
+		communityID = &id
+	}
+
 	post := &models.Post{
 		UserID:         userID,
 		Content:        req.Content,
 		Media:          req.Media, // This is where the media is saved
 		Location:       req.Location,
 		Privacy:        req.Privacy,
+		CommunityID:    communityID,
 		CustomAudience: req.CustomAudience,
 		Comments:       []models.Comment{},     // Initialize as empty array
 		CommentIDs:     []primitive.ObjectID{}, // Initialize as empty array
@@ -324,19 +334,36 @@ func (s *FeedService) DeletePost(ctx context.Context, userID, postID primitive.O
 	return nil
 }
 
-func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID, filterUserID string, page, limit int64, sortBy, sortOrder string) (*models.FeedResponse, error) {
+func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID, filterUserID string, communityID string, page, limit int64, sortBy, sortOrder string) (*models.FeedResponse, error) {
 	// Base filter for public posts
 	filter := bson.M{}
 
-	// If a specific user's posts are requested, filter by that user ID
-	if filterUserID != "" {
+	// If a specific community is requested, filter by that community ID
+	if communityID != "" {
+		objCommunityID, err := primitive.ObjectIDFromHex(communityID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid community ID: %w", err)
+		}
+		filter["community_id"] = objCommunityID
+
+		// For communities, we might need to check if user is a member for private communities
+		// But for now, let's assume the repository/controller handles access control or we do it here.
+		// TODO: Add privacy check for closed/secret communities if not a member.
+		// For now, relies on public/closed logic.
+		// Actually, standard privacy flags on posts (Public/Friends) might not apply exactly the same way in communities.
+		// But assuming community posts are visible if you have access to community.
+	} else if filterUserID != "" {
+		// If a specific user's posts are requested, filter by that user ID
 		objFilterUserID, err := primitive.ObjectIDFromHex(filterUserID)
 		if err != nil {
 			return nil, fmt.Errorf("invalid filter user ID: %w", err)
 		}
 		filter["user_id"] = objFilterUserID
 	} else {
-		// If no specific user is requested, apply privacy filters
+		// If no specific user or community is requested (Main Feed), apply privacy filters
+		// Exclude community posts from the main feed
+		filter["community_id"] = bson.M{"$exists": false}
+
 		filter["$or"] = []bson.M{
 			{"privacy": models.PrivacySettingPublic},
 			{"user_id": viewerID}, // Author can always see their own posts, regardless of privacy

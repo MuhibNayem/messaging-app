@@ -20,6 +20,7 @@ type Post struct {
 	Media                  []MediaItem            `bson:"media,omitempty" json:"media,omitempty"`
 	Location               string                 `bson:"location,omitempty" json:"location,omitempty"`
 	Privacy                PrivacySettingType     `bson:"privacy" json:"privacy"`                                     // PUBLIC, FRIENDS, ONLY_ME, CUSTOM
+	CommunityID            *primitive.ObjectID    `bson:"community_id,omitempty" json:"community_id,omitempty"`       // If post belongs to a community
 	CustomAudience         []primitive.ObjectID   `bson:"custom_audience,omitempty" json:"custom_audience,omitempty"` // For CUSTOM privacy
 	CommentIDs             []primitive.ObjectID   `bson:"comment_ids" json:"-"`                                       // Stored as IDs in DB, not directly exposed in JSON
 	Comments               []Comment              `bson:"comments,omitempty" json:"comments"`                         // Populated full Comment objects, not stored in DB
@@ -97,13 +98,14 @@ type Reaction struct {
 
 // DTOs for Feed
 type CreatePostRequest struct {
-	Content        string               `json:"content" binding:"required"`
-	Media          []MediaItem          `json:"media,omitempty"`
-	Location       string               `json:"location,omitempty"`
-	Privacy        PrivacySettingType   `json:"privacy" binding:"required"`
-	CustomAudience []primitive.ObjectID `json:"custom_audience,omitempty"`
-	Mentions       []primitive.ObjectID `json:"mentions,omitempty"`
-	Hashtags       []string             `json:"hashtags,omitempty"`
+	Content        string               `json:"content" form:"content" binding:"required"`
+	Media          []MediaItem          `json:"media,omitempty"` // Media is handled separately for multipart
+	Location       string               `json:"location,omitempty" form:"location"`
+	Privacy        PrivacySettingType   `json:"privacy" form:"privacy" binding:"required"`
+	CommunityID    string               `json:"community_id,omitempty" form:"community_id"` // Optional community ID
+	CustomAudience []primitive.ObjectID `json:"custom_audience,omitempty" form:"custom_audience"`
+	Mentions       []primitive.ObjectID `json:"mentions,omitempty" form:"mentions"`
+	Hashtags       []string             `json:"hashtags,omitempty" form:"hashtags"`
 }
 
 type UpdatePostRequest struct {

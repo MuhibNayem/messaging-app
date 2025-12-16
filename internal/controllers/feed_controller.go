@@ -57,6 +57,7 @@ func (c *FeedController) CreatePost(ctx *gin.Context) {
 		// Extract content and privacy from form fields
 		req.Content = ctx.PostForm("content")
 		req.Location = ctx.PostForm("location")
+		req.CommunityID = ctx.PostForm("community_id")
 		privacyStr := ctx.PostForm("privacy")
 
 		// Extract mentions (assuming []string of hex IDs)
@@ -244,6 +245,7 @@ func (c *FeedController) ListPosts(ctx *gin.Context) {
 	sortBy := ctx.DefaultQuery("sortBy", "created_at")
 	sortOrder := ctx.DefaultQuery("sortOrder", "desc")
 	filterUserID := ctx.Query("user_id")
+	communityID := ctx.Query("community_id")
 
 	if page < 1 {
 		page = 1
@@ -252,7 +254,7 @@ func (c *FeedController) ListPosts(ctx *gin.Context) {
 		limit = 20
 	}
 
-	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, filterUserID, page, limit, sortBy, sortOrder)
+	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, filterUserID, communityID, page, limit, sortBy, sortOrder)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
