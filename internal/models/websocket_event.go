@@ -50,4 +50,5 @@ type CallSignalEvent struct {
 	SignalType string          `json:"signal_type"` // OFFER, ANSWER, ICE_CANDIDATE, END_CALL, REJECT_CALL, BUSY
 	SignalData json.RawMessage `json:"signal_data,omitempty"`
 	CallerID   string          `json:"caller_id,omitempty"` // Added by server when forwarding
+	CallType   string          `json:"call_type,omitempty"` // 'audio' or 'video'
 }
