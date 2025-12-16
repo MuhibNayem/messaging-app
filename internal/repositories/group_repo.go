@@ -94,6 +94,18 @@ func (r *GroupRepository) AddAdmin(ctx context.Context, groupID, userID primitiv
 	return err
 }
 
+func (r *GroupRepository) RemoveAdmin(ctx context.Context, groupID, userID primitive.ObjectID) error {
+	_, err := r.db.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$pull": bson.M{"admins": userID},
+			"$set":  bson.M{"updated_at": time.Now()},
+		},
+	)
+	return err
+}
+
 func (r *GroupRepository) RemoveMember(ctx context.Context, groupID, userID primitive.ObjectID) error {
 	_, err := r.db.Collection("groups").UpdateOne(
 		ctx,

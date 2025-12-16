@@ -98,6 +98,26 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
+type UserShortResponse struct {
+	ID       primitive.ObjectID `bson:"_id" json:"id"`
+	Username string             `bson:"username" json:"username"`
+	Email    string             `bson:"email" json:"email"`
+	FullName string             `bson:"full_name,omitempty" json:"full_name,omitempty"`
+	Avatar   string             `bson:"avatar,omitempty" json:"avatar,omitempty"`
+}
+
+type GroupResponse struct {
+	ID             primitive.ObjectID  `json:"id"`
+	Name           string              `json:"name"`
+	Avatar         string              `json:"avatar,omitempty"`
+	Creator        UserShortResponse   `json:"creator"`
+	Members        []UserShortResponse `json:"members"`
+	PendingMembers []UserShortResponse `json:"pending_members"`
+	Admins         []UserShortResponse `json:"admins"`
+	Settings       GroupSettings       `json:"settings"`
+	CreatedAt      time.Time           `json:"created_at"`
+	UpdatedAt      time.Time           `json:"updated_at"`
+}
 type UserUpdateRequest struct {
 	Username        string     `json:"username,omitempty"`
 	Email           string     `json:"email,omitempty"`
@@ -259,11 +279,4 @@ func (u *User) ToSafeResponse() SafeUserResponse {
 		LastLogin:        u.LastLogin,
 		CreatedAt:        u.CreatedAt,
 	}
-}
-
-type UserShortResponse struct {
-	ID       primitive.ObjectID `bson:"_id" json:"id"`
-	Username string             `bson:"username" json:"username"`
-	FullName string             `bson:"full_name,omitempty" json:"full_name,omitempty"`
-	Avatar   string             `bson:"avatar,omitempty" json:"avatar,omitempty"`
 }

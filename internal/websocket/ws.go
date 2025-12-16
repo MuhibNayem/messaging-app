@@ -314,6 +314,29 @@ func (h *Hub) run() {
 
 					log.Printf("Broadcasted PostCreated event for post %s (Privacy: %s)", post.ID.Hex(), post.Privacy)
 
+				case "GROUP_UPDATED", "GROUP_CREATED":
+					var group models.GroupResponse
+					if err := json.Unmarshal(event.Data, &group); err != nil {
+						// It might be a map or response struct. Let's try models.Group first.
+						// If GroupService sends models.Group, it should work.
+						log.Printf("Error unmarshaling GROUP_UPDATED data: %v", err)
+						return
+					}
+
+					// Marshal the FULL event (type + data) to ensure frontend receives {type:..., data:...}
+					eventBytes, err := json.Marshal(event)
+					if err != nil {
+						log.Printf("Error marshaling GROUP_UPDATED event wrapper: %v", err)
+						return
+					}
+
+					// Broadcast to all members using the Members list in the group object
+					// Note: If members list is large, might want to optimize, but for now this is fine.
+					for _, member := range group.Members {
+						h.sendToUser(member.ID.Hex(), eventBytes)
+					}
+					log.Printf("Broadcasted GROUP_UPDATED event for group %s to %d members", group.ID.Hex(), len(group.Members))
+
 				case "PostUpdated":
 					var post models.Post
 					if err := json.Unmarshal(event.Data, &post); err != nil {

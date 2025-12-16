@@ -7,7 +7,6 @@ import (
 	"messaging-app/internal/services"
 	"messaging-app/pkg/utils"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -30,26 +29,6 @@ type CreateGroupRequest struct {
 	Name      string   `json:"name" binding:"required,min=3,max=50"`
 	MemberIDs []string `json:"member_ids" binding:"required,min=1,dive"`
 	Avatar    string   `json:"avatar"`
-}
-
-type GroupResponse struct {
-	ID             primitive.ObjectID   `json:"id"`
-	Name           string               `json:"name"`
-	Avatar         string               `json:"avatar,omitempty"`
-	Creator        UserShortResponse    `json:"creator"`
-	Members        []UserShortResponse  `json:"members"`
-	PendingMembers []UserShortResponse  `json:"pending_members"`
-	Admins         []UserShortResponse  `json:"admins"`
-	Settings       models.GroupSettings `json:"settings"`
-	CreatedAt      time.Time            `json:"created_at"`
-	UpdatedAt      time.Time            `json:"updated_at"`
-}
-
-type UserShortResponse struct {
-	ID       primitive.ObjectID `json:"id"`
-	Username string             `json:"username"`
-	Email    string             `json:"email"`
-	Avatar   string             `json:"avatar"`
 }
 
 type AddMemberRequest struct {
@@ -202,7 +181,7 @@ func (c *GroupController) RemoveMember(ctx *gin.Context) {
 		return
 	}
 
-	memberID, err := primitive.ObjectIDFromHex(ctx.Param("user_id"))
+	memberID, err := primitive.ObjectIDFromHex(ctx.Param("userId"))
 	if err != nil {
 		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid user ID")
 		return
@@ -281,7 +260,7 @@ func (c *GroupController) GetUserGroups(ctx *gin.Context) {
 		return
 	}
 
-	responses := make([]GroupResponse, len(groups))
+	responses := make([]models.GroupResponse, len(groups))
 	for i, group := range groups {
 		response, err := c.convertGroupToResponse(ctx, group)
 		if err != nil {
@@ -410,7 +389,7 @@ func (c *GroupController) RemoveAdmin(ctx *gin.Context) {
 		return
 	}
 
-	targetID, err := primitive.ObjectIDFromHex(ctx.Param("user_id"))
+	targetID, err := primitive.ObjectIDFromHex(ctx.Param("userId"))
 	if err != nil {
 		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid user ID")
 		return
@@ -456,19 +435,19 @@ func (c *GroupController) UpdateGroupSettings(ctx *gin.Context) {
 }
 
 // Helper methods
-func (c *GroupController) convertGroupToResponse(ctx context.Context, group *models.Group) (*GroupResponse, error) {
+func (c *GroupController) convertGroupToResponse(ctx context.Context, group *models.Group) (*models.GroupResponse, error) {
 	creator, err := c.userService.GetUserByID(ctx, group.CreatorID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get creator details")
 	}
 
-	members := make([]UserShortResponse, len(group.Members))
+	members := make([]models.UserShortResponse, len(group.Members))
 	for i, memberID := range group.Members {
 		user, err := c.userService.GetUserByID(ctx, memberID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get member details")
 		}
-		members[i] = UserShortResponse{
+		members[i] = models.UserShortResponse{
 			ID:       user.ID,
 			Username: user.Username,
 			Email:    user.Email,
@@ -476,11 +455,11 @@ func (c *GroupController) convertGroupToResponse(ctx context.Context, group *mod
 		}
 	}
 
-	pendingMembers := make([]UserShortResponse, len(group.PendingMembers))
+	pendingMembers := make([]models.UserShortResponse, len(group.PendingMembers))
 	for i, memberID := range group.PendingMembers {
 		user, err := c.userService.GetUserByID(ctx, memberID)
 		if err == nil {
-			pendingMembers[i] = UserShortResponse{
+			pendingMembers[i] = models.UserShortResponse{
 				ID:       user.ID,
 				Username: user.Username,
 				Email:    user.Email,
@@ -489,23 +468,24 @@ func (c *GroupController) convertGroupToResponse(ctx context.Context, group *mod
 		}
 	}
 
-	admins := make([]UserShortResponse, len(group.Admins))
+	admins := make([]models.UserShortResponse, len(group.Admins))
 	for i, adminID := range group.Admins {
 		user, err := c.userService.GetUserByID(ctx, adminID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get admin details")
 		}
-		admins[i] = UserShortResponse{
+		admins[i] = models.UserShortResponse{
 			ID:       user.ID,
 			Username: user.Username,
 			Email:    user.Email,
 		}
 	}
 
-	return &GroupResponse{
-		ID:   group.ID,
-		Name: group.Name,
-		Creator: UserShortResponse{
+	return &models.GroupResponse{
+		ID:     group.ID,
+		Name:   group.Name,
+		Avatar: group.Avatar,
+		Creator: models.UserShortResponse{
 			ID:       creator.ID,
 			Username: creator.Username,
 			Email:    creator.Email,

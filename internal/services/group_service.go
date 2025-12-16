@@ -8,6 +8,7 @@ import (
 	"messaging-app/internal/kafka"
 	"messaging-app/internal/models"
 	"messaging-app/internal/repositories"
+	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
@@ -55,7 +56,18 @@ func (s *GroupService) CreateGroup(ctx context.Context, creatorID primitive.Obje
 		Admins:    []primitive.ObjectID{creatorID},
 	}
 
-	return s.groupRepo.CreateGroup(ctx, group)
+	// Create group in repository
+	createdGroup, err := s.groupRepo.CreateGroup(ctx, group)
+	if err != nil {
+		return nil, err
+	}
+
+	// Publish GROUP_CREATED event
+	if err := s.publishGroupEvent(ctx, createdGroup.ID, "GROUP_CREATED"); err != nil {
+		fmt.Printf("Failed to publish group created event: %v\n", err)
+		// Don't fail the request if event publishing fails
+	}
+	return createdGroup, nil
 }
 
 func (s *GroupService) GetGroup(ctx context.Context, id primitive.ObjectID) (*models.Group, error) {
@@ -126,7 +138,11 @@ func (s *GroupService) RemoveMember(ctx context.Context, groupID, requesterID, m
 		return errors.New("cannot remove the last admin")
 	}
 
-	return s.groupRepo.RemoveMember(ctx, groupID, memberID)
+	if err := s.groupRepo.RemoveMember(ctx, groupID, memberID); err != nil {
+		return err
+	}
+
+	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
 }
 
 func (s *GroupService) UpdateGroup(ctx context.Context, groupID, requesterID primitive.ObjectID, updates map[string]interface{}) error {
@@ -249,7 +265,11 @@ func (s *GroupService) ApproveMember(ctx context.Context, groupID, adminID, targ
 		return err
 	}
 	// Add to members
-	return s.groupRepo.AddMember(ctx, groupID, targetUserID)
+	if err := s.groupRepo.AddMember(ctx, groupID, targetUserID); err != nil {
+		return err
+	}
+
+	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
 }
 
 func (s *GroupService) RejectMember(ctx context.Context, groupID, adminID, targetUserID primitive.ObjectID) error {
@@ -262,7 +282,11 @@ func (s *GroupService) RejectMember(ctx context.Context, groupID, adminID, targe
 		return errors.New("only admins can reject members")
 	}
 
-	return s.groupRepo.RemovePendingMember(ctx, groupID, targetUserID)
+	if err := s.groupRepo.RemovePendingMember(ctx, groupID, targetUserID); err != nil {
+		return err
+	}
+
+	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
 }
 
 func (s *GroupService) RemoveAdmin(ctx context.Context, groupID, requesterID, adminID primitive.ObjectID) error {
@@ -288,10 +312,112 @@ func (s *GroupService) RemoveAdmin(ctx context.Context, groupID, requesterID, ad
 	// Or use generic UpdateGroup with $pull from admins array.
 	// Actually GroupRepo has UpdateGroup. we can use that.
 
-	updates := bson.M{
-		"$pull": bson.M{"admins": adminID},
+	// Use the dedicated RemoveAdmin repository method
+	if err := s.groupRepo.RemoveAdmin(ctx, groupID, adminID); err != nil {
+		return err
 	}
-	return s.groupRepo.UpdateGroup(ctx, groupID, updates)
+
+	// Publish update event
+	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
+}
+
+func (s *GroupService) publishGroupEvent(ctx context.Context, groupID primitive.ObjectID, eventType string) error {
+	// 1. Fetch latest group state
+	updatedGroup, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch group for broadcast: %w", err)
+	}
+
+	// 2. Fetch User Details for Enrichment
+	// We need to construct models.GroupResponse
+
+	// Helper to fetch user details safely
+	getUserShort := func(uid primitive.ObjectID) (models.UserShortResponse, error) {
+		u, err := s.userRepo.FindUserByID(ctx, uid)
+		if err != nil {
+			return models.UserShortResponse{}, err
+		}
+		return models.UserShortResponse{
+			ID:       u.ID,
+			Username: u.Username,
+			Email:    u.Email,
+			Avatar:   u.Avatar,
+		}, nil
+	}
+
+	// A. Creator
+	creator, err := getUserShort(updatedGroup.CreatorID)
+	if err != nil {
+		// Log error but proceed? Or fail? Better to fail or send partial?
+		// For broadcast, maybe better to proceed with empty or fail.
+		// Let's try to be robust.
+		fmt.Printf("Error fetching creator for broadcast: %v\n", err)
+	}
+
+	// B. Members
+	var members []models.UserShortResponse
+	for _, mid := range updatedGroup.Members {
+		if u, err := getUserShort(mid); err == nil {
+			members = append(members, u)
+		}
+	}
+
+	// C. Pending Members
+	var pendingMembers []models.UserShortResponse
+	for _, pid := range updatedGroup.PendingMembers {
+		if u, err := getUserShort(pid); err == nil {
+			pendingMembers = append(pendingMembers, u)
+		}
+	}
+
+	// D. Admins
+	var admins []models.UserShortResponse
+	for _, aid := range updatedGroup.Admins {
+		if u, err := getUserShort(aid); err == nil {
+			admins = append(admins, u)
+		}
+	}
+
+	// 3. Construct Response
+	response := models.GroupResponse{
+		ID:             updatedGroup.ID,
+		Name:           updatedGroup.Name,
+		Avatar:         updatedGroup.Avatar,
+		Creator:        creator,
+		Members:        members,
+		PendingMembers: pendingMembers,
+		Admins:         admins,
+		Settings:       updatedGroup.Settings,
+		CreatedAt:      updatedGroup.CreatedAt,
+		UpdatedAt:      updatedGroup.UpdatedAt,
+	}
+
+	// 4. Publish event to Kafka
+	// Log the admins list (enriched) to verify
+	// fmt.Printf("Broadcasting ENRICHED %s for group %s. Admins Count: %d\n", eventType, updatedGroup.ID.Hex(), len(admins))
+
+	eventPayload := map[string]interface{}{
+		"type": eventType, // Dynamic event type
+		"data": response,  // The enriched response object
+	}
+
+	eventBytes, err := json.Marshal(eventPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal group event: %w", err)
+	}
+
+	// Produce to "feed" topic which ws.go consumes
+	msg := kafkago.Message{
+		Key:   []byte(groupID.Hex()),
+		Value: eventBytes,
+		Time:  time.Now(),
+	}
+
+	if err := s.producer.ProduceMessage(ctx, msg); err != nil {
+		fmt.Printf("Failed to publish group event: %v\n", err)
+		return err
+	}
+	return nil
 }
 
 func (s *GroupService) UpdateGroupSettings(ctx context.Context, groupID, requesterID primitive.ObjectID, settings models.GroupSettings) error {
@@ -304,7 +430,11 @@ func (s *GroupService) UpdateGroupSettings(ctx context.Context, groupID, request
 		return errors.New("only admins can update settings")
 	}
 
-	return s.groupRepo.UpdateGroupSettings(ctx, groupID, settings)
+	if err := s.groupRepo.UpdateGroupSettings(ctx, groupID, settings); err != nil {
+		return err
+	}
+
+	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
 }
 
 func containsID(ids []primitive.ObjectID, id primitive.ObjectID) bool {
