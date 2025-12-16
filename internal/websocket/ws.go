@@ -93,6 +93,7 @@ type Hub struct {
 	MessageEditedEvents    chan models.MessageEditedEvent
 	DeliveredEvents        chan models.DeliveredEvent
 	ConversationSeenEvents chan models.ConversationSeenEvent
+	CallSignal             chan models.CallSignalEvent // Channel for voice call signaling
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -126,6 +127,7 @@ func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepos
 		MessageEditedEvents:    make(chan models.MessageEditedEvent, 10000),
 		DeliveredEvents:        make(chan models.DeliveredEvent, 10000),
 		ConversationSeenEvents: make(chan models.ConversationSeenEvent, 10000),
+		CallSignal:             make(chan models.CallSignalEvent, 10000),
 		ctx:                    ctx,
 		cancel:                 cancel,
 		messageUpdater:         messageUpdater,
@@ -662,6 +664,26 @@ func (h *Hub) run() {
 					}
 				}
 			}
+		case signal := <-h.CallSignal:
+			signalBytes, err := json.Marshal(signal)
+			if err != nil {
+				log.Printf("Error marshaling CallSignalEvent: %v", err)
+				continue
+			}
+
+			// Wrap in WebSocketEvent
+			wsEvent := models.WebSocketEvent{
+				Type: "VOICE_CALL_SIGNAL",
+				Data: signalBytes,
+			}
+			wsEventBytes, err := json.Marshal(wsEvent)
+			if err != nil {
+				log.Printf("Error marshaling WebSocketEvent for call signal: %v", err)
+				continue
+			}
+
+			h.sendToUser(signal.TargetID, wsEventBytes)
+			log.Printf("Forwarded VOICE_CALL_SIGNAL (%s) from %s to %s", signal.SignalType, signal.CallerID, signal.TargetID)
 		}
 	}
 }
@@ -1223,7 +1245,7 @@ func ServeWs(c *gin.Context, hub *Hub) {
 func (c *Client) readPump(h *Hub) {
 	const (
 		pongWait   = 60 * time.Second
-		maxMsgSize = 512
+		maxMsgSize = 32768 // Increased to 32KB to handle WebRTC SDP
 	)
 	defer func() {
 		h.unregister <- c
@@ -1268,6 +1290,14 @@ func (c *Client) readPump(h *Hub) {
 			if err := json.Unmarshal(env.Payload, &m); err == nil && m.Content != "" && m.SenderID.Hex() == c.userID {
 				h.Broadcast <- m
 			}
+		case "call_signal":
+			var signal models.CallSignalEvent
+			if err := json.Unmarshal(env.Payload, &signal); err != nil {
+				log.Printf("Error unmarshaling call signal: %v", err)
+				return
+			}
+			signal.CallerID = c.userID // Ensure CallerID is set to the vetted user
+			h.CallSignal <- signal
 		case "presence":
 			c.setLastSeen(time.Now())
 		default:

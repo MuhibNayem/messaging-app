@@ -43,3 +43,11 @@ type ConversationSeenEvent struct {
 	Timestamp      time.Time          `json:"timestamp"`
 	IsGroup        bool               `json:"is_group"`
 }
+
+// CallSignalEvent represents a signaling message for voice/video calls.
+type CallSignalEvent struct {
+	TargetID   string          `json:"target_id"`
+	SignalType string          `json:"signal_type"` // OFFER, ANSWER, ICE_CANDIDATE, END_CALL, REJECT_CALL, BUSY
+	SignalData json.RawMessage `json:"signal_data,omitempty"`
+	CallerID   string          `json:"caller_id,omitempty"` // Added by server when forwarding
+}
