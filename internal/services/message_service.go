@@ -283,7 +283,22 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 	}
 	msg.SenderName = senderName
 
-	msg.SenderName = senderName
+	// Fetch sender details to populate the response for the frontend (including Avatar)
+	sender, err := s.userRepo.FindUserByID(ctx, msg.SenderID)
+	if err == nil {
+		msg.Sender = &models.SafeUserResponse{
+			ID:       sender.ID,
+			Username: sender.Username,
+			FullName: sender.FullName,
+			Avatar:   sender.Avatar,
+		}
+		// Also ensure SenderName is set if missing
+		if msg.SenderName == "" {
+			msg.SenderName = sender.Username
+		}
+	} else {
+		log.Printf("Failed to fetch sender details for direct message broadcast: %v", err)
+	}
 
 	// Optimistic Broadcast: Publish to Redis BEFORE DB Save
 	if msg.ID.IsZero() {

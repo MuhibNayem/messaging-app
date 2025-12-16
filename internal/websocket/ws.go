@@ -774,12 +774,17 @@ func (h *Hub) broadcastToAllUsers(event models.WebSocketEvent) {
 
 func (h *Hub) dispatchMessage(msg models.Message) {
 	// direct
+	// direct
 	if !msg.ReceiverID.IsZero() {
-		clients := h.getClientsByUser(msg.ReceiverID.Hex())
-		h.sendToClients(clients, msg)
+		log.Printf("[DEBUG] Dispatching direct message ID: %s to Receiver: %s", msg.ID.Hex(), msg.ReceiverID.Hex())
+		receiverClients := h.getClientsByUser(msg.ReceiverID.Hex())
+		log.Printf("[DEBUG] Found %d clients for Receiver: %s", len(receiverClients), msg.ReceiverID.Hex())
 
-		// If user is offline (no active clients), queue the message for delivery upon reconnection
-		if len(clients) == 0 {
+		h.sendToClients(receiverClients, msg)
+
+		// If receiver is offline (no active clients), queue the message for delivery upon reconnection
+		if len(receiverClients) == 0 {
+			log.Printf("[DEBUG] Receiver %s is offline, queuing message", msg.ReceiverID.Hex())
 			if err := h.messageCache.AddPendingDirectMessage(h.ctx, msg.ReceiverID.Hex(), msg.ID.Hex()); err != nil {
 				log.Printf("Failed to queue pending direct message for %s: %v", msg.ReceiverID.Hex(), err)
 			}
@@ -797,7 +802,21 @@ func (h *Hub) dispatchMessage(msg models.Message) {
 }
 
 func (h *Hub) sendToClients(clients []*Client, msg models.Message) {
-	msgData, err := json.Marshal(msg)
+	var msgToMarshal interface{} = msg
+
+	// If GroupID is zero (Direct Message), use a shadow struct to hide it from JSON
+	if msg.GroupID.IsZero() {
+		type shadowedMessage struct {
+			models.Message
+			GroupID *string `json:"group_id,omitempty"`
+		}
+		msgToMarshal = shadowedMessage{
+			Message: msg,
+			GroupID: nil,
+		}
+	}
+
+	msgData, err := json.Marshal(msgToMarshal)
 	if err != nil {
 		log.Printf("Error marshaling message: %v", err)
 		return
