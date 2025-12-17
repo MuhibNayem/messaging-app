@@ -151,7 +151,10 @@ func main() {
 	privacyRepo := repositories.NewPrivacyRepository(db)
 	notificationRepo := repositories.NewNotificationRepository(db)
 	conversationRepo := conversationRepositories.NewConversationRepository(db, userRepo, groupRepo)
+
 	communityRepo := repositories.NewCommunityRepository(db)
+	storyRepo := repositories.NewStoryRepository(db)
+	reelRepo := repositories.NewReelRepository(db)
 
 	// Initialize Kafka Producer
 	kafkaProducer := kafka.NewMessageProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -176,7 +179,10 @@ func main() {
 	}
 	searchService := services.NewSearchService(userRepo, feedRepo) // Initialize SearchService
 	conversationService := conversationServices.NewConversationService(conversationRepo)
+
 	communityService := services.NewCommunityService(communityRepo, userRepo)
+	storyService := services.NewStoryService(storyRepo, userRepo, friendshipRepo)
+	reelService := services.NewReelService(reelRepo, userRepo)
 
 	// Initialize Controllers
 	authController := controllers.NewAuthController(authService)
@@ -190,7 +196,10 @@ func main() {
 	notificationController := controllers.NewNotificationController(notificationService) // Initialize NotificationController
 	conversationController := conversationControllers.NewConversationController(conversationService)
 	uploadController := controllers.NewUploadController(storageService)
+
 	communityController := controllers.NewCommunityController(communityService)
+	storyController := controllers.NewStoryController(storyService)
+	reelController := controllers.NewReelController(reelService)
 
 	// Initialize WebSocket Hub
 	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, friendshipRepo, messageRepo, messageService)
@@ -210,6 +219,10 @@ func main() {
 			log.Printf("Error closing Notification Kafka consumer: %v", err)
 		}
 	}()
+
+	// Initialize and Start Cleanup Service for Expired Stories
+	cleanupService := services.NewCleanupService(storyRepo, storageService)
+	go cleanupService.StartCleanupWorker(context.Background())
 
 	// Initialize Gin Router with metrics middleware
 	router := gin.Default()
@@ -461,6 +474,25 @@ func main() {
 		communityRoutes.GET("/:id/members", communityController.ListMembers)
 		communityRoutes.GET("/:id/admins", communityController.GetAdmins)
 		communityRoutes.GET("/:id/pending-members", communityController.GetPendingMembers)
+	}
+
+	// Story Routes
+	storyRoutes := api.Group("/stories")
+	{
+		storyRoutes.POST("", storyController.CreateStory)
+		storyRoutes.GET("", storyController.GetStoriesFeed)
+		storyRoutes.GET("/user/:id", storyController.GetUserStories)
+		storyRoutes.DELETE("/:id", storyController.DeleteStory)
+	}
+
+	// Reel Routes
+	reelRoutes := api.Group("/reels")
+	{
+		reelRoutes.POST("", reelController.CreateReel)
+		reelRoutes.GET("", reelController.GetReelsFeed)
+		reelRoutes.GET("/user/:id", reelController.GetUserReels)
+		reelRoutes.GET("/:id", reelController.GetReel)
+		// reelRoutes.DELETE("/:id", reelController.DeleteReel)
 	}
 
 	// WebSocket endpoint

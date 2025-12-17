@@ -6,6 +6,7 @@ import (
 	"messaging-app/config"
 	"messaging-app/internal/models"
 	"mime/multipart"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -149,4 +150,39 @@ func (s *StorageService) UploadFiles(ctx context.Context, files []*multipart.Fil
 	}
 
 	return results, nil
+}
+
+// DeleteFile deletes a file from object storage given its full URL
+func (s *StorageService) DeleteFile(ctx context.Context, fileURL string) error {
+	// Extract object name from URL
+	// URL format: externalHost/bucketName/objectName
+	// We can parse the URL and take the last part of the path
+
+	parsedURL, err := url.Parse(fileURL)
+	if err != nil {
+		return fmt.Errorf("invalid file URL: %w", err)
+	}
+
+	path := parsedURL.Path
+	// Remove leading slash if present
+	path = strings.TrimPrefix(path, "/")
+
+	// Path should be "bucketName/objectKey"
+	// Remove bucketName prefix
+	prefix := s.bucketName + "/"
+	if !strings.HasPrefix(path, prefix) {
+		// Maybe the URL path doesn't include bucket name if using virtual-host style
+		// But based on UploadFiles, it does.
+		// Let's handle generic case: just take the filename (basename) if standard structure
+		// But safest is to strip expected prefix.
+	}
+	objectName := strings.TrimPrefix(path, prefix)
+
+	// Delete object
+	err = s.client.RemoveObject(ctx, s.bucketName, objectName, minio.RemoveObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete object %s: %w", objectName, err)
+	}
+
+	return nil
 }

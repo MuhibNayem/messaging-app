@@ -189,6 +189,8 @@ const (
 	PrivacySettingFriendsOfFriends PrivacySettingType = "FRIENDS_OF_FRIENDS"
 	PrivacySettingNoOne            PrivacySettingType = "NO_ONE"
 	PrivacySettingEveryone         PrivacySettingType = "EVERYONE"
+	PrivacySettingCustom           PrivacySettingType = "CUSTOM"         // Specific Friends
+	PrivacySettingFriendsExcept    PrivacySettingType = "FRIENDS_EXCEPT" // Friends except specific ones
 )
 
 type CustomPrivacyList struct {

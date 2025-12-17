@@ -40,6 +40,15 @@ func (c *UploadController) Upload(ctx *gin.Context) {
 		return
 	}
 
+	// Enforce file size limit (e.g., 100MB per file)
+	const MaxFileSize = 100 * 1024 * 1024 // 100MB
+	for _, file := range files {
+		if file.Size > MaxFileSize {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "file too large (max 100MB)"})
+			return
+		}
+	}
+
 	mediaItems, err := c.storageService.UploadFiles(ctx.Request.Context(), files)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to upload files: " + err.Error()})
