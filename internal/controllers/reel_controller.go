@@ -249,6 +249,13 @@ func (c *ReelController) ReactToComment(ctx *gin.Context) {
 }
 
 func (c *ReelController) IncrementView(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
 	reelIDStr := ctx.Param("id")
 	reelID, err := primitive.ObjectIDFromHex(reelIDStr)
 	if err != nil {
@@ -256,7 +263,7 @@ func (c *ReelController) IncrementView(ctx *gin.Context) {
 		return
 	}
 
-	err = c.reelService.IncrementViews(ctx.Request.Context(), reelID)
+	err = c.reelService.IncrementViews(ctx.Request.Context(), reelID, objUserID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

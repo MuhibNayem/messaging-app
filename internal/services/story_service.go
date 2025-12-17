@@ -100,6 +100,17 @@ func (s *StoryService) DeleteStory(ctx context.Context, storyID primitive.Object
 }
 
 func (s *StoryService) RecordView(ctx context.Context, storyID primitive.ObjectID, userID primitive.ObjectID) error {
+	// Fetch story to check author
+	story, err := s.storyRepo.GetStoryByID(ctx, storyID)
+	if err != nil {
+		return err
+	}
+
+	// Don't count self-views
+	if story.UserID == userID {
+		return nil
+	}
+
 	return s.storyRepo.AddViewer(ctx, storyID, userID)
 }
 

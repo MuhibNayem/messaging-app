@@ -85,7 +85,18 @@ func (s *ReelService) DeleteReel(ctx context.Context, reelID primitive.ObjectID,
 	return s.reelRepo.DeleteReel(ctx, reelID, userID)
 }
 
-func (s *ReelService) IncrementViews(ctx context.Context, reelID primitive.ObjectID) error {
+func (s *ReelService) IncrementViews(ctx context.Context, reelID primitive.ObjectID, userID primitive.ObjectID) error {
+	// Fetch reel to check author
+	reel, err := s.reelRepo.GetReelByID(ctx, reelID)
+	if err != nil {
+		return err
+	}
+
+	// Don't count self-views
+	if reel.UserID == userID {
+		return nil
+	}
+
 	return s.reelRepo.IncrementViews(ctx, reelID)
 }
 
