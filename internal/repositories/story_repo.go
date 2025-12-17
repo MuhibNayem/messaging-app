@@ -242,16 +242,40 @@ func (r *StoryRepository) DeleteStories(ctx context.Context, ids []primitive.Obj
 
 // GetActiveStoryAuthors returns a paginated list of unique user IDs who have active stories.
 // It sorts users by their most recent story creation time.
-func (r *StoryRepository) GetActiveStoryAuthors(ctx context.Context, userIDs []primitive.ObjectID, limit, offset int) ([]primitive.ObjectID, error) {
+// GetActiveStoryAuthors returns a paginated list of unique user IDs who have active stories.
+// It sorts users by their most recent story creation time.
+// Privacy filtering is applied at the DB level.
+func (r *StoryRepository) GetActiveStoryAuthors(ctx context.Context, viewerID primitive.ObjectID, userIDs []primitive.ObjectID, limit, offset int) ([]primitive.ObjectID, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	now := time.Now()
+
+	// Privacy Filter Construction
+	privacyMatch := bson.M{
+		"$or": []bson.M{
+			// 1. User's own stories (always visible)
+			{"user_id": viewerID},
+			// 2. Stories from friends (userIDs list contains friends)
+			{
+				"user_id": bson.M{"$ne": viewerID},
+				"$or": []bson.M{
+					{"privacy": bson.M{"$in": []string{string(models.PrivacySettingPublic), string(models.PrivacySettingFriends)}}},
+					{"privacy": models.PrivacySettingCustom, "allowed_viewers": viewerID},
+					{"privacy": models.PrivacySettingFriendsExcept, "blocked_viewers": bson.M{"$ne": viewerID}},
+				},
+			},
+		},
+	}
+
 	pipeline := mongo.Pipeline{
-		// 1. Match active stories from allowed users
-		{{Key: "$match", Value: bson.D{
-			{Key: "user_id", Value: bson.D{{Key: "$in", Value: userIDs}}},
-			{Key: "expires_at", Value: bson.D{{Key: "$gt", Value: now}}},
+		// 1. Match active stories from allowed users + Privacy Check
+		{{Key: "$match", Value: bson.M{
+			"$and": []bson.M{
+				{"user_id": bson.M{"$in": userIDs}},
+				{"expires_at": bson.M{"$gt": now}},
+				privacyMatch,
+			},
 		}}},
 		// 2. Group by user_id to find unique authors and their latest story time
 		{{Key: "$group", Value: bson.D{
@@ -286,16 +310,38 @@ func (r *StoryRepository) GetActiveStoryAuthors(ctx context.Context, userIDs []p
 }
 
 // GetStoriesForUsers fetches all active stories for the given list of authors.
-// GetStoriesForUsers fetches all active stories for the given list of authors.
-func (r *StoryRepository) GetStoriesForUsers(ctx context.Context, authorIDs []primitive.ObjectID) ([]models.Story, error) {
+// Privacy filtering is applied at the DB level.
+func (r *StoryRepository) GetStoriesForUsers(ctx context.Context, viewerID primitive.ObjectID, authorIDs []primitive.ObjectID) ([]models.Story, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	now := time.Now()
-	filter := bson.M{
-		"user_id":    bson.M{"$in": authorIDs},
-		"expires_at": bson.M{"$gt": now},
+
+	// Privacy Filter Construction (Same as above)
+	privacyMatch := bson.M{
+		"$or": []bson.M{
+			// 1. User's own stories
+			{"user_id": viewerID},
+			// 2. Stories from friends
+			{
+				"user_id": bson.M{"$ne": viewerID},
+				"$or": []bson.M{
+					{"privacy": bson.M{"$in": []string{string(models.PrivacySettingPublic), string(models.PrivacySettingFriends)}}},
+					{"privacy": models.PrivacySettingCustom, "allowed_viewers": viewerID},
+					{"privacy": models.PrivacySettingFriendsExcept, "blocked_viewers": bson.M{"$ne": viewerID}},
+				},
+			},
+		},
 	}
+
+	filter := bson.M{
+		"$and": []bson.M{
+			{"user_id": bson.M{"$in": authorIDs}},
+			{"expires_at": bson.M{"$gt": now}},
+			privacyMatch,
+		},
+	}
+
 	// Within a user's story ring, it's chronological.
 	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}})
 
