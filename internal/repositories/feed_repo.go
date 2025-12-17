@@ -281,6 +281,85 @@ func (r *FeedRepository) DeletePost(ctx context.Context, userID, postID primitiv
 	return nil
 }
 
+func (r *FeedRepository) DeleteCommentsByPostID(ctx context.Context, postID primitive.ObjectID) error {
+	_, err := r.commentsCollection.DeleteMany(ctx, bson.M{"post_id": postID})
+	return err
+}
+
+func (r *FeedRepository) DeleteReactionsByTargetID(ctx context.Context, targetID primitive.ObjectID) error {
+	_, err := r.reactionsCollection.DeleteMany(ctx, bson.M{"target_id": targetID})
+	return err
+}
+
+func (r *FeedRepository) GetCommentIDsByPostID(ctx context.Context, postID primitive.ObjectID) ([]primitive.ObjectID, error) {
+	// Projection to only return _id
+	opts := options.Find().SetProjection(bson.M{"_id": 1})
+	cur, err := r.commentsCollection.Find(ctx, bson.M{"post_id": postID}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []struct {
+		ID primitive.ObjectID `bson:"_id"`
+	}
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	ids := make([]primitive.ObjectID, len(results))
+	for i, res := range results {
+		ids[i] = res.ID
+	}
+	return ids, nil
+}
+
+func (r *FeedRepository) GetReplyIDsByCommentIDs(ctx context.Context, commentIDs []primitive.ObjectID) ([]primitive.ObjectID, error) {
+	if len(commentIDs) == 0 {
+		return []primitive.ObjectID{}, nil
+	}
+	opts := options.Find().SetProjection(bson.M{"_id": 1})
+	cur, err := r.repliesCollection.Find(ctx, bson.M{"comment_id": bson.M{"$in": commentIDs}}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []struct {
+		ID primitive.ObjectID `bson:"_id"`
+	}
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	ids := make([]primitive.ObjectID, len(results))
+	for i, res := range results {
+		ids[i] = res.ID
+	}
+	return ids, nil
+}
+
+func (r *FeedRepository) DeleteRepliesByCommentIDs(ctx context.Context, commentIDs []primitive.ObjectID) error {
+	if len(commentIDs) == 0 {
+		return nil
+	}
+	_, err := r.repliesCollection.DeleteMany(ctx, bson.M{"comment_id": bson.M{"$in": commentIDs}})
+	return err
+}
+
+func (r *FeedRepository) DeleteReactionsByTargetIDs(ctx context.Context, targetIDs []primitive.ObjectID) error {
+	if len(targetIDs) == 0 {
+		return nil
+	}
+	_, err := r.reactionsCollection.DeleteMany(ctx, bson.M{"target_id": bson.M{"$in": targetIDs}})
+	return err
+}
+
+func (r *FeedRepository) DeleteAlbumMediaByURL(ctx context.Context, url string) error {
+	_, err := r.albumMediaCollection.DeleteMany(ctx, bson.M{"url": url})
+	return err
+}
+
 func (r *FeedRepository) ListPosts(ctx context.Context, filter bson.M, opts *options.FindOptions) ([]models.Post, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()

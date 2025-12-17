@@ -28,10 +28,11 @@ type FeedService struct {
 	privacyRepo         repositories.PrivacyRepository
 	kafkaProducer       *kafka.MessageProducer
 	notificationService *notifications.NotificationService
+	storageService      *StorageService
 }
 
-func NewFeedService(feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, friendshipRepo *repositories.FriendshipRepository, privacyRepo repositories.PrivacyRepository, kafkaProducer *kafka.MessageProducer, notificationService *notifications.NotificationService) *FeedService {
-	return &FeedService{feedRepo: feedRepo, userRepo: userRepo, friendshipRepo: friendshipRepo, privacyRepo: privacyRepo, kafkaProducer: kafkaProducer, notificationService: notificationService}
+func NewFeedService(feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, friendshipRepo *repositories.FriendshipRepository, privacyRepo repositories.PrivacyRepository, kafkaProducer *kafka.MessageProducer, notificationService *notifications.NotificationService, storageService *StorageService) *FeedService {
+	return &FeedService{feedRepo: feedRepo, userRepo: userRepo, friendshipRepo: friendshipRepo, privacyRepo: privacyRepo, kafkaProducer: kafkaProducer, notificationService: notificationService, storageService: storageService}
 }
 
 // Post operations
@@ -298,6 +299,63 @@ func (s *FeedService) DeletePost(ctx context.Context, userID, postID primitive.O
 		return errors.New("unauthorized to delete this post")
 	}
 
+	// 1. Cleanup related data (Cascade Delete)
+
+	// A. Comments & Replies
+	commentIDs, err := s.feedRepo.GetCommentIDsByPostID(ctx, postID)
+	if err != nil {
+		fmt.Printf("Failed to fetch comment IDs for post %s: %v\n", postID.Hex(), err)
+	} else if len(commentIDs) > 0 {
+		// 1. Fetch Reply IDs to delete their reactions
+		replyIDs, err := s.feedRepo.GetReplyIDsByCommentIDs(ctx, commentIDs)
+		if err != nil {
+			fmt.Printf("Failed to fetch reply IDs: %v\n", err)
+		}
+
+		// 2. Delete Reactions on Replies
+		if len(replyIDs) > 0 {
+			if err := s.feedRepo.DeleteReactionsByTargetIDs(ctx, replyIDs); err != nil {
+				fmt.Printf("Failed to delete reactions on replies: %v\n", err)
+			}
+		}
+
+		// 3. Delete Replies
+		if err := s.feedRepo.DeleteRepliesByCommentIDs(ctx, commentIDs); err != nil {
+			fmt.Printf("Failed to delete replies: %v\n", err)
+		}
+
+		// 4. Delete Reactions on Comments
+		if err := s.feedRepo.DeleteReactionsByTargetIDs(ctx, commentIDs); err != nil {
+			fmt.Printf("Failed to delete reactions on comments: %v\n", err)
+		}
+
+		// 5. Delete Comments
+		if err := s.feedRepo.DeleteCommentsByPostID(ctx, postID); err != nil {
+			fmt.Printf("Failed to delete comments for post %s: %v\n", postID.Hex(), err)
+		}
+	}
+
+	// B. Reactions (on Post)
+	if err := s.feedRepo.DeleteReactionsByTargetID(ctx, postID); err != nil {
+		fmt.Printf("Failed to delete reactions for post %s: %v\n", postID.Hex(), err)
+	}
+
+	// C. Media Cleanup (Album Links and Storage)
+	if post.Media != nil && len(post.Media) > 0 {
+		for _, media := range post.Media {
+			// Remove from Album Media links
+			if err := s.feedRepo.DeleteAlbumMediaByURL(ctx, media.URL); err != nil {
+				fmt.Printf("Failed to delete album media link %s: %v\n", media.URL, err)
+			}
+
+			// Delete from Object Storage
+			if err := s.storageService.DeleteFile(ctx, media.URL); err != nil {
+				fmt.Printf("Failed to delete file from storage %s: %v\n", media.URL, err)
+			}
+		}
+	}
+
+	// 2. Delete the Post itself
 	err = s.feedRepo.DeletePost(ctx, userID, postID)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {

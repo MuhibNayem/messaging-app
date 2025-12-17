@@ -164,17 +164,20 @@ func main() {
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
 	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
-	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService)
+
+	storageService, err := services.NewStorageService(cfg)
+	if err != nil {
+		log.Fatal("Failed to initialize storage service:", err)
+	}
+
+	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService, storageService)
 	// Note: UserService now needs FeedService for profile history
 	userService := services.NewUserService(userRepo, reelRepo, redisClient.GetClient(), feedService)
 	groupService := services.NewGroupService(groupRepo, userRepo, kafkaProducer)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
 	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
-	storageService, err := services.NewStorageService(cfg)
-	if err != nil {
-		log.Fatal("Failed to initialize storage service:", err)
-	}
+
 	searchService := services.NewSearchService(userRepo, feedRepo) // Initialize SearchService
 	conversationService := services.NewConversationService(conversationRepo)
 
