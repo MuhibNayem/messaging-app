@@ -234,7 +234,23 @@ func (r *StoryRepository) DeleteStories(ctx context.Context, ids []primitive.Obj
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	_, err := r.collection.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": ids}})
+	// 1. Delete associated views
+	_, err := r.viewsCollection.DeleteMany(ctx, bson.M{"story_id": bson.M{"$in": ids}})
+	if err != nil {
+		// Log error but continue? Or fail? Usually better to try and clean up everything.
+		// For now return error if critical, but standard cleanup process might want to proceed.
+		// Let's return error to signal incomplete cleanup.
+		return err
+	}
+
+	// 2. Delete associated reactions
+	_, err = r.reactionsCollection.DeleteMany(ctx, bson.M{"story_id": bson.M{"$in": ids}})
+	if err != nil {
+		return err
+	}
+
+	// 3. Delete the stories themselves
+	_, err = r.collection.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": ids}})
 	return err
 }
 
