@@ -155,3 +155,23 @@ func (r *StoryRepository) DeleteStories(ctx context.Context, ids []primitive.Obj
 	_, err := r.collection.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": ids}})
 	return err
 }
+
+func (r *StoryRepository) AddViewer(ctx context.Context, storyID primitive.ObjectID, viewerID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	filter := bson.M{"_id": storyID}
+	update := bson.M{"$addToSet": bson.M{"viewers": viewerID}}
+	_, err := r.collection.UpdateOne(ctx, filter, update)
+	return err
+}
+
+func (r *StoryRepository) AddReaction(ctx context.Context, storyID primitive.ObjectID, reaction models.StoryReaction) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	filter := bson.M{"_id": storyID}
+	update := bson.M{"$push": bson.M{"reactions": reaction}}
+	_, err := r.collection.UpdateOne(ctx, filter, update)
+	return err
+}

@@ -45,13 +45,15 @@ type PostAuthor struct {
 // Comment represents a comment on a post
 type Comment struct {
 	ID             primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
-	PostID         primitive.ObjectID     `bson:"post_id" json:"post_id"`
+	PostID         primitive.ObjectID     `bson:"post_id,omitempty" json:"post_id,omitempty"` // Optional if for Reel
+	ReelID         *primitive.ObjectID    `bson:"reel_id,omitempty" json:"reel_id,omitempty"` // Optional if for Post
 	UserID         primitive.ObjectID     `bson:"user_id" json:"user_id"`
 	Author         PostAuthor             `bson:"author,omitempty" json:"author"`
 	Content        string                 `bson:"content" json:"content"`
 	MediaType      string                 `bson:"media_type,omitempty" json:"media_type,omitempty"`
 	MediaURL       string                 `bson:"media_url,omitempty" json:"media_url,omitempty"`
 	Replies        []Reply                `bson:"replies,omitempty" json:"replies"` // Populated full Reply objects, not stored in DB
+	Reactions      []Reaction             `bson:"reactions,omitempty" json:"reactions,omitempty"`
 	ReactionCounts map[ReactionType]int64 `json:"reaction_counts,omitempty"`
 	Mentions       []primitive.ObjectID   `bson:"mentions,omitempty" json:"mentions,omitempty"` // User IDs mentioned in the comment
 	CreatedAt      time.Time              `bson:"created_at" json:"created_at"`
@@ -119,7 +121,8 @@ type UpdatePostRequest struct {
 }
 
 type CreateCommentRequest struct {
-	PostID    primitive.ObjectID   `json:"post_id" binding:"required"`
+	PostID    *primitive.ObjectID  `json:"post_id,omitempty"`
+	ReelID    *primitive.ObjectID  `json:"reel_id,omitempty"`
 	Content   string               `json:"content" binding:"required"`
 	MediaType string               `json:"media_type,omitempty"`
 	MediaURL  string               `json:"media_url,omitempty"`

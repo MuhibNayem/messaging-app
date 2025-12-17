@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"errors"
 	"messaging-app/internal/models"
 	"messaging-app/internal/repositories"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -141,4 +143,59 @@ func (s *StoryService) GetUserStories(ctx context.Context, userID primitive.Obje
 
 func (s *StoryService) DeleteStory(ctx context.Context, storyID primitive.ObjectID, userID primitive.ObjectID) error {
 	return s.storyRepo.DeleteStory(ctx, storyID, userID)
+}
+
+func (s *StoryService) RecordView(ctx context.Context, storyID primitive.ObjectID, userID primitive.ObjectID) error {
+	return s.storyRepo.AddViewer(ctx, storyID, userID)
+}
+
+func (s *StoryService) ReactToStory(ctx context.Context, storyID primitive.ObjectID, userID primitive.ObjectID, reactionType string) error {
+	reaction := models.StoryReaction{
+		UserID:    userID,
+		Type:      reactionType,
+		CreatedAt: time.Now(),
+	}
+	return s.storyRepo.AddReaction(ctx, storyID, reaction)
+}
+
+func (s *StoryService) GetStoryViewers(ctx context.Context, storyID primitive.ObjectID, userID primitive.ObjectID) ([]models.StoryViewerResponse, error) {
+	// 1. Fetch story to check ownership
+	story, err := s.storyRepo.GetStoryByID(ctx, storyID)
+	if err != nil {
+		return nil, err
+	}
+	if story.UserID != userID {
+		return nil, errors.New("unauthorized: only author can view viewers")
+	}
+
+	// 2. Fetch user details for viewers
+	if len(story.Viewers) == 0 {
+		return []models.StoryViewerResponse{}, nil
+	}
+
+	// Create a map of user reactions for quick lookup (User ID -> Reaction Type)
+	reactionMap := make(map[string]string)
+	for _, reaction := range story.Reactions {
+		// If multiple reactions, this takes the last one (since we append/push reactions)
+		// Ideally we might want the *latest* if they reacted multiple times, but push implies chronological.
+		reactionMap[reaction.UserID.Hex()] = reaction.Type
+	}
+
+	var viewers []models.StoryViewerResponse
+	for _, viewerID := range story.Viewers {
+		u, err := s.userRepo.FindUserByID(ctx, viewerID)
+		if err == nil {
+			viewers = append(viewers, models.StoryViewerResponse{
+				User: models.UserShortResponse{
+					ID:        u.ID,
+					Username:  u.Username,
+					FullName:  u.FullName,
+					Avatar:    u.Avatar,
+					PublicKey: u.PublicKey,
+				},
+				ReactionType: reactionMap[viewerID.Hex()],
+			})
+		}
+	}
+	return viewers, nil
 }

@@ -496,7 +496,11 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 		// For now, we'll proceed, but log the error.
 	}
 
-	post, err := s.feedRepo.GetPostByID(ctx, req.PostID)
+	if req.PostID == nil {
+		return nil, errors.New("post ID is required for this operation")
+	}
+
+	post, err := s.feedRepo.GetPostByID(ctx, *req.PostID)
 	if err != nil {
 		return nil, errors.New("post not found")
 	}
@@ -514,7 +518,7 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 	}
 
 	comment := &models.Comment{
-		PostID:    req.PostID,
+		PostID:    *req.PostID,
 		UserID:    userID,
 		Content:   req.Content,
 		MediaType: req.MediaType,
@@ -601,6 +605,7 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 		if err != nil {
 			fmt.Printf("Failed to marshal WebSocketEvent for CommentCreated: %v\n", err)
 		} else {
+			// Safe dereference for key since we checked nil above
 			kafkaMsg := kafkago.Message{
 				Key:   []byte(createdComment.PostID.Hex()), // Key for comment events (using post ID)
 				Value: eventBytes,
@@ -615,7 +620,7 @@ func (s *FeedService) CreateComment(ctx context.Context, userID primitive.Object
 	}
 
 	// Increment comment count on the post
-	err = s.feedRepo.IncrementPostCommentCount(ctx, req.PostID)
+	err = s.feedRepo.IncrementPostCommentCount(ctx, *req.PostID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to increment comment count for post %s: %w", req.PostID.Hex(), err)
 	}

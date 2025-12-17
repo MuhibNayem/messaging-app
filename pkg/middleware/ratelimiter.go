@@ -12,19 +12,19 @@ import (
 
 // IPRateLimiter stores a rate limiter for each IP address
 type IPRateLimiter struct {
-	ips      map[string]*rate.Limiter
-	mu       *sync.RWMutex
-	limit    rate.Limit
-	burst    int
+	ips   map[string]*rate.Limiter
+	mu    *sync.RWMutex
+	limit rate.Limit
+	burst int
 }
 
 // NewIPRateLimiter creates a new IPRateLimiter
 func NewIPRateLimiter(limit rate.Limit, burst int) *IPRateLimiter {
 	return &IPRateLimiter{
-		ips:      make(map[string]*rate.Limiter),
-		mu:       &sync.RWMutex{},
-		limit:    limit,
-		burst:    burst,
+		ips:   make(map[string]*rate.Limiter),
+		mu:    &sync.RWMutex{},
+		limit: limit,
+		burst: burst,
 	}
 }
 
@@ -65,6 +65,21 @@ func RateLimiter(cfg *config.Config) gin.HandlerFunc {
 		ipLimiter := limiter.GetLimiter(c.ClientIP())
 		if !ipLimiter.Allow() {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "too many requests"})
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// StrictRateLimiter creates a custom rate limiter middleware with specified limit and burst
+func StrictRateLimiter(r float64, b int) gin.HandlerFunc {
+	limiter := NewIPRateLimiter(rate.Limit(r), b)
+
+	return func(c *gin.Context) {
+		ipLimiter := limiter.GetLimiter(c.ClientIP())
+		if !ipLimiter.Allow() {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests. Please slow down."})
 			return
 		}
 

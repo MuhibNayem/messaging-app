@@ -166,7 +166,8 @@ func main() {
 
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
-	userService := services.NewUserService(userRepo, redisClient.GetClient())
+	// Note: UserService now needs ReelRepository for syncing author data
+	userService := services.NewUserService(userRepo, reelRepo, redisClient.GetClient())
 	groupService := services.NewGroupService(groupRepo, userRepo, kafkaProducer)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
 	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
@@ -182,7 +183,7 @@ func main() {
 
 	communityService := services.NewCommunityService(communityRepo, userRepo)
 	storyService := services.NewStoryService(storyRepo, userRepo, friendshipRepo)
-	reelService := services.NewReelService(reelRepo, userRepo)
+	reelService := services.NewReelService(reelRepo, userRepo, friendshipRepo)
 
 	// Initialize Controllers
 	authController := controllers.NewAuthController(authService)
@@ -482,6 +483,9 @@ func main() {
 		storyRoutes.POST("", storyController.CreateStory)
 		storyRoutes.GET("", storyController.GetStoriesFeed)
 		storyRoutes.GET("/user/:id", storyController.GetUserStories)
+		storyRoutes.POST("/:id/view", storyController.ViewStory)
+		storyRoutes.POST("/:id/react", storyController.ReactToStory)
+		storyRoutes.GET("/:id/viewers", storyController.GetStoryViewers)
 		storyRoutes.DELETE("/:id", storyController.DeleteStory)
 	}
 
@@ -492,6 +496,16 @@ func main() {
 		reelRoutes.GET("", reelController.GetReelsFeed)
 		reelRoutes.GET("/user/:id", reelController.GetUserReels)
 		reelRoutes.GET("/:id", reelController.GetReel)
+
+		// Apply strict rate limiting to interaction endpoints
+		strictLimit := middleware.StrictRateLimiter(2, 5) // 2 req/s, burst 5
+
+		reelRoutes.POST("/:id/comments", strictLimit, reelController.AddComment)
+		reelRoutes.GET("/:id/comments", reelController.GetComments)
+		reelRoutes.POST("/:id/comments/:commentId/replies", strictLimit, reelController.AddReply)
+		reelRoutes.POST("/:id/comments/:commentId/react", strictLimit, reelController.ReactToComment)
+		reelRoutes.POST("/:id/react", strictLimit, reelController.ReactToReel)
+		reelRoutes.POST("/:id/view", reelController.IncrementView)
 		// reelRoutes.DELETE("/:id", reelController.DeleteReel)
 	}
 

@@ -19,11 +19,12 @@ import (
 
 type UserService struct {
 	userRepo    *repositories.UserRepository
+	reelRepo    *repositories.ReelRepository
 	redisClient *redis.ClusterClient
 }
 
-func NewUserService(userRepo *repositories.UserRepository, redisClient *redis.ClusterClient) *UserService {
-	return &UserService{userRepo: userRepo, redisClient: redisClient}
+func NewUserService(userRepo *repositories.UserRepository, reelRepo *repositories.ReelRepository, redisClient *redis.ClusterClient) *UserService {
+	return &UserService{userRepo: userRepo, reelRepo: reelRepo, redisClient: redisClient}
 }
 
 func (s *UserService) GetUserStatus(ctx context.Context, userID primitive.ObjectID) (map[string]interface{}, error) {
@@ -124,6 +125,23 @@ func (s *UserService) UpdateUser(ctx context.Context, id primitive.ObjectID, upd
 
 	// Clear password before returning
 	updatedUser.Password = ""
+
+	// Sync author info to Reels (async or sync? Sync for now to ensure consistency)
+	if update.Username != "" || update.Avatar != "" || update.FullName != "" {
+		go func() {
+			author := models.PostAuthor{
+				ID:       updatedUser.ID.Hex(),
+				Username: updatedUser.Username,
+				Avatar:   updatedUser.Avatar,
+				FullName: updatedUser.FullName,
+			}
+			// We use a background context or a new one
+			if err := s.reelRepo.UpdateAuthorInfo(context.Background(), id, author); err != nil {
+				log.Printf("Failed to sync author info to reels: %v", err)
+			}
+		}()
+	}
+
 	return updatedUser, nil
 }
 

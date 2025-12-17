@@ -80,11 +80,77 @@ func (c *StoryController) GetUserStories(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
 	ctx.JSON(http.StatusOK, stories)
 }
 
 func (c *StoryController) DeleteStory(ctx *gin.Context) {
 	// TODO: implement delete
 	ctx.Status(http.StatusNotImplemented)
+}
+
+func (c *StoryController) ViewStory(ctx *gin.Context) {
+	storyIDStr := ctx.Param("id")
+	storyID, err := primitive.ObjectIDFromHex(storyIDStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid story ID"})
+		return
+	}
+
+	userID, _ := ctx.Get("userID")
+	objUserID, _ := primitive.ObjectIDFromHex(userID.(string))
+
+	if err := c.storyService.RecordView(ctx.Request.Context(), storyID, objUserID); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.Status(http.StatusOK)
+}
+
+func (c *StoryController) ReactToStory(ctx *gin.Context) {
+	storyIDStr := ctx.Param("id")
+	storyID, err := primitive.ObjectIDFromHex(storyIDStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid story ID"})
+		return
+	}
+
+	var req struct {
+		Type string `json:"type" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, _ := ctx.Get("userID")
+	objUserID, _ := primitive.ObjectIDFromHex(userID.(string))
+
+	if err := c.storyService.ReactToStory(ctx.Request.Context(), storyID, objUserID, req.Type); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.Status(http.StatusOK)
+}
+
+func (c *StoryController) GetStoryViewers(ctx *gin.Context) {
+	storyIDStr := ctx.Param("id")
+	storyID, err := primitive.ObjectIDFromHex(storyIDStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid story ID"})
+		return
+	}
+
+	userID, _ := ctx.Get("userID")
+	objUserID, _ := primitive.ObjectIDFromHex(userID.(string))
+
+	viewers, err := c.storyService.GetStoryViewers(ctx.Request.Context(), storyID, objUserID)
+	if err != nil {
+		// unauthorized or not found
+		ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, viewers)
 }
