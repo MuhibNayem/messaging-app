@@ -54,19 +54,12 @@ func (s *StoryService) CreateStory(ctx context.Context, userID primitive.ObjectI
 	return s.storyRepo.CreateStory(ctx, story)
 }
 
-func (s *StoryService) GetStoriesFeed(ctx context.Context, userID primitive.ObjectID) ([]models.Story, error) {
+func (s *StoryService) GetStoriesFeed(ctx context.Context, userID primitive.ObjectID, limit, offset int) ([]models.Story, error) {
 	// Get friends
 	friends, err := s.friendshipRepo.GetFriends(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-
-	// For TRUE public stories, we might want to fetch stories from non-friends too?
-	// But standard feed is usually followed/friends.
-	// However, user said "Public must be public".
-	// If this means "Anyone can see my public story if they look for it", that is satisfied by access control.
-	// If it means "My feed should include public stories from strangers", that's a "Global Feed".
-	// Assuming standard "Stories Feed" = Friends + Self, but respecting privacy settings.
 
 	// Collect user IDs (friends + self)
 	userIDs := make([]primitive.ObjectID, len(friends)+1)
@@ -78,36 +71,42 @@ func (s *StoryService) GetStoriesFeed(ctx context.Context, userID primitive.Obje
 		friendMap[friend.ID.Hex()] = true
 	}
 
-	stories, err := s.storyRepo.GetActiveStories(ctx, userIDs)
+	// 1. Get Paginated Authors (User IDs who have active stories)
+	authorIDs, err := s.storyRepo.GetActiveStoryAuthors(ctx, userIDs, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter based on privacy
+	if len(authorIDs) == 0 {
+		return []models.Story{}, nil
+	}
+
+	// 2. Fetch Stories for these authors
+	stories, err := s.storyRepo.GetStoriesForUsers(ctx, authorIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. Filter based on privacy
 	var visibleStories []models.Story
 	for _, story := range stories {
-		// 1. Own stories always visible
+		// Own stories always visible
 		if story.UserID == userID {
 			visibleStories = append(visibleStories, story)
 			continue
 		}
 
-		// 2. Privacy Check
+		// Privacy Check
 		switch story.Privacy {
 		case models.PrivacySettingPublic:
 			visibleStories = append(visibleStories, story)
 		case models.PrivacySettingFriends:
-			// Viewer must be friend (already ensured by GetActiveStories taking friends list,
-			// BUT if we expand later to non-friends, we need this check.
-			// Currently, `stories` only contains friends+self, so this is implicit, but let's be safe.)
 			if friendMap[story.UserID.Hex()] {
 				visibleStories = append(visibleStories, story)
 			}
 		case models.PrivacySettingOnlyMe:
-			// Only author sees (handled by `story.UserID == userID` above)
 			continue
 		case models.PrivacySettingCustom:
-			// Check if viewer ID is in AllowedViewers
 			for _, allowedID := range story.AllowedViewers {
 				if allowedID == userID {
 					visibleStories = append(visibleStories, story)
@@ -115,7 +114,6 @@ func (s *StoryService) GetStoriesFeed(ctx context.Context, userID primitive.Obje
 				}
 			}
 		case models.PrivacySettingFriendsExcept:
-			// Check if viewer ID is NOT in BlockedViewers
 			blocked := false
 			for _, blockedID := range story.BlockedViewers {
 				if blockedID == userID {
@@ -127,7 +125,7 @@ func (s *StoryService) GetStoriesFeed(ctx context.Context, userID primitive.Obje
 				visibleStories = append(visibleStories, story)
 			}
 		default:
-			// Default to friends? Or hide? Let's say Friends default.
+			// Default to friends
 			if friendMap[story.UserID.Hex()] {
 				visibleStories = append(visibleStories, story)
 			}
@@ -168,34 +166,6 @@ func (s *StoryService) GetStoryViewers(ctx context.Context, storyID primitive.Ob
 		return nil, errors.New("unauthorized: only author can view viewers")
 	}
 
-	// 2. Fetch user details for viewers
-	if len(story.Viewers) == 0 {
-		return []models.StoryViewerResponse{}, nil
-	}
-
-	// Create a map of user reactions for quick lookup (User ID -> Reaction Type)
-	reactionMap := make(map[string]string)
-	for _, reaction := range story.Reactions {
-		// If multiple reactions, this takes the last one (since we append/push reactions)
-		// Ideally we might want the *latest* if they reacted multiple times, but push implies chronological.
-		reactionMap[reaction.UserID.Hex()] = reaction.Type
-	}
-
-	var viewers []models.StoryViewerResponse
-	for _, viewerID := range story.Viewers {
-		u, err := s.userRepo.FindUserByID(ctx, viewerID)
-		if err == nil {
-			viewers = append(viewers, models.StoryViewerResponse{
-				User: models.UserShortResponse{
-					ID:        u.ID,
-					Username:  u.Username,
-					FullName:  u.FullName,
-					Avatar:    u.Avatar,
-					PublicKey: u.PublicKey,
-				},
-				ReactionType: reactionMap[viewerID.Hex()],
-			})
-		}
-	}
-	return viewers, nil
+	// 2. Fetch Viewers from Repo (which joins Views + Reactions)
+	return s.storyRepo.GetStoryViewersWithReactions(ctx, storyID)
 }

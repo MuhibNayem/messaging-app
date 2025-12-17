@@ -58,7 +58,23 @@ func (c *StoryController) GetStoriesFeed(ctx *gin.Context) {
 		return
 	}
 
-	stories, err := c.storyService.GetStoriesFeed(ctx.Request.Context(), objUserID)
+	var req struct {
+		Limit  int `form:"limit"`
+		Offset int `form:"offset"`
+	}
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		// Default values if binding fails or params missing (though ShouldBindQuery usually doesn't error on missing optional fields if not 'binding:"required"')
+		req.Limit = 10
+		req.Offset = 0
+	}
+	if req.Limit <= 0 {
+		req.Limit = 10
+	}
+	if req.Offset < 0 {
+		req.Offset = 0
+	}
+
+	stories, err := c.storyService.GetStoriesFeed(ctx.Request.Context(), objUserID, req.Limit, req.Offset)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

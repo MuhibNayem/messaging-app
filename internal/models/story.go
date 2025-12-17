@@ -15,14 +15,29 @@ type Story struct {
 	Privacy        PrivacySettingType   `bson:"privacy" json:"privacy"`
 	AllowedViewers []primitive.ObjectID `bson:"allowed_viewers,omitempty" json:"allowed_viewers,omitempty"` // For CUSTOM
 	BlockedViewers []primitive.ObjectID `bson:"blocked_viewers,omitempty" json:"blocked_viewers,omitempty"` // For FRIENDS_EXCEPT
-	Viewers        []primitive.ObjectID `bson:"viewers,omitempty" json:"viewers,omitempty"`
-	Reactions      []StoryReaction      `bson:"reactions,omitempty" json:"reactions,omitempty"`
-	CreatedAt      time.Time            `bson:"created_at" json:"created_at"`
-	ExpiresAt      time.Time            `bson:"expires_at" json:"expires_at"`
+
+	// Scalability Refactor: Moved lists to separate collections
+	// Viewers        []primitive.ObjectID `bson:"viewers,omitempty" json:"viewers,omitempty"`
+	// Reactions      []StoryReaction      `bson:"reactions,omitempty" json:"reactions,omitempty"`
+
+	ViewCount     int `bson:"view_count" json:"view_count"`
+	ReactionCount int `bson:"reaction_count" json:"reaction_count"`
+
+	CreatedAt time.Time `bson:"created_at" json:"created_at"`
+	ExpiresAt time.Time `bson:"expires_at" json:"expires_at"`
+}
+
+type StoryView struct {
+	ID       primitive.ObjectID `bson:"_id,omitempty"`
+	StoryID  primitive.ObjectID `bson:"story_id"`
+	UserID   primitive.ObjectID `bson:"user_id"`
+	ViewedAt time.Time          `bson:"viewed_at"`
 }
 
 type StoryReaction struct {
-	UserID    primitive.ObjectID `bson:"user_id" json:"user_id"`
+	ID        primitive.ObjectID `bson:"_id,omitempty"`
+	StoryID   primitive.ObjectID `bson:"story_id"`
+	UserID    primitive.ObjectID `bson:"user_id"`
 	Type      string             `bson:"type" json:"type"` // "LIKE", "LOVE", "HAHA", "WOW", "SAD", "ANGRY"
 	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
 }

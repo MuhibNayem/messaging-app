@@ -13,11 +13,13 @@ import (
 )
 
 type StoryRepository struct {
-	collection *mongo.Collection
+	collection          *mongo.Collection
+	viewsCollection     *mongo.Collection
+	reactionsCollection *mongo.Collection
 }
 
 func NewStoryRepository(db *mongo.Database) *StoryRepository {
-	// Create indexes
+	// Create indexes for stories
 	_, err := db.Collection("stories").Indexes().CreateMany(
 		context.Background(),
 		[]mongo.IndexModel{
@@ -30,9 +32,89 @@ func NewStoryRepository(db *mongo.Database) *StoryRepository {
 		panic("Failed to create story indexes: " + err.Error())
 	}
 
-	return &StoryRepository{
-		collection: db.Collection("stories"),
+	// Create indexes for story_views
+	_, err = db.Collection("story_views").Indexes().CreateMany(
+		context.Background(),
+		[]mongo.IndexModel{
+			{Keys: bson.D{{Key: "story_id", Value: 1}, {Key: "user_id", Value: 1}}, Options: options.Index().SetUnique(true)},
+			{Keys: bson.D{{Key: "story_id", Value: 1}}, Options: options.Index()},
+		},
+	)
+	if err != nil {
+		panic("Failed to create story_views indexes: " + err.Error())
 	}
+
+	// Create indexes for story_reactions
+	_, err = db.Collection("story_reactions").Indexes().CreateMany(
+		context.Background(),
+		[]mongo.IndexModel{
+			{Keys: bson.D{{Key: "story_id", Value: 1}, {Key: "user_id", Value: 1}}, Options: options.Index()}, // User can react multiple times? Usually yes for "floating hearts". If toggle, then unique.
+			// Facebook style: "floating hearts" - multiple allowed? Or 1 persistent reaction + floating animation?
+			// User said "Floating Animation: Reacting triggers... messenger style".
+			// But usually state is ONE main reaction.
+			// Let's assume unique reaction per user for state persistence, but floating is UI.
+			// Actually, `AddReaction` usually upsert if unique.
+			// Let's keep it simple: Add reaction = record it. If we want toggle, we check existing.
+			// The Model has `Type`.
+			{Keys: bson.D{{Key: "story_id", Value: 1}}, Options: options.Index()},
+		},
+	)
+	if err != nil {
+		panic("Failed to create story_reactions indexes: " + err.Error())
+	}
+
+	return &StoryRepository{
+		collection:          db.Collection("stories"),
+		viewsCollection:     db.Collection("story_views"),
+		reactionsCollection: db.Collection("story_reactions"),
+	}
+}
+
+// ... (Keep CreateStory, GetStoryByID, DeleteStory, GetActiveStories, GetUserStories, GetExpiredStories, DeleteStories as is, they don't touch Viewers/Reactions arrays directly mostly, except GetStoryByID might return empty arrays now which is fine) ...
+
+func (r *StoryRepository) AddViewer(ctx context.Context, storyID primitive.ObjectID, viewerID primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// 1. Insert into story_views (if not exists)
+	view := models.StoryView{
+		ID:       primitive.NewObjectID(),
+		StoryID:  storyID,
+		UserID:   viewerID,
+		ViewedAt: time.Now(),
+	}
+	_, err := r.viewsCollection.InsertOne(ctx, view)
+	if err != nil {
+		// Ignore dup key error if already viewed
+		if mongo.IsDuplicateKeyError(err) {
+			return nil
+		}
+		return err
+	}
+
+	// 2. Increment view count on story
+	filter := bson.M{"_id": storyID}
+	update := bson.M{"$inc": bson.M{"view_count": 1}}
+	_, err = r.collection.UpdateOne(ctx, filter, update)
+	return err
+}
+
+func (r *StoryRepository) AddReaction(ctx context.Context, storyID primitive.ObjectID, reaction models.StoryReaction) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// 1. Insert into story_reactions
+	reaction.ID = primitive.NewObjectID() // Ensure ID
+	_, err := r.reactionsCollection.InsertOne(ctx, reaction)
+	if err != nil {
+		return err
+	}
+
+	// 2. Increment reaction count on story
+	filter := bson.M{"_id": storyID}
+	update := bson.M{"$inc": bson.M{"reaction_count": 1}}
+	_, err = r.collection.UpdateOne(ctx, filter, update)
+	return err
 }
 
 func (r *StoryRepository) CreateStory(ctx context.Context, story *models.Story) (*models.Story, error) {
@@ -156,22 +238,144 @@ func (r *StoryRepository) DeleteStories(ctx context.Context, ids []primitive.Obj
 	return err
 }
 
-func (r *StoryRepository) AddViewer(ctx context.Context, storyID primitive.ObjectID, viewerID primitive.ObjectID) error {
+// Methods AddViewer and AddReaction have been moved up and updated.
+
+// GetActiveStoryAuthors returns a paginated list of unique user IDs who have active stories.
+// It sorts users by their most recent story creation time.
+func (r *StoryRepository) GetActiveStoryAuthors(ctx context.Context, userIDs []primitive.ObjectID, limit, offset int) ([]primitive.ObjectID, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	filter := bson.M{"_id": storyID}
-	update := bson.M{"$addToSet": bson.M{"viewers": viewerID}}
-	_, err := r.collection.UpdateOne(ctx, filter, update)
-	return err
+	now := time.Now()
+	pipeline := mongo.Pipeline{
+		// 1. Match active stories from allowed users
+		{{Key: "$match", Value: bson.D{
+			{Key: "user_id", Value: bson.D{{Key: "$in", Value: userIDs}}},
+			{Key: "expires_at", Value: bson.D{{Key: "$gt", Value: now}}},
+		}}},
+		// 2. Group by user_id to find unique authors and their latest story time
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$user_id"},
+			{Key: "latest_story", Value: bson.D{{Key: "$max", Value: "$created_at"}}},
+		}}},
+		// 3. Sort by latest story time descending
+		{{Key: "$sort", Value: bson.D{{Key: "latest_story", Value: -1}}}},
+		// 4. Pagination
+		{{Key: "$skip", Value: offset}},
+		{{Key: "$limit", Value: limit}},
+	}
+
+	cur, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []struct {
+		ID primitive.ObjectID `bson:"_id"`
+	}
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	authors := make([]primitive.ObjectID, len(results))
+	for i, res := range results {
+		authors[i] = res.ID
+	}
+	return authors, nil
 }
 
-func (r *StoryRepository) AddReaction(ctx context.Context, storyID primitive.ObjectID, reaction models.StoryReaction) error {
+// GetStoriesForUsers fetches all active stories for the given list of authors.
+// GetStoriesForUsers fetches all active stories for the given list of authors.
+func (r *StoryRepository) GetStoriesForUsers(ctx context.Context, authorIDs []primitive.ObjectID) ([]models.Story, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	filter := bson.M{"_id": storyID}
-	update := bson.M{"$push": bson.M{"reactions": reaction}}
-	_, err := r.collection.UpdateOne(ctx, filter, update)
-	return err
+	now := time.Now()
+	filter := bson.M{
+		"user_id":    bson.M{"$in": authorIDs},
+		"expires_at": bson.M{"$gt": now},
+	}
+	// Within a user's story ring, it's chronological.
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}})
+
+	cur, err := r.collection.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var stories []models.Story
+	if err := cur.All(ctx, &stories); err != nil {
+		return nil, err
+	}
+	return stories, nil
+}
+
+// GetStoryViewersWithReactions fetches all viewers of a story and their reactions.
+func (r *StoryRepository) GetStoryViewersWithReactions(ctx context.Context, storyID primitive.ObjectID) ([]models.StoryViewerResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// Aggregation Pipeline:
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{"story_id": storyID}}},
+		// Lookup User
+		{{Key: "$lookup", Value: bson.M{
+			"from":         "users",
+			"localField":   "user_id",
+			"foreignField": "_id",
+			"as":           "user",
+		}}},
+		{{Key: "$unwind", Value: "$user"}},
+		// Lookup Reaction (Latest per user for this story)
+		{{Key: "$lookup", Value: bson.M{
+			"from": "story_reactions",
+			"let":  bson.M{"uid": "$user_id", "sid": "$story_id"},
+			"pipeline": mongo.Pipeline{
+				{{Key: "$match", Value: bson.M{
+					"$expr": bson.M{
+						"$and": []bson.M{
+							{"$eq": []interface{}{"$story_id", "$$sid"}},
+							{"$eq": []interface{}{"$user_id", "$$uid"}},
+						},
+					},
+				}}},
+				{{Key: "$sort", Value: bson.M{"created_at": -1}}},
+				{{Key: "$limit", Value: 1}},
+			},
+			"as": "user_reaction",
+		}}},
+		// Unwind reaction
+		{{Key: "$unwind", Value: bson.M{
+			"path":                       "$user_reaction",
+			"preserveNullAndEmptyArrays": true,
+		}}},
+		// Sort by ViewedAt DESC (Newest viewers first)
+		{{Key: "$sort", Value: bson.M{"viewed_at": -1}}},
+		// Project
+		{{Key: "$project", Value: bson.M{
+			"user": bson.M{
+				"id":         "$user._id",
+				"username":   "$user.username",
+				"full_name":  "$user.full_name",
+				"avatar":     "$user.avatar",
+				"public_key": "$user.public_key",
+			},
+			"reaction_type": "$user_reaction.type",
+			"viewed_at":     "$viewed_at",
+		}}},
+	}
+
+	cur, err := r.viewsCollection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []models.StoryViewerResponse
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
