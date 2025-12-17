@@ -160,7 +160,7 @@ func (r *FeedRepository) AddMediaToAlbum(ctx context.Context, media []models.Alb
 	return nil
 }
 
-func (r *FeedRepository) GetAlbumMedia(ctx context.Context, albumID primitive.ObjectID, limit, offset int64) ([]models.AlbumMedia, error) {
+func (r *FeedRepository) GetAlbumMedia(ctx context.Context, albumID primitive.ObjectID, limit, offset int64, mediaType string) ([]models.AlbumMedia, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -169,7 +169,12 @@ func (r *FeedRepository) GetAlbumMedia(ctx context.Context, albumID primitive.Ob
 	findOptions.SetLimit(limit)
 	findOptions.SetSkip(offset)
 
-	cursor, err := r.albumMediaCollection.Find(ctx, bson.M{"album_id": albumID}, findOptions)
+	filter := bson.M{"album_id": albumID}
+	if mediaType != "" {
+		filter["type"] = mediaType
+	}
+
+	cursor, err := r.albumMediaCollection.Find(ctx, filter, findOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +187,7 @@ func (r *FeedRepository) GetAlbumMedia(ctx context.Context, albumID primitive.Ob
 	return media, nil
 }
 
-func (r *FeedRepository) GetTimelineMedia(ctx context.Context, userID primitive.ObjectID, limit, offset int64) ([]models.AlbumMedia, error) {
+func (r *FeedRepository) GetTimelineMedia(ctx context.Context, userID primitive.ObjectID, limit, offset int64, mediaType string) ([]models.AlbumMedia, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -192,6 +197,14 @@ func (r *FeedRepository) GetTimelineMedia(ctx context.Context, userID primitive.
 			{Key: "media", Value: bson.D{{Key: "$exists", Value: true}, {Key: "$not", Value: bson.D{{Key: "$size", Value: 0}}}}},
 		}}},
 		bson.D{{Key: "$unwind", Value: "$media"}},
+	}
+
+	// Filter by media type after unwind
+	if mediaType != "" {
+		pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "media.type", Value: mediaType}}}})
+	}
+
+	pipeline = append(pipeline,
 		bson.D{{Key: "$sort", Value: bson.D{{Key: "created_at", Value: -1}}}},
 		bson.D{{Key: "$skip", Value: offset}},
 		bson.D{{Key: "$limit", Value: limit}},
@@ -201,10 +214,8 @@ func (r *FeedRepository) GetTimelineMedia(ctx context.Context, userID primitive.
 			{Key: "type", Value: "$media.type"},
 			{Key: "caption", Value: "$content"},
 			{Key: "created_at", Value: 1},
-			// _id will be post ID, which is fine-ish, but not unique per media item.
-			// Frontend should handle it or we can project a different ID if needed.
 		}}},
-	}
+	)
 
 	cursor, err := r.postsCollection.Aggregate(ctx, pipeline)
 	if err != nil {

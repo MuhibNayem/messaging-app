@@ -959,8 +959,9 @@ func (c *FeedController) GetAlbumMedia(ctx *gin.Context) {
 		limit = 20
 	}
 	offset, _ := strconv.ParseInt(ctx.Query("offset"), 10, 64)
+	mediaType := ctx.Query("type")
 
-	media, err := c.feedService.GetAlbumMedia(ctx.Request.Context(), albumID, limit, offset)
+	media, err := c.feedService.GetAlbumMedia(ctx.Request.Context(), albumID, limit, offset, mediaType)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
