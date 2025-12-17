@@ -254,7 +254,9 @@ func (c *FeedController) ListPosts(ctx *gin.Context) {
 		limit = 20
 	}
 
-	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, filterUserID, communityID, page, limit, sortBy, sortOrder)
+	hasMedia := ctx.Query("has_media") == "true"
+	mediaType := ctx.Query("media_type")
+	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, filterUserID, communityID, page, limit, sortBy, sortOrder, hasMedia, mediaType)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -791,4 +793,178 @@ func (c *FeedController) DeleteReaction(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// ----------------------------- AlbumsEndPoints -----------------------------
+
+// CreateAlbum godoc
+// @Summary Create a new album
+// @Security BearerAuth
+// @Tags albums
+// @Accept json
+// @Produce json
+// @Param body body models.CreateAlbumRequest true "Album creation data"
+// @Success 201 {object} models.Album
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/albums [post]
+func (c *FeedController) CreateAlbum(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	var req models.CreateAlbumRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	album, err := c.feedService.CreateAlbum(ctx.Request.Context(), objID, &req)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, album)
+}
+
+// GetUserAlbums godoc
+// @Summary Get all albums for a user
+// @Security BearerAuth
+// @Tags albums
+// @Produce json
+// @Param userId path string true "User ID"
+// @Success 200 {object} []models.Album
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/users/{id}/albums [get]
+func (c *FeedController) GetUserAlbums(ctx *gin.Context) {
+	userID := ctx.Param("id")
+	objUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	limit, _ := strconv.ParseInt(ctx.Query("limit"), 10, 64)
+	if limit == 0 {
+		limit = 20
+	}
+	offset, _ := strconv.ParseInt(ctx.Query("offset"), 10, 64)
+
+	albums, err := c.feedService.GetUserAlbums(ctx.Request.Context(), objUserID, limit, offset)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, albums)
+}
+
+// GetAlbum godoc
+// @Summary Get an album by ID
+// @Security BearerAuth
+// @Tags albums
+// @Produce json
+// @Param id path string true "Album ID"
+// @Success 200 {object} models.Album
+// @Failure 400 {object} gin.H
+// @Failure 404 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/albums/{id} [get]
+func (c *FeedController) GetAlbum(ctx *gin.Context) {
+	albumID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid album ID"})
+		return
+	}
+
+	album, err := c.feedService.GetAlbum(ctx.Request.Context(), albumID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, album)
+}
+
+// AddMediaToAlbum godoc
+// @Summary Add media to an album
+// @Security BearerAuth
+// @Tags albums
+// @Accept json
+// @Produce json
+// @Param id path string true "Album ID"
+// @Param body body models.AddMediaToAlbumRequest true "Media to add"
+// @Success 200 {object} models.SuccessResponse
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/albums/{id}/media [post]
+func (c *FeedController) AddMediaToAlbum(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	albumID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid album ID"})
+		return
+	}
+
+	var req models.AddMediaToAlbumRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = c.feedService.AddMediaToAlbum(ctx.Request.Context(), objUserID, albumID, req.Media)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, models.SuccessResponse{Success: true})
+}
+
+// GetAlbumMedia godoc
+// @Summary Get media items for an album with pagination
+// @Security BearerAuth
+// @Tags albums
+// @Produce json
+// @Param id path string true "Album ID"
+// @Param limit query int false "Limit"
+// @Param offset query int false "Offset"
+// @Success 200 {object} []models.AlbumMedia
+// @Failure 400 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/albums/{id}/media [get]
+func (c *FeedController) GetAlbumMedia(ctx *gin.Context) {
+	albumID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid album ID"})
+		return
+	}
+
+	limit, _ := strconv.ParseInt(ctx.Query("limit"), 10, 64)
+	if limit == 0 {
+		limit = 20
+	}
+	offset, _ := strconv.ParseInt(ctx.Query("offset"), 10, 64)
+
+	media, err := c.feedService.GetAlbumMedia(ctx.Request.Context(), albumID, limit, offset)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, media)
 }

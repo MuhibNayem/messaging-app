@@ -12,14 +12,11 @@ import (
 
 	"messaging-app/config"
 	"messaging-app/internal/controllers"
-	conversationControllers "messaging-app/internal/controllers"
 	"messaging-app/internal/kafka"
 	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/redis"
 	"messaging-app/internal/repositories"
-	conversationRepositories "messaging-app/internal/repositories"
 	"messaging-app/internal/services"
-	conversationServices "messaging-app/internal/services"
 	"messaging-app/internal/websocket"
 	"messaging-app/pkg/middleware"
 
@@ -150,7 +147,7 @@ func main() {
 	feedRepo := repositories.NewFeedRepository(db)
 	privacyRepo := repositories.NewPrivacyRepository(db)
 	notificationRepo := repositories.NewNotificationRepository(db)
-	conversationRepo := conversationRepositories.NewConversationRepository(db, userRepo, groupRepo)
+	conversationRepo := repositories.NewConversationRepository(db, userRepo, groupRepo)
 
 	communityRepo := repositories.NewCommunityRepository(db)
 	storyRepo := repositories.NewStoryRepository(db)
@@ -166,20 +163,20 @@ func main() {
 
 	// Initialize Services
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
-	// Note: UserService now needs ReelRepository for syncing author data
-	userService := services.NewUserService(userRepo, reelRepo, redisClient.GetClient())
+	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
+	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService)
+	// Note: UserService now needs FeedService for profile history
+	userService := services.NewUserService(userRepo, reelRepo, redisClient.GetClient(), feedService)
 	groupService := services.NewGroupService(groupRepo, userRepo, kafkaProducer)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
-	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
 	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService)
-	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
 	storageService, err := services.NewStorageService(cfg)
 	if err != nil {
 		log.Fatal("Failed to initialize storage service:", err)
 	}
 	searchService := services.NewSearchService(userRepo, feedRepo) // Initialize SearchService
-	conversationService := conversationServices.NewConversationService(conversationRepo)
+	conversationService := services.NewConversationService(conversationRepo)
 
 	communityService := services.NewCommunityService(communityRepo, userRepo)
 	storyService := services.NewStoryService(storyRepo, userRepo, friendshipRepo)
@@ -195,7 +192,7 @@ func main() {
 	privacyController := controllers.NewPrivacyController(privacyService, userService)
 	searchController := controllers.NewSearchController(searchService)                   // Initialize SearchController
 	notificationController := controllers.NewNotificationController(notificationService) // Initialize NotificationController
-	conversationController := conversationControllers.NewConversationController(conversationService)
+	conversationController := controllers.NewConversationController(conversationService)
 	uploadController := controllers.NewUploadController(storageService)
 
 	communityController := controllers.NewCommunityController(communityService)
@@ -327,6 +324,7 @@ func main() {
 		userRoutes.GET("/presence", userController.GetUsersPresence) // Get presence status for multiple users
 		userRoutes.GET("/:id", userController.GetUserByID)           // Get specific user by ID
 		userRoutes.GET("/:id/status", userController.GetUserStatus)  // Get user status
+		userRoutes.GET("/:id/albums", feedController.GetUserAlbums)
 	}
 
 	// Feed Routes
@@ -360,6 +358,15 @@ func main() {
 		// Reaction routes
 		feedRoutes.POST("/reactions", feedController.CreateReaction)
 		feedRoutes.DELETE("/reactions/:reactionId", feedController.DeleteReaction)
+	}
+
+	// Album Routes
+	albumRoutes := api.Group("/albums")
+	{
+		albumRoutes.POST("", feedController.CreateAlbum)
+		albumRoutes.GET("/:id", feedController.GetAlbum)
+		albumRoutes.POST("/:id/media", feedController.AddMediaToAlbum)
+		albumRoutes.GET("/:id/media", feedController.GetAlbumMedia)
 	}
 
 	// Privacy Routes
@@ -551,14 +558,14 @@ func main() {
 	<-quit
 	log.Println("Shutting down server...")
 
-	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
 	}
 
-	if err := wsServer.Shutdown(ctx); err != nil {
+	if err := wsServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("WebSocket server shutdown error: %v", err)
 	}
 

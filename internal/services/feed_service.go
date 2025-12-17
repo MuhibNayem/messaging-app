@@ -334,7 +334,7 @@ func (s *FeedService) DeletePost(ctx context.Context, userID, postID primitive.O
 	return nil
 }
 
-func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID, filterUserID string, communityID string, page, limit int64, sortBy, sortOrder string) (*models.FeedResponse, error) {
+func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID, filterUserID string, communityID string, page, limit int64, sortBy, sortOrder string, hasMedia bool, mediaType string) (*models.FeedResponse, error) {
 	// Base filter for public posts
 	filter := bson.M{}
 
@@ -345,13 +345,6 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 			return nil, fmt.Errorf("invalid community ID: %w", err)
 		}
 		filter["community_id"] = objCommunityID
-
-		// For communities, we might need to check if user is a member for private communities
-		// But for now, let's assume the repository/controller handles access control or we do it here.
-		// TODO: Add privacy check for closed/secret communities if not a member.
-		// For now, relies on public/closed logic.
-		// Actually, standard privacy flags on posts (Public/Friends) might not apply exactly the same way in communities.
-		// But assuming community posts are visible if you have access to community.
 	} else if filterUserID != "" {
 		// If a specific user's posts are requested, filter by that user ID
 		objFilterUserID, err := primitive.ObjectIDFromHex(filterUserID)
@@ -389,8 +382,19 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 		}
 	}
 
-	// TODO: Implement CUSTOM privacy logic (requires fetching custom audience lists)
+	// Apply filter for posts with media
+	if hasMedia {
+		filter["media"] = bson.M{"$exists": true, "$ne": []interface{}{}}
+		// Start index 0 check is safer if 'media' is always an array
+		filter["media.0"] = bson.M{"$exists": true}
+	}
 
+	// Filter by specific media type (image or video)
+	if mediaType != "" {
+		filter["media"] = bson.M{"$elemMatch": bson.M{"type": mediaType}}
+	}
+
+	// TODO: Implement CUSTOM privacy logic (requires fetching custom audience lists)
 	sortField := "created_at"
 	sortDir := -1 // descending
 
@@ -1053,4 +1057,131 @@ func (s *FeedService) GetRepliesByCommentID(ctx context.Context, commentID primi
 	}
 
 	return replies, nil
+}
+
+// ----------------------------- Albums -----------------------------
+
+// ----------------------------- Albums -----------------------------
+
+func (s *FeedService) CreateAlbum(ctx context.Context, userID primitive.ObjectID, req *models.CreateAlbumRequest) (*models.Album, error) {
+	album := &models.Album{
+		UserID:      userID,
+		Name:        req.Name,
+		Description: req.Description,
+		Type:        models.AlbumTypeCustom,
+		Privacy:     req.Privacy,
+		PostIDs:     []primitive.ObjectID{},
+	}
+
+	return s.feedRepo.CreateAlbum(ctx, album)
+}
+
+func (s *FeedService) GetUserAlbums(ctx context.Context, userID primitive.ObjectID, limit, offset int64) ([]models.Album, error) {
+	// Ensure default albums exist (virtual or real)
+	// We check if they exist, if not create them
+	// This might be better done on demand, but for listing we want them to appear.
+
+	// 1. Profile Pictures
+	_, err := s.EnsureAlbumExists(ctx, userID, models.AlbumTypeProfile, "Profile Pictures")
+	if err != nil {
+		fmt.Printf("Failed to ensure profile album: %v\n", err)
+	}
+
+	// 2. Cover Photos
+	_, err = s.EnsureAlbumExists(ctx, userID, models.AlbumTypeCover, "Cover Photos")
+	if err != nil {
+		fmt.Printf("Failed to ensure cover album: %v\n", err)
+	}
+
+	// 3. Timeline Photos (Virtual/Aggregated)
+	_, err = s.EnsureAlbumExists(ctx, userID, models.AlbumTypeTimeline, "Timeline Photos")
+	if err != nil {
+		fmt.Printf("Failed to ensure timeline album: %v\n", err)
+	}
+
+	return s.feedRepo.ListAlbums(ctx, userID, limit, offset)
+}
+
+func (s *FeedService) EnsureAlbumExists(ctx context.Context, userID primitive.ObjectID, albumType models.AlbumType, defaultName string) (*models.Album, error) {
+	album, err := s.feedRepo.GetAlbumByType(ctx, userID, albumType)
+	if err == nil {
+		return album, nil
+	}
+	if !errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, err
+	}
+
+	// Create if not exists
+	newAlbum := &models.Album{
+		UserID:  userID,
+		Name:    defaultName,
+		Type:    albumType,
+		Privacy: models.PrivacySettingPublic, // Default to public for profile/cover? Or match user settings?
+	}
+	return s.feedRepo.CreateAlbum(ctx, newAlbum)
+}
+
+func (s *FeedService) AddMediaToAlbum(ctx context.Context, userID, albumID primitive.ObjectID, media []models.MediaItem) error {
+	album, err := s.feedRepo.GetAlbumByID(ctx, albumID)
+	if err != nil {
+		return err
+	}
+	if album.UserID != userID {
+		return errors.New("unauthorized to update this album")
+	}
+
+	if album.Type == models.AlbumTypeTimeline {
+		return errors.New("cannot manually add media to timeline photos, use posts instead")
+	}
+
+	// Convert MediaItem to AlbumMedia
+	albumMediaItems := make([]models.AlbumMedia, len(media))
+	now := time.Now()
+	for i, item := range media {
+		albumMediaItems[i] = models.AlbumMedia{
+			AlbumID:   albumID,
+			UserID:    userID,
+			URL:       item.URL,
+			Type:      item.Type,
+			CreatedAt: now,
+		}
+	}
+
+	// Add media
+	if err := s.feedRepo.AddMediaToAlbum(ctx, albumMediaItems); err != nil {
+		return err
+	}
+
+	// If it's the first media (or logic dictates), set as cover if none exists -> This logic is harder now as we don't know total count easily without query
+	// But we can check if current cover is empty
+	if album.CoverURL == "" && len(media) > 0 {
+		// Try to find an image
+		for _, m := range media {
+			if m.Type == "image" {
+				// Update cover (ignore error)
+				_ = s.feedRepo.UpdateAlbumCover(ctx, albumID, m.URL)
+				break
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *FeedService) GetAlbumMedia(ctx context.Context, albumID primitive.ObjectID, limit, offset int64) ([]models.AlbumMedia, error) {
+	album, err := s.feedRepo.GetAlbumByID(ctx, albumID)
+	if err != nil {
+		return nil, err
+	}
+
+	if album.Type == models.AlbumTypeTimeline {
+		return s.feedRepo.GetTimelineMedia(ctx, album.UserID, limit, offset)
+	}
+
+	return s.feedRepo.GetAlbumMedia(ctx, albumID, limit, offset)
+}
+
+func (s *FeedService) GetAlbum(ctx context.Context, albumID primitive.ObjectID) (*models.Album, error) {
+	// TODO: Check privacy?
+	return s.feedRepo.GetAlbumByID(ctx, albumID)
 }

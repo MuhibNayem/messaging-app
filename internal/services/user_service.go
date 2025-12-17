@@ -21,10 +21,11 @@ type UserService struct {
 	userRepo    *repositories.UserRepository
 	reelRepo    *repositories.ReelRepository
 	redisClient *redis.ClusterClient
+	feedService *FeedService
 }
 
-func NewUserService(userRepo *repositories.UserRepository, reelRepo *repositories.ReelRepository, redisClient *redis.ClusterClient) *UserService {
-	return &UserService{userRepo: userRepo, reelRepo: reelRepo, redisClient: redisClient}
+func NewUserService(userRepo *repositories.UserRepository, reelRepo *repositories.ReelRepository, redisClient *redis.ClusterClient, feedService *FeedService) *UserService {
+	return &UserService{userRepo: userRepo, reelRepo: reelRepo, redisClient: redisClient, feedService: feedService}
 }
 
 func (s *UserService) GetUserStatus(ctx context.Context, userID primitive.ObjectID) (map[string]interface{}, error) {
@@ -110,9 +111,49 @@ func (s *UserService) UpdateUser(ctx context.Context, id primitive.ObjectID, upd
 	}
 	if update.Avatar != "" {
 		updateData["avatar"] = update.Avatar
+
+		// Create Post and Add to Album
+		go func(newAvatar string) {
+			// Create Post
+			postReq := &models.CreatePostRequest{
+				Content: "Updated their profile picture.",
+				Media: []models.MediaItem{{
+					Type: "image",
+					URL:  newAvatar,
+				}},
+				Privacy: models.PrivacySettingPublic,
+			}
+			s.feedService.CreatePost(context.Background(), id, postReq)
+
+			// Add to Album
+			album, err := s.feedService.EnsureAlbumExists(context.Background(), id, models.AlbumTypeProfile, "Profile Pictures")
+			if err == nil && album != nil {
+				s.feedService.AddMediaToAlbum(context.Background(), id, album.ID, postReq.Media)
+			}
+		}(update.Avatar)
 	}
 	if update.CoverPicture != "" {
 		updateData["cover_picture"] = update.CoverPicture
+
+		// Create Post and Add to Album
+		go func(newCover string) {
+			// Create Post
+			postReq := &models.CreatePostRequest{
+				Content: "Updated their cover photo.",
+				Media: []models.MediaItem{{
+					Type: "image",
+					URL:  newCover,
+				}},
+				Privacy: models.PrivacySettingPublic,
+			}
+			s.feedService.CreatePost(context.Background(), id, postReq)
+
+			// Add to Album
+			album, err := s.feedService.EnsureAlbumExists(context.Background(), id, models.AlbumTypeCover, "Cover Photos")
+			if err == nil && album != nil {
+				s.feedService.AddMediaToAlbum(context.Background(), id, album.ID, postReq.Media)
+			}
+		}(update.CoverPicture)
 	}
 	if update.IsEncryptionEnabled != nil {
 		updateData["is_encryption_enabled"] = *update.IsEncryptionEnabled

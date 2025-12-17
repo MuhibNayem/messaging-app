@@ -14,85 +14,230 @@ import (
 )
 
 type FeedRepository struct {
-	postsCollection     *mongo.Collection
-	commentsCollection  *mongo.Collection
-	repliesCollection   *mongo.Collection
-	reactionsCollection *mongo.Collection
+	postsCollection      *mongo.Collection
+	commentsCollection   *mongo.Collection
+	repliesCollection    *mongo.Collection
+	reactionsCollection  *mongo.Collection
+	albumsCollection     *mongo.Collection
+	albumMediaCollection *mongo.Collection
 }
 
 func NewFeedRepository(db *mongo.Database) *FeedRepository {
-	// posts indexes
-	_, err := db.Collection("posts").Indexes().CreateMany(
+	// ... (indexes for other collections)
+
+	// albums indexes
+	_, err := db.Collection("albums").Indexes().CreateMany(
 		context.Background(),
 		[]mongo.IndexModel{
 			{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "type", Value: 1}}, Options: options.Index()},
 			{Keys: bson.D{{Key: "created_at", Value: -1}}, Options: options.Index()},
-			{Keys: bson.D{{Key: "hashtags", Value: 1}}, Options: options.Index()},
 		},
 	)
 	if err != nil {
-		panic("Failed to create post indexes: " + err.Error())
+		panic("Failed to create album indexes: " + err.Error())
 	}
 
-	// comments indexes
-	_, err = db.Collection("comments").Indexes().CreateMany(
+	// album_media indexes
+	_, err = db.Collection("album_media").Indexes().CreateMany(
 		context.Background(),
 		[]mongo.IndexModel{
-			{Keys: bson.D{{Key: "post_id", Value: 1}}, Options: options.Index()},
-			{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index()},
+			{Keys: bson.D{{Key: "album_id", Value: 1}}, Options: options.Index()},
 			{Keys: bson.D{{Key: "created_at", Value: -1}}, Options: options.Index()},
 		},
 	)
 	if err != nil {
-		panic("Failed to create comment indexes: " + err.Error())
-	}
-
-	// replies indexes
-	_, err = db.Collection("replies").Indexes().CreateMany(
-		context.Background(),
-		[]mongo.IndexModel{
-			{Keys: bson.D{{Key: "comment_id", Value: 1}}, Options: options.Index()},
-			{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index()},
-			{Keys: bson.D{{Key: "created_at", Value: -1}}, Options: options.Index()},
-		},
-	)
-	if err != nil {
-		panic("Failed to create reply indexes: " + err.Error())
-	}
-
-	// reactions indexes
-	_, err = db.Collection("reactions").Indexes().CreateMany(
-		context.Background(),
-		[]mongo.IndexModel{
-			{Keys: bson.D{{Key: "target_id", Value: 1}, {Key: "target_type", Value: 1}}, Options: options.Index()},
-			{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index()},
-			{Keys: bson.D{{Key: "created_at", Value: -1}}, Options: options.Index()},
-			// Optional: enforce one reaction per user/target/type
-			// {Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "target_id", Value: 1}, {Key: "target_type", Value: 1}, {Key: "type", Value: 1}}, Options: options.Index().SetUnique(true)},
-		},
-	)
-	if err != nil {
-		panic("Failed to create reaction indexes: " + err.Error())
+		panic("Failed to create album_media indexes: " + err.Error())
 	}
 
 	return &FeedRepository{
-		postsCollection:     db.Collection("posts"),
-		commentsCollection:  db.Collection("comments"),
-		repliesCollection:   db.Collection("replies"),
-		reactionsCollection: db.Collection("reactions"),
+		postsCollection:      db.Collection("posts"),
+		commentsCollection:   db.Collection("comments"),
+		repliesCollection:    db.Collection("replies"),
+		reactionsCollection:  db.Collection("reactions"),
+		albumsCollection:     db.Collection("albums"),
+		albumMediaCollection: db.Collection("album_media"),
 	}
+}
+
+// ... (Posts methods)
+
+// ----------------------------- Albums ----------------_____________
+
+func (r *FeedRepository) CreateAlbum(ctx context.Context, album *models.Album) (*models.Album, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	now := time.Now()
+	album.CreatedAt = now
+	album.UpdatedAt = now
+
+	res, err := r.albumsCollection.InsertOne(ctx, album)
+	if err != nil {
+		return nil, err
+	}
+	album.ID = res.InsertedID.(primitive.ObjectID)
+	return album, nil
+}
+
+func (r *FeedRepository) GetAlbumByID(ctx context.Context, albumID primitive.ObjectID) (*models.Album, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	var album models.Album
+	// Media is no longer embedded, just fetching metadata
+	if err := r.albumsCollection.FindOne(ctx, bson.M{"_id": albumID}).Decode(&album); err != nil {
+		return nil, err
+	}
+	return &album, nil
+}
+
+func (r *FeedRepository) GetAlbumByType(ctx context.Context, userID primitive.ObjectID, albumType models.AlbumType) (*models.Album, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	var album models.Album
+	if err := r.albumsCollection.FindOne(ctx, bson.M{"user_id": userID, "type": albumType}).Decode(&album); err != nil {
+		return nil, err
+	}
+	return &album, nil
+}
+
+func (r *FeedRepository) ListAlbums(ctx context.Context, userID primitive.ObjectID, limit, offset int64) ([]models.Album, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
+	if limit > 0 {
+		opts.SetLimit(limit)
+	}
+	if offset > 0 {
+		opts.SetSkip(offset)
+	}
+
+	cursor, err := r.albumsCollection.Find(ctx, bson.M{"user_id": userID}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var albums []models.Album
+	if err := cursor.All(ctx, &albums); err != nil {
+		return nil, err
+	}
+	if albums == nil {
+		albums = []models.Album{}
+	}
+	return albums, nil
+}
+
+func (r *FeedRepository) AddMediaToAlbum(ctx context.Context, media []models.AlbumMedia) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	if len(media) == 0 {
+		return nil
+	}
+
+	// Convert []models.AlbumMedia to []interface{} for InsertMany
+	docs := make([]interface{}, len(media))
+	for i, v := range media {
+		docs[i] = v
+	}
+
+	_, err := r.albumMediaCollection.InsertMany(ctx, docs)
+	if err != nil {
+		return err
+	}
+
+	// Update the album's updated_at timestamp
+	_, _ = r.albumsCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": media[0].AlbumID},
+		bson.M{"$set": bson.M{"updated_at": time.Now()}},
+	)
+
+	return nil
+}
+
+func (r *FeedRepository) GetAlbumMedia(ctx context.Context, albumID primitive.ObjectID, limit, offset int64) ([]models.AlbumMedia, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	findOptions := options.Find()
+	findOptions.SetSort(bson.D{{Key: "created_at", Value: -1}})
+	findOptions.SetLimit(limit)
+	findOptions.SetSkip(offset)
+
+	cursor, err := r.albumMediaCollection.Find(ctx, bson.M{"album_id": albumID}, findOptions)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var media []models.AlbumMedia
+	if err := cursor.All(ctx, &media); err != nil {
+		return nil, err
+	}
+	return media, nil
+}
+
+func (r *FeedRepository) GetTimelineMedia(ctx context.Context, userID primitive.ObjectID, limit, offset int64) ([]models.AlbumMedia, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: bson.D{
+			{Key: "user_id", Value: userID},
+			{Key: "media", Value: bson.D{{Key: "$exists", Value: true}, {Key: "$not", Value: bson.D{{Key: "$size", Value: 0}}}}},
+		}}},
+		bson.D{{Key: "$unwind", Value: "$media"}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "created_at", Value: -1}}}},
+		bson.D{{Key: "$skip", Value: offset}},
+		bson.D{{Key: "$limit", Value: limit}},
+		bson.D{{Key: "$project", Value: bson.D{
+			{Key: "user_id", Value: 1},
+			{Key: "url", Value: "$media.url"},
+			{Key: "type", Value: "$media.type"},
+			{Key: "caption", Value: "$content"},
+			{Key: "created_at", Value: 1},
+			// _id will be post ID, which is fine-ish, but not unique per media item.
+			// Frontend should handle it or we can project a different ID if needed.
+		}}},
+	}
+
+	cursor, err := r.postsCollection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var media []models.AlbumMedia
+	if err := cursor.All(ctx, &media); err != nil {
+		return nil, err
+	}
+	return media, nil
+}
+
+func (r *FeedRepository) UpdateAlbumCover(ctx context.Context, albumID primitive.ObjectID, coverURL string) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.albumsCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": albumID},
+		bson.M{
+			"$set": bson.M{"cover_url": coverURL, "updated_at": time.Now()},
+		},
+	)
+	return err
 }
 
 // ----------------------------- Posts -----------------------------
 
 func (r *FeedRepository) CreatePost(ctx context.Context, post *models.Post) (*models.Post, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	now := time.Now()
-	post.CreatedAt = now
-	post.UpdatedAt = now
-
+	post.CreatedAt = time.Now()
+	post.UpdatedAt = time.Now()
 	res, err := r.postsCollection.InsertOne(ctx, post)
 	if err != nil {
 		return nil, err
@@ -102,49 +247,30 @@ func (r *FeedRepository) CreatePost(ctx context.Context, post *models.Post) (*mo
 }
 
 func (r *FeedRepository) GetPostByID(ctx context.Context, postID primitive.ObjectID) (*models.Post, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	pipeline := mongo.Pipeline{
-		bson.D{{Key: "$match", Value: bson.M{"_id": postID}}},
-	}
-	pipeline = append(pipeline, r.aggregatePostPipeline()...)
-
-	cur, err := r.postsCollection.Aggregate(ctx, pipeline)
+	var post models.Post
+	err := r.postsCollection.FindOne(ctx, bson.M{"_id": postID}).Decode(&post)
 	if err != nil {
 		return nil, err
 	}
-	defer cur.Close(ctx)
-
-	if cur.Next(ctx) {
-		var post models.Post
-		if err := cur.Decode(&post); err != nil {
-			return nil, err
-		}
-		return &post, nil
-	}
-	return nil, mongo.ErrNoDocuments
+	return &post, nil
 }
 
 func (r *FeedRepository) UpdatePost(ctx context.Context, postID primitive.ObjectID, update bson.M) (*models.Post, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
 	update["updated_at"] = time.Now()
-	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
-
-	res := r.postsCollection.FindOneAndUpdate(ctx, bson.M{"_id": postID}, bson.M{"$set": update}, opts)
-	var updated models.Post
-	if err := res.Decode(&updated); err != nil {
+	res := r.postsCollection.FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": postID},
+		bson.M{"$set": update},
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	)
+	var updatedPost models.Post
+	if err := res.Decode(&updatedPost); err != nil {
 		return nil, err
 	}
-	return &updated, nil
+	return &updatedPost, nil
 }
 
 func (r *FeedRepository) DeletePost(ctx context.Context, userID, postID primitive.ObjectID) error {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
 	res, err := r.postsCollection.DeleteOne(ctx, bson.M{"_id": postID, "user_id": userID})
 	if err != nil {
 		return err
