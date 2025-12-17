@@ -1104,21 +1104,71 @@ func (s *FeedService) GetUserAlbums(ctx context.Context, userID primitive.Object
 
 func (s *FeedService) EnsureAlbumExists(ctx context.Context, userID primitive.ObjectID, albumType models.AlbumType, defaultName string) (*models.Album, error) {
 	album, err := s.feedRepo.GetAlbumByType(ctx, userID, albumType)
-	if err == nil {
-		return album, nil
-	}
-	if !errors.Is(err, mongo.ErrNoDocuments) {
-		return nil, err
+	createdNew := false
+	if err != nil {
+		if !errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, err
+		}
+
+		// Create if not exists
+		newAlbum := &models.Album{
+			UserID:  userID,
+			Name:    defaultName,
+			Type:    albumType,
+			Privacy: models.PrivacySettingPublic, // Default to public for profile/cover
+		}
+		album, err = s.feedRepo.CreateAlbum(ctx, newAlbum)
+		if err != nil {
+			return nil, err
+		}
+		createdNew = true
 	}
 
-	// Create if not exists
-	newAlbum := &models.Album{
-		UserID:  userID,
-		Name:    defaultName,
-		Type:    albumType,
-		Privacy: models.PrivacySettingPublic, // Default to public for profile/cover? Or match user settings?
+	// Backfill logic: If album is profile/cover and empty/new, ensure current user photo is in it
+	if albumType == models.AlbumTypeProfile || albumType == models.AlbumTypeCover {
+		shouldCheck := createdNew
+		if !shouldCheck {
+			// Check if empty
+			media, err := s.feedRepo.GetAlbumMedia(ctx, album.ID, 1, 0)
+			if err == nil && len(media) == 0 {
+				shouldCheck = true
+			}
+		}
+
+		if shouldCheck {
+			user, err := s.userRepo.FindUserByID(ctx, userID)
+			if err == nil && user != nil {
+				var urlToBackfill string
+				// Assume image type for profile/cover photos
+				const mediaType = "image"
+
+				if albumType == models.AlbumTypeProfile && user.Avatar != "" {
+					urlToBackfill = user.Avatar
+				} else if albumType == models.AlbumTypeCover && user.CoverPicture != "" {
+					urlToBackfill = user.CoverPicture
+				}
+
+				if urlToBackfill != "" {
+					// Add to album
+					err := s.AddMediaToAlbum(ctx, userID, album.ID, []models.MediaItem{{
+						URL:  urlToBackfill,
+						Type: mediaType,
+					}})
+					if err != nil {
+						fmt.Printf("Failed to backfill %s to album %s: %v\n", urlToBackfill, album.ID.Hex(), err)
+					} else {
+						// Refresh album to return updated state (e.g. cover url)
+						updatedAlbum, err := s.feedRepo.GetAlbumByID(ctx, album.ID)
+						if err == nil {
+							album = updatedAlbum
+						}
+					}
+				}
+			}
+		}
 	}
-	return s.feedRepo.CreateAlbum(ctx, newAlbum)
+
+	return album, nil
 }
 
 func (s *FeedService) AddMediaToAlbum(ctx context.Context, userID, albumID primitive.ObjectID, media []models.MediaItem) error {
