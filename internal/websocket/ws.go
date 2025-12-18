@@ -188,16 +188,14 @@ func (h *Hub) run() {
 				presenceData, _ := json.Marshal(map[string]interface{}{"status": "online", "last_seen": time.Now().Unix()})
 				h.redisClient.Set(h.ctx, "presence:"+client.userID, presenceData, 24*time.Hour)
 
+				userOID, _ := primitive.ObjectIDFromHex(client.userID)
+
 				// 1. Fetch friends to send THEIR presence to the new client
 				//    and to send the new client's presence to THEM.
-				friends, err := h.friendshipRepo.GetFriends(h.ctx, func() primitive.ObjectID {
-					oid, _ := primitive.ObjectIDFromHex(client.userID)
-					return oid
-				}())
+				friends, err := h.friendshipRepo.GetFriends(h.ctx, userOID)
 
 				if err != nil {
 					log.Printf("Error getting friends for presence: %v", err)
-					return
 				}
 
 				// Prepare presence event for the new user
@@ -207,12 +205,14 @@ func (h *Hub) run() {
 				}
 				myPresenceNumBytes, _ := json.Marshal(myPresenceEvent)
 
-				// List of friend IDs to notify
-				friendIDs := make([]string, 0)
-				for _, f := range friends {
-					friendIDs = append(friendIDs, f.ID.Hex())
+				// Collect all user IDs to notify (friends + marketplace partners)
+				notifyUserIDs := make(map[string]bool)
 
-					// Check if friend is online
+				// Add friend IDs
+				for _, f := range friends {
+					notifyUserIDs[f.ID.Hex()] = true
+
+					// Check if friend is online and send their status to me
 					h.mu.RLock()
 					_, isOnline := h.userClients[f.ID.Hex()]
 					h.mu.RUnlock()
@@ -236,10 +236,43 @@ func (h *Hub) run() {
 					}
 				}
 
-				// 2. Broadcast my presence ONLY to my friends
-				for _, fid := range friendIDs {
-					h.sendToUser(fid, myPresenceNumBytes)
+				// 2. Also get marketplace conversation partners (for buyer-seller presence)
+				marketplacePartners, mpErr := h.messageRepo.GetMarketplacePartnerIDs(h.ctx, userOID)
+				if mpErr != nil {
+					log.Printf("Error getting marketplace partners for presence: %v", mpErr)
+				} else {
+					for _, partnerID := range marketplacePartners {
+						partnerHex := partnerID.Hex()
+						notifyUserIDs[partnerHex] = true
+
+						// Check if marketplace partner is online and send their status to me
+						h.mu.RLock()
+						_, isOnline := h.userClients[partnerHex]
+						h.mu.RUnlock()
+
+						if isOnline {
+							partnerPresence := models.WebSocketEvent{
+								Type: "presence_update",
+								Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "online", "last_seen": %d}`, partnerHex, time.Now().Unix())),
+							}
+							partnerPresenceBytes, _ := json.Marshal(partnerPresence)
+
+							h.mu.RLock()
+							if clients, ok := h.userClients[client.userID]; ok {
+								if _, exists := clients[client]; exists {
+									client.send <- partnerPresenceBytes
+								}
+							}
+							h.mu.RUnlock()
+						}
+					}
 				}
+
+				// 3. Broadcast my presence to all friends AND marketplace partners
+				for userID := range notifyUserIDs {
+					h.sendToUser(userID, myPresenceNumBytes)
+				}
+
 				// Also send to self to confirm connection (optional but good for consistency)
 				h.mu.RLock()
 				if clients, ok := h.userClients[client.userID]; ok {
@@ -258,20 +291,36 @@ func (h *Hub) run() {
 				presenceData, _ := json.Marshal(map[string]interface{}{"status": "offline", "last_seen": time.Now().Unix()})
 				h.redisClient.Set(h.ctx, "presence:"+userID, presenceData, 24*time.Hour)
 
-				// Broadcast offline status ONLY to friends
-				oid, _ := primitive.ObjectIDFromHex(userID)
-				friends, err := h.friendshipRepo.GetFriends(h.ctx, oid)
+				userOID, _ := primitive.ObjectIDFromHex(userID)
 
+				// Collect all user IDs to notify (friends + marketplace partners)
+				notifyUserIDs := make(map[string]bool)
+
+				// Get friends
+				friends, err := h.friendshipRepo.GetFriends(h.ctx, userOID)
 				if err == nil {
-					offlineEvent := models.WebSocketEvent{
-						Type: "presence_update",
-						Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "offline", "last_seen": %d}`, userID, time.Now().Unix())),
-					}
-					offlineEventBytes, _ := json.Marshal(offlineEvent)
-
 					for _, f := range friends {
-						h.sendToUser(f.ID.Hex(), offlineEventBytes)
+						notifyUserIDs[f.ID.Hex()] = true
 					}
+				}
+
+				// Get marketplace partners
+				marketplacePartners, mpErr := h.messageRepo.GetMarketplacePartnerIDs(h.ctx, userOID)
+				if mpErr == nil {
+					for _, partnerID := range marketplacePartners {
+						notifyUserIDs[partnerID.Hex()] = true
+					}
+				}
+
+				// Broadcast offline status to all friends AND marketplace partners
+				offlineEvent := models.WebSocketEvent{
+					Type: "presence_update",
+					Data: json.RawMessage(fmt.Sprintf(`{"user_id": "%s", "status": "offline", "last_seen": %d}`, userID, time.Now().Unix())),
+				}
+				offlineEventBytes, _ := json.Marshal(offlineEvent)
+
+				for uid := range notifyUserIDs {
+					h.sendToUser(uid, offlineEventBytes)
 				}
 			}(c.userID)
 

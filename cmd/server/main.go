@@ -186,7 +186,7 @@ func main() {
 	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
 
-	searchService := services.NewSearchService(userRepo, feedRepo) // Initialize SearchService
+	searchService := services.NewSearchService(userRepo, feedRepo, friendshipRepo) // Initialize SearchService
 	conversationService := services.NewConversationService(conversationRepo)
 
 	communityService := services.NewCommunityService(communityRepo, userRepo)

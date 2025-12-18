@@ -515,3 +515,52 @@ func (r *MessageRepository) GetMessageByID(ctx context.Context, messageID primit
 	}
 	return &message, nil
 }
+
+// GetMarketplacePartnerIDs returns all unique user IDs that have exchanged marketplace messages with the given user.
+// This is used for presence broadcasting to marketplace conversation partners who may not be friends.
+func (r *MessageRepository) GetMarketplacePartnerIDs(ctx context.Context, userID primitive.ObjectID) ([]primitive.ObjectID, error) {
+	// Find all marketplace messages where user is sender or receiver
+	pipeline := mongo.Pipeline{
+		// Match marketplace messages involving this user
+		bson.D{{Key: "$match", Value: bson.M{
+			"is_marketplace": true,
+			"$or": []bson.M{
+				{"sender_id": userID},
+				{"receiver_id": userID},
+			},
+		}}},
+		// Project to get the "other" user ID
+		bson.D{{Key: "$project", Value: bson.M{
+			"partner_id": bson.M{
+				"$cond": bson.A{
+					bson.M{"$eq": bson.A{"$sender_id", userID}},
+					"$receiver_id",
+					"$sender_id",
+				},
+			},
+		}}},
+		// Get unique partner IDs
+		bson.D{{Key: "$group", Value: bson.M{
+			"_id": "$partner_id",
+		}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var results []struct {
+		ID primitive.ObjectID `bson:"_id"`
+	}
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	partnerIDs := make([]primitive.ObjectID, len(results))
+	for i, r := range results {
+		partnerIDs[i] = r.ID
+	}
+	return partnerIDs, nil
+}

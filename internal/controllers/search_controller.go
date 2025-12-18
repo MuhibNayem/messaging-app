@@ -5,8 +5,10 @@ import (
 	"strconv"
 
 	"messaging-app/internal/services"
+	"messaging-app/pkg/utils"
 
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type SearchController struct {
@@ -52,7 +54,13 @@ func (c *SearchController) Search(ctx *gin.Context) {
 		return
 	}
 
-	searchResult, err := c.searchService.Search(ctx.Request.Context(), query, page, limit)
+	// Get current user ID from context (for friendship status)
+	var currentUserID *primitive.ObjectID
+	if userID, err := utils.GetUserIDFromContext(ctx); err == nil {
+		currentUserID = &userID
+	}
+
+	searchResult, err := c.searchService.Search(ctx.Request.Context(), query, page, limit, currentUserID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
