@@ -73,10 +73,7 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 								}},
 							}},
 							// Exclude marketplace messages
-							bson.M{"$or": bson.A{
-								bson.M{"$eq": bson.A{"$product_id", nil}},
-								bson.M{"$not": bson.M{"$ifNull": bson.A{"$product_id", false}}},
-							}},
+							bson.M{"$ne": bson.A{"$is_marketplace", true}},
 						},
 					},
 				}},
@@ -102,10 +99,7 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 							}},
 							bson.M{"$not": bson.M{"$in": bson.A{"$$u1", "$seen_by"}}},
 							// Exclude marketplace messages
-							bson.M{"$or": bson.A{
-								bson.M{"$eq": bson.A{"$product_id", nil}},
-								bson.M{"$not": bson.M{"$ifNull": bson.A{"$product_id", false}}},
-							}},
+							bson.M{"$ne": bson.A{"$is_marketplace", true}},
 						},
 					},
 				}},

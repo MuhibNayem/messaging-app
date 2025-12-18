@@ -94,12 +94,21 @@ func (c *MessageController) SendMessage(ctx *gin.Context) {
 				}
 			}
 		}
+		// Explicitly check for is_marketplace in form data if binding didn't catch it
+		if val := ctx.PostForm("is_marketplace"); val != "" {
+			if b, err := strconv.ParseBool(val); err == nil {
+				req.IsMarketplace = b
+			}
+		}
 	} else {
 		if err := ctx.ShouldBindJSON(&req); err != nil {
 			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
 			return
 		}
 	}
+	
+	// DEBUG LOG
+	// fmt.Printf("[MessageController] SendMessage: IsMarketplace=%v, ContentType=%s\n", req.IsMarketplace, req.ContentType)
 
 	req.SenderID = userID // Set SenderID from authenticated user
 

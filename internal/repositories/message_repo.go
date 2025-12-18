@@ -40,6 +40,14 @@ func NewMessageRepository(db *mongo.Database) *MessageRepository {
 		{
 			Keys: bson.D{{Key: "content_type", Value: 1}},
 		},
+		// Index for marketplace partner queries (presence broadcast)
+		{
+			Keys: bson.D{
+				{Key: "is_marketplace", Value: 1},
+				{Key: "sender_id", Value: 1},
+				{Key: "receiver_id", Value: 1},
+			},
+		},
 		// TTL index for auto-deleting messages after 1 year
 		{
 			Keys:    bson.D{{Key: "created_at", Value: 1}},

@@ -19,6 +19,7 @@ type TypingEvent struct {
 	UserID         string `json:"user_id"`
 	ConversationID string `json:"conversation_id"`
 	IsTyping       bool   `json:"is_typing"`
+	IsMarketplace  bool   `json:"is_marketplace"` // For distinguishing marketplace vs personal DM typing
 	Timestamp      int64  `json:"timestamp"`
 }
 

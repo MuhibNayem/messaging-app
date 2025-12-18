@@ -894,8 +894,16 @@ func (h *Hub) sendToClients(clients []*Client, msg models.Message) {
 	}
 
 	eventType := "MESSAGE_CREATED"
+	if msg.IsMarketplace {
+		eventType = "MARKETPLACE_MESSAGE_CREATED"
+	}
+
 	if msg.ContentType == "deleted" || msg.ContentType == models.ContentTypeDeleted {
-		eventType = "MESSAGE_DELETED"
+		if msg.IsMarketplace {
+			eventType = "MARKETPLACE_MESSAGE_DELETED"
+		} else {
+			eventType = "MESSAGE_DELETED"
+		}
 	}
 
 	wsEvent := models.WebSocketEvent{
@@ -1328,12 +1336,13 @@ func (c *Client) readPump(h *Hub) {
 			var typingData struct {
 				ConversationID string `json:"conversation_id"`
 				IsTyping       bool   `json:"isTyping"`
+				IsMarketplace  bool   `json:"is_marketplace"`
 			}
 			if err := json.Unmarshal(env.Payload, &typingData); err != nil {
 				log.Printf("Error unmarshaling typing data: %v", err)
 				return
 			}
-			h.typingEvents <- models.TypingEvent{UserID: c.userID, ConversationID: typingData.ConversationID, IsTyping: typingData.IsTyping, Timestamp: time.Now().Unix()}
+			h.typingEvents <- models.TypingEvent{UserID: c.userID, ConversationID: typingData.ConversationID, IsTyping: typingData.IsTyping, IsMarketplace: typingData.IsMarketplace, Timestamp: time.Now().Unix()}
 		case "message":
 			var m models.Message
 			if err := json.Unmarshal(env.Payload, &m); err == nil && m.Content != "" && m.SenderID.Hex() == c.userID {
