@@ -126,7 +126,7 @@ func (s *UserService) UpdateUser(ctx context.Context, id primitive.ObjectID, upd
 			s.feedService.CreatePost(context.Background(), id, postReq)
 
 			// Add to Album
-			album, err := s.feedService.EnsureAlbumExists(context.Background(), id, models.AlbumTypeProfile, "Profile Pictures")
+			album, err := s.feedService.EnsureAlbumExists(context.Background(), id, models.AlbumTypeProfile, "Profile Pictures", true)
 			if err == nil && album != nil {
 				s.feedService.AddMediaToAlbum(context.Background(), id, album.ID, postReq.Media)
 			}
@@ -149,7 +149,7 @@ func (s *UserService) UpdateUser(ctx context.Context, id primitive.ObjectID, upd
 			s.feedService.CreatePost(context.Background(), id, postReq)
 
 			// Add to Album
-			album, err := s.feedService.EnsureAlbumExists(context.Background(), id, models.AlbumTypeCover, "Cover Photos")
+			album, err := s.feedService.EnsureAlbumExists(context.Background(), id, models.AlbumTypeCover, "Cover Photos", true)
 			if err == nil && album != nil {
 				s.feedService.AddMediaToAlbum(context.Background(), id, album.ID, postReq.Media)
 			}

@@ -1276,19 +1276,19 @@ func (s *FeedService) GetUserAlbums(ctx context.Context, userID primitive.Object
 	// This might be better done on demand, but for listing we want them to appear.
 
 	// 1. Profile Pictures
-	_, err := s.EnsureAlbumExists(ctx, userID, models.AlbumTypeProfile, "Profile Pictures")
+	_, err := s.EnsureAlbumExists(ctx, userID, models.AlbumTypeProfile, "Profile Pictures", false)
 	if err != nil {
 		fmt.Printf("Failed to ensure profile album: %v\n", err)
 	}
 
 	// 2. Cover Photos
-	_, err = s.EnsureAlbumExists(ctx, userID, models.AlbumTypeCover, "Cover Photos")
+	_, err = s.EnsureAlbumExists(ctx, userID, models.AlbumTypeCover, "Cover Photos", false)
 	if err != nil {
 		fmt.Printf("Failed to ensure cover album: %v\n", err)
 	}
 
 	// 3. Timeline Photos (Virtual/Aggregated)
-	_, err = s.EnsureAlbumExists(ctx, userID, models.AlbumTypeTimeline, "Timeline Photos")
+	_, err = s.EnsureAlbumExists(ctx, userID, models.AlbumTypeTimeline, "Timeline Photos", false)
 	if err != nil {
 		fmt.Printf("Failed to ensure timeline album: %v\n", err)
 	}
@@ -1296,7 +1296,7 @@ func (s *FeedService) GetUserAlbums(ctx context.Context, userID primitive.Object
 	return s.feedRepo.ListAlbums(ctx, userID, limit, offset)
 }
 
-func (s *FeedService) EnsureAlbumExists(ctx context.Context, userID primitive.ObjectID, albumType models.AlbumType, defaultName string) (*models.Album, error) {
+func (s *FeedService) EnsureAlbumExists(ctx context.Context, userID primitive.ObjectID, albumType models.AlbumType, defaultName string, skipBackfill bool) (*models.Album, error) {
 	album, err := s.feedRepo.GetAlbumByType(ctx, userID, albumType)
 	createdNew := false
 	if err != nil {
@@ -1319,7 +1319,7 @@ func (s *FeedService) EnsureAlbumExists(ctx context.Context, userID primitive.Ob
 	}
 
 	// Backfill logic: If album is profile/cover and empty/new, ensure current user photo is in it
-	if albumType == models.AlbumTypeProfile || albumType == models.AlbumTypeCover {
+	if !skipBackfill && (albumType == models.AlbumTypeProfile || albumType == models.AlbumTypeCover) {
 		shouldCheck := createdNew
 		if !shouldCheck {
 			// Check if empty
