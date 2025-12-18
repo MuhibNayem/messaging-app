@@ -256,8 +256,8 @@ func (s *FeedService) UpdatePostStatus(ctx context.Context, postID primitive.Obj
 
 	// Update status
 	_, err = s.feedRepo.UpdatePost(ctx, post.ID, bson.M{
-		"status":     status,
-		"updated_at": time.Now(),
+		"status": status,
+		// "updated_at": time.Now(), // Don't update this to avoid "Edited" label
 	})
 	return err
 }
@@ -476,7 +476,7 @@ func (s *FeedService) DeletePost(ctx context.Context, userID, postID primitive.O
 	return nil
 }
 
-func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID, filterUserID string, communityID string, page, limit int64, sortBy, sortOrder string, hasMedia bool, mediaType string) (*models.FeedResponse, error) {
+func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID, filterUserID string, communityID string, page, limit int64, sortBy, sortOrder string, hasMedia bool, mediaType string, status string) (*models.FeedResponse, error) {
 	// Base filter for public posts
 	filter := bson.M{}
 
@@ -487,6 +487,20 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 			return nil, fmt.Errorf("invalid community ID: %w", err)
 		}
 		filter["community_id"] = objCommunityID
+
+		// If status is provided, filter by it. Otherwise show all (or active?)
+		// For communities, we might want to default to active unless specified.
+		if status != "" {
+			filter["status"] = status
+		} else {
+			// Default to Active if not specified
+			filter["$or"] = []bson.M{
+				{"status": models.PostStatusActive},
+				{"status": bson.M{"$exists": false}},
+				{"status": nil},
+			}
+		}
+
 	} else if filterUserID != "" {
 		// If a specific user's posts are requested, filter by that user ID
 		objFilterUserID, err := primitive.ObjectIDFromHex(filterUserID)
@@ -494,14 +508,28 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 			return nil, fmt.Errorf("invalid filter user ID: %w", err)
 		}
 		filter["user_id"] = objFilterUserID
+
+		if status != "" {
+			filter["status"] = status
+		} else {
+			filter["$or"] = []bson.M{
+				{"status": models.PostStatusActive},
+				{"status": bson.M{"$exists": false}},
+				{"status": nil},
+			}
+		}
+
 	} else {
 
-		// Default to only showing Active posts
-		// BACKWARD COMPATIBILITY: Include posts where "status" does not exist or is null
-		filter["$or"] = []bson.M{
+		// Main Feed Default: Active Only
+		statusFilter := bson.M{"$or": []bson.M{
 			{"status": models.PostStatusActive},
 			{"status": bson.M{"$exists": false}},
 			{"status": nil},
+		}}
+
+		if status != "" {
+			statusFilter = bson.M{"status": status}
 		}
 
 		// If no specific user or community is requested (Main Feed), apply privacy filters
@@ -533,13 +561,7 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 		filter = bson.M{
 			"$and": []bson.M{
 				filter, // Includes community_id exists:false
-				{
-					"$or": []bson.M{
-						{"status": models.PostStatusActive},
-						{"status": bson.M{"$exists": false}},
-						{"status": nil},
-					},
-				},
+				statusFilter,
 				{
 					"$or": privacyFilter,
 				},

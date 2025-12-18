@@ -257,7 +257,9 @@ func (c *FeedController) ListPosts(ctx *gin.Context) {
 
 	hasMedia := ctx.Query("has_media") == "true"
 	mediaType := ctx.Query("media_type")
-	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, filterUserID, communityID, page, limit, sortBy, sortOrder, hasMedia, mediaType)
+	status := ctx.Query("status")
+
+	response, err := c.feedService.ListPosts(ctx.Request.Context(), objUserID, filterUserID, communityID, page, limit, sortBy, sortOrder, hasMedia, mediaType, status)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
