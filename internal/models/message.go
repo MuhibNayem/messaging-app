@@ -13,6 +13,16 @@ type MessageReaction struct {
 	Timestamp time.Time          `bson:"timestamp" json:"timestamp"`
 }
 
+// MessageProduct is a lightweight product representation for message embedding
+type MessageProduct struct {
+	ID       primitive.ObjectID `bson:"_id" json:"id"`
+	Title    string             `bson:"title" json:"title"`
+	Price    float64            `bson:"price" json:"price"`
+	Currency string             `bson:"currency" json:"currency"`
+	Images   []string           `bson:"images" json:"images"`
+	Status   string             `bson:"status" json:"status"`
+}
+
 type Message struct {
 	ID               primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
 	SenderID         primitive.ObjectID   `bson:"sender_id" json:"sender_id"`
@@ -33,6 +43,8 @@ type Message struct {
 	Reactions        []MessageReaction    `bson:"reactions,omitempty" json:"reactions,omitempty"`                     // New field for reactions
 	ReplyToMessageID *primitive.ObjectID  `bson:"reply_to_message_id,omitempty" json:"reply_to_message_id,omitempty"` // New field for replies
 	ProductID        *primitive.ObjectID  `bson:"product_id,omitempty" json:"product_id,omitempty"`                   // New field for marketplace inquiries
+	IsMarketplace    bool                 `bson:"is_marketplace" json:"is_marketplace"`                               // Flag for marketplace context
+	Product          *MessageProduct      `bson:"product,omitempty" json:"product,omitempty"`                         // Populated product data
 	Mentions         []primitive.ObjectID `bson:"mentions,omitempty" json:"mentions,omitempty"`
 	MentionedUsers   []PostAuthor         `bson:"-" json:"mentioned_users,omitempty"`
 	Sender           *SafeUserResponse    `bson:"sender,omitempty" json:"sender,omitempty"`
@@ -63,6 +75,7 @@ type MessageRequest struct {
 	MediaURLs        []string `json:"media_urls,omitempty" form:"media_urls"`
 	ReplyToMessageID string   `json:"reply_to_message_id,omitempty" form:"reply_to_message_id"` // New field for replies
 	ProductID        string   `json:"product_id,omitempty" form:"product_id"`                   // New field for marketplace inquiries
+	IsMarketplace    bool     `json:"is_marketplace" form:"is_marketplace"`                     // Flag for marketplace context
 	IsEncrypted      bool     `json:"is_encrypted" form:"is_encrypted"`
 	IV               string   `json:"iv,omitempty" form:"iv"`
 	EncryptedKeys    string   `json:"encrypted_keys,omitempty" form:"encrypted_keys"` // JSON string for map

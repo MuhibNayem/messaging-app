@@ -50,12 +50,13 @@ func NewMessageService(
 
 func (s *MessageService) SendMessage(ctx context.Context, senderID primitive.ObjectID, req models.MessageRequest) (*models.Message, error) {
 	msg := &models.Message{
-		SenderID:    senderID,
-		Content:     req.Content,
-		ContentType: req.ContentType,
-		MediaURLs:   req.MediaURLs,
-		IsEncrypted: req.IsEncrypted,
-		IV:          req.IV,
+		SenderID:      senderID,
+		Content:       req.Content,
+		ContentType:   req.ContentType,
+		MediaURLs:     req.MediaURLs,
+		IsEncrypted:   req.IsEncrypted,
+		IV:            req.IV,
+		IsMarketplace: req.IsMarketplace, // Marketplace context flag
 	}
 
 	if req.ProductID != "" {
@@ -261,8 +262,8 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 	}
 
 	// Check friendship status with cache
-	// SKIP check if this is a Marketplace Message (Product Inquiry)
-	if msg.ProductID == nil {
+	// SKIP check if this is a Marketplace Message (either via IsMarketplace flag or ProductID)
+	if !msg.IsMarketplace && msg.ProductID == nil {
 		cacheKey := "friends:" + msg.SenderID.Hex() + ":" + receiverID
 		areFriends, err := s.redisClient.Get(ctx, cacheKey).Result()
 		if err != nil || areFriends != "true" {

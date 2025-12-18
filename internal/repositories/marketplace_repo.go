@@ -281,12 +281,12 @@ func (r *MarketplaceRepository) ListProducts(ctx context.Context, filter models.
 // --- Marketplace Messaging ---
 
 // GetMarketplaceConversations aggregates messages to find conversations related to products.
-// It groups by (product_id, buyer_id, seller_id) to distinct threads.
+// It groups by (other_user) to create ONE conversation per buyer-seller pair.
 func (r *MarketplaceRepository) GetMarketplaceConversations(ctx context.Context, userID primitive.ObjectID) ([]models.ConversationSummary, error) {
-	// Pipeline to find messages where the user is sender or receiver AND product_id exists
+	// Pipeline to find messages where the user is sender or receiver AND is_marketplace is true
 	pipeline := mongo.Pipeline{
 		bson.D{{Key: "$match", Value: bson.M{
-			"product_id": bson.M{"$exists": true},
+			"is_marketplace": true, // Use the robust is_marketplace flag
 			"$or": []bson.M{
 				{"sender_id": userID},
 				{"receiver_id": userID},
@@ -294,16 +294,13 @@ func (r *MarketplaceRepository) GetMarketplaceConversations(ctx context.Context,
 		}}},
 		// Sort by created_at desc to get latest first
 		bson.D{{Key: "$sort", Value: bson.M{"created_at": -1}}},
-		// Group by Product ID and the *Other* User ID to form unique threads
+		// Group by the *Other* User ID only - ONE conversation per buyer-seller pair
 		bson.D{{Key: "$group", Value: bson.M{
 			"_id": bson.M{
-				"product_id": "$product_id",
-				"other_user": bson.M{
-					"$cond": bson.A{
-						bson.M{"$eq": bson.A{"$sender_id", userID}},
-						"$receiver_id",
-						"$sender_id",
-					},
+				"$cond": bson.A{
+					bson.M{"$eq": bson.A{"$sender_id", userID}},
+					"$receiver_id",
+					"$sender_id",
 				},
 			},
 			"last_message": bson.M{"$first": "$$ROOT"},
@@ -323,30 +320,18 @@ func (r *MarketplaceRepository) GetMarketplaceConversations(ctx context.Context,
 		// Lookup Other User Info
 		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "users",
-			"localField":   "_id.other_user",
+			"localField":   "_id",
 			"foreignField": "_id",
 			"as":           "other_user_info",
 		}}},
 		bson.D{{Key: "$unwind", Value: "$other_user_info"}}, // Strict unwind (exclude if user not found)
-		// Lookup Product Info
-		bson.D{{Key: "$lookup", Value: bson.M{
-			"from":         "products",
-			"localField":   "_id.product_id",
-			"foreignField": "_id",
-			"as":           "product_info",
-		}}},
-		bson.D{{Key: "$unwind", Value: bson.M{"path": "$product_info", "preserveNullAndEmptyArrays": true}}},
 		// Project to Summary
 		bson.D{{Key: "$project", Value: bson.M{
-			"_id":      "$other_user_info._id",
-			"name":     "$other_user_info.username",
-			"avatar":   "$other_user_info.avatar",
-			"is_group": bson.M{"$literal": false},
-			"last_message_content": bson.M{
-				"$concat": bson.A{
-					"[", "$product_info.title", "] ", "$last_message.content",
-				},
-			},
+			"_id":                       "$other_user_info._id",
+			"name":                      "$other_user_info.username",
+			"avatar":                    "$other_user_info.avatar",
+			"is_group":                  bson.M{"$literal": false},
+			"last_message_content":      "$last_message.content",
 			"last_message_timestamp":    "$last_message.created_at",
 			"last_message_sender_id":    "$last_message.sender_id",
 			"unread_count":              "$unread_count",

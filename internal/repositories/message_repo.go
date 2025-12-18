@@ -92,13 +92,13 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 	// Build marketplace filter based on context
 	var marketplaceFilter bson.M
 	if query.Marketplace {
-		// Only include messages with product_id (marketplace context)
-		marketplaceFilter = bson.M{"product_id": bson.M{"$exists": true, "$ne": nil}}
+		// Only include messages marked as marketplace context
+		marketplaceFilter = bson.M{"is_marketplace": true}
 	} else if query.ReceiverID != "" {
 		// Exclude marketplace messages from regular DMs (only for direct messages, not groups)
 		marketplaceFilter = bson.M{"$or": []bson.M{
-			{"product_id": bson.M{"$exists": false}},
-			{"product_id": nil},
+			{"is_marketplace": bson.M{"$exists": false}},
+			{"is_marketplace": false},
 		}}
 	}
 
@@ -119,6 +119,14 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 			"as":           "sender_info",
 		}}},
 		bson.D{{Key: "$unwind", Value: bson.M{"path": "$sender_info", "preserveNullAndEmptyArrays": true}}},
+		// Lookup product info (for messages with product_id)
+		bson.D{{Key: "$lookup", Value: bson.M{
+			"from":         "products",
+			"localField":   "product_id",
+			"foreignField": "_id",
+			"as":           "product_info",
+		}}},
+		bson.D{{Key: "$unwind", Value: bson.M{"path": "$product_info", "preserveNullAndEmptyArrays": true}}},
 		// Project fields to match models.Message struct
 		bson.D{{Key: "$project", Value: bson.M{
 			"_id":         1,
@@ -147,11 +155,21 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 			"edited_at":           1,
 			"reactions":           1,
 			"reply_to_message_id": 1,
-			"product_id":          1, // Marketplace product link
-			"created_at":          1,
-			"updated_at":          1,
-			"is_encrypted":        1,
-			"iv":                  1,
+			"product_id":          1, // Marketplace product link (optional metadata)
+			"is_marketplace":      1, // Marketplace context flag
+			// Embedded product data (lightweight, for display)
+			"product": bson.M{
+				"_id":      "$product_info._id",
+				"title":    "$product_info.title",
+				"price":    "$product_info.price",
+				"currency": "$product_info.currency",
+				"images":   "$product_info.images",
+				"status":   "$product_info.status",
+			},
+			"created_at":   1,
+			"updated_at":   1,
+			"is_encrypted": 1,
+			"iv":           1,
 		}}},
 		bson.D{{Key: "$sort", Value: bson.D{{Key: "created_at", Value: -1}}}}, // Sort by creation time descending
 		bson.D{{Key: "$skip", Value: int64((query.Page - 1) * query.Limit)}},

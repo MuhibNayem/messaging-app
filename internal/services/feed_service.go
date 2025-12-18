@@ -548,10 +548,13 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 		if viewerID != primitive.NilObjectID {
 			friendIDs, err := s.friendshipRepo.GetFriendIDs(ctx, viewerID)
 			if err == nil {
-				privacyFilter = append(privacyFilter, bson.M{
-					"privacy": models.PrivacySettingFriends,
-					"user_id": bson.M{"$in": friendIDs},
-				})
+				// Only add friends filter if user has friends (avoid empty $in array)
+				if len(friendIDs) > 0 {
+					privacyFilter = append(privacyFilter, bson.M{
+						"privacy": models.PrivacySettingFriends,
+						"user_id": bson.M{"$in": friendIDs},
+					})
+				}
 				// Also include own posts
 				privacyFilter = append(privacyFilter, bson.M{"user_id": viewerID})
 			}
