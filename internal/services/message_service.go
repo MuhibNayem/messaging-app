@@ -58,6 +58,13 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID primitive.Obj
 		IV:          req.IV,
 	}
 
+	if req.ProductID != "" {
+		pID, err := primitive.ObjectIDFromHex(req.ProductID)
+		if err == nil {
+			msg.ProductID = &pID
+		}
+	}
+
 	if req.ReplyToMessageID != "" {
 		replyToID, err := primitive.ObjectIDFromHex(req.ReplyToMessageID)
 		if err != nil {
@@ -254,19 +261,22 @@ func (s *MessageService) handleDirectMessage(ctx context.Context, msg *models.Me
 	}
 
 	// Check friendship status with cache
-	cacheKey := "friends:" + msg.SenderID.Hex() + ":" + receiverID
-	areFriends, err := s.redisClient.Get(ctx, cacheKey).Result()
-	if err != nil || areFriends != "true" {
-		// Fallback to database check
-		areFriendsDB, err := s.friendshipRepo.AreFriends(ctx, msg.SenderID, rID)
-		if err != nil {
-			return nil, err
+	// SKIP check if this is a Marketplace Message (Product Inquiry)
+	if msg.ProductID == nil {
+		cacheKey := "friends:" + msg.SenderID.Hex() + ":" + receiverID
+		areFriends, err := s.redisClient.Get(ctx, cacheKey).Result()
+		if err != nil || areFriends != "true" {
+			// Fallback to database check
+			areFriendsDB, err := s.friendshipRepo.AreFriends(ctx, msg.SenderID, rID)
+			if err != nil {
+				return nil, err
+			}
+			if !areFriendsDB {
+				return nil, errors.New("can only message friends")
+			}
+			// Update cache
+			s.redisClient.Set(ctx, cacheKey, "true", 1*time.Hour)
 		}
-		if !areFriendsDB {
-			return nil, errors.New("can only message friends")
-		}
-		// Update cache
-		s.redisClient.Set(ctx, cacheKey, "true", 1*time.Hour)
 	}
 
 	msg.ReceiverID = rID

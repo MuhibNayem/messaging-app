@@ -16,6 +16,7 @@ import (
 	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/redis"
 	"messaging-app/internal/repositories"
+	"messaging-app/internal/seeds" // Added seeds import
 	"messaging-app/internal/services"
 	"messaging-app/internal/websocket"
 	"messaging-app/pkg/middleware"
@@ -152,6 +153,13 @@ func main() {
 	communityRepo := repositories.NewCommunityRepository(db)
 	storyRepo := repositories.NewStoryRepository(db)
 	reelRepo := repositories.NewReelRepository(db)
+	marketplaceRepo := repositories.NewMarketplaceRepository(db) // Marketplace Repo
+
+	// Seeding
+	marketplaceSeeder := seeds.NewMarketplaceSeeder(marketplaceRepo)
+	if err := marketplaceSeeder.SeedCategories(context.Background()); err != nil {
+		log.Printf("Warning: Failed to seed categories: %v", err)
+	}
 
 	// Initialize Kafka Producer
 	kafkaProducer := kafka.NewMessageProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -184,6 +192,7 @@ func main() {
 	communityService := services.NewCommunityService(communityRepo, userRepo)
 	storyService := services.NewStoryService(storyRepo, userRepo, friendshipRepo)
 	reelService := services.NewReelService(reelRepo, userRepo, friendshipRepo)
+	marketplaceService := services.NewMarketplaceService(marketplaceRepo, userRepo) // Marketplace Service
 
 	// Initialize Controllers
 	authController := controllers.NewAuthController(authService)
@@ -201,6 +210,7 @@ func main() {
 	communityController := controllers.NewCommunityController(communityService)
 	storyController := controllers.NewStoryController(storyService)
 	reelController := controllers.NewReelController(reelService)
+	marketplaceController := controllers.NewMarketplaceController(marketplaceService) // Marketplace Controller
 
 	// Initialize WebSocket Hub
 	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, friendshipRepo, messageRepo, messageService)
@@ -518,6 +528,19 @@ func main() {
 		reelRoutes.POST("/:id/react", strictLimit, reelController.ReactToReel)
 		reelRoutes.POST("/:id/view", reelController.IncrementView)
 		// reelRoutes.DELETE("/:id", reelController.DeleteReel)
+	}
+
+	// Marketplace Routes
+	marketplaceRoutes := api.Group("/marketplace")
+	{
+		marketplaceRoutes.GET("/categories", marketplaceController.GetCategories)
+		marketplaceRoutes.POST("/products", marketplaceController.CreateProduct)
+		marketplaceRoutes.GET("/products", marketplaceController.ListProducts)
+		marketplaceRoutes.GET("/products/:id", marketplaceController.GetProduct)
+		marketplaceRoutes.DELETE("/products/:id", marketplaceController.DeleteProduct)
+		marketplaceRoutes.POST("/products/:id/sold", marketplaceController.MarkSold)
+		marketplaceRoutes.POST("/products/:id/save", marketplaceController.ToggleSave)
+		marketplaceRoutes.GET("/conversations", marketplaceController.GetConversations)
 	}
 
 	// WebSocket endpoint

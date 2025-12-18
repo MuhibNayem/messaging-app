@@ -32,6 +32,7 @@ type Message struct {
 	EditedAt         *time.Time           `bson:"edited_at,omitempty" json:"edited_at,omitempty"`                     // New field for message editing
 	Reactions        []MessageReaction    `bson:"reactions,omitempty" json:"reactions,omitempty"`                     // New field for reactions
 	ReplyToMessageID *primitive.ObjectID  `bson:"reply_to_message_id,omitempty" json:"reply_to_message_id,omitempty"` // New field for replies
+	ProductID        *primitive.ObjectID  `bson:"product_id,omitempty" json:"product_id,omitempty"`                   // New field for marketplace inquiries
 	Mentions         []primitive.ObjectID `bson:"mentions,omitempty" json:"mentions,omitempty"`
 	MentionedUsers   []PostAuthor         `bson:"-" json:"mentioned_users,omitempty"`
 	Sender           *SafeUserResponse    `bson:"sender,omitempty" json:"sender,omitempty"`
@@ -60,6 +61,7 @@ type MessageRequest struct {
 	ContentType      string   `json:"content_type" form:"content_type"`
 	MediaURLs        []string `json:"media_urls,omitempty" form:"media_urls"`
 	ReplyToMessageID string   `json:"reply_to_message_id,omitempty" form:"reply_to_message_id"` // New field for replies
+	ProductID        string   `json:"product_id,omitempty" form:"product_id"`                   // New field for marketplace inquiries
 	IsEncrypted      bool     `json:"is_encrypted" form:"is_encrypted"`
 	IV               string   `json:"iv,omitempty" form:"iv"`
 	EncryptedKeys    string   `json:"encrypted_keys,omitempty" form:"encrypted_keys"` // JSON string for map
@@ -128,6 +130,7 @@ const (
 	ContentTypeTextFile  = "text_file"
 	ContentTypeMultiple  = "multiple"
 	ContentTypeDeleted   = "deleted"
+	ContentTypeProduct   = "product" // New content type for marketplace inquiries
 )
 
 var ValidContentTypes = map[string]bool{
@@ -141,6 +144,7 @@ var ValidContentTypes = map[string]bool{
 	ContentTypeTextFile:  true,
 	ContentTypeMultiple:  true,
 	ContentTypeDeleted:   true,
+	ContentTypeProduct:   true,
 }
 
 func IsValidContentType(contentType string) bool {
