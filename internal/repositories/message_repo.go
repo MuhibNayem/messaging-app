@@ -67,24 +67,46 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 		return nil, errors.New("invalid sender ID")
 	}
 
+	// Build user filter (who is involved in conversation)
+	var userFilter bson.M
 	if query.GroupID != "" {
 		groupID, err := primitive.ObjectIDFromHex(query.GroupID)
 		if err != nil {
 			return nil, errors.New("invalid group ID")
 		}
-		filter["group_id"] = groupID
+		userFilter = bson.M{"group_id": groupID}
 	} else if query.ReceiverID != "" {
 		receiverID, err := primitive.ObjectIDFromHex(query.ReceiverID)
 		if err != nil {
 			return nil, errors.New("invalid receiver ID")
 		}
 		// Find messages where the current user (senderID) and the other user (receiverID) are involved
-		filter["$or"] = []bson.M{
+		userFilter = bson.M{"$or": []bson.M{
 			{"sender_id": senderID, "receiver_id": receiverID},
 			{"sender_id": receiverID, "receiver_id": senderID},
-		}
+		}}
 	} else {
 		return nil, errors.New("either groupID or receiverID must be provided")
+	}
+
+	// Build marketplace filter based on context
+	var marketplaceFilter bson.M
+	if query.Marketplace {
+		// Only include messages with product_id (marketplace context)
+		marketplaceFilter = bson.M{"product_id": bson.M{"$exists": true, "$ne": nil}}
+	} else if query.ReceiverID != "" {
+		// Exclude marketplace messages from regular DMs (only for direct messages, not groups)
+		marketplaceFilter = bson.M{"$or": []bson.M{
+			{"product_id": bson.M{"$exists": false}},
+			{"product_id": nil},
+		}}
+	}
+
+	// Combine filters with $and
+	if marketplaceFilter != nil {
+		filter["$and"] = []bson.M{userFilter, marketplaceFilter}
+	} else {
+		filter = userFilter
 	}
 
 	pipeline := mongo.Pipeline{
@@ -125,6 +147,7 @@ func (r *MessageRepository) GetMessages(ctx context.Context, query models.Messag
 			"edited_at":           1,
 			"reactions":           1,
 			"reply_to_message_id": 1,
+			"product_id":          1, // Marketplace product link
 			"created_at":          1,
 			"updated_at":          1,
 			"is_encrypted":        1,

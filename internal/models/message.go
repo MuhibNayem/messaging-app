@@ -44,12 +44,13 @@ type Message struct {
 }
 
 type MessageQuery struct {
-	GroupID    string `form:"group_id"`
-	SenderID   string `form:"sender_id"`
-	ReceiverID string `form:"receiver_id"`
-	Page       int    `form:"page,default=1"`
-	Limit      int    `form:"limit,default=50"`
-	Before     string `form:"before"`
+	GroupID     string `form:"group_id"`
+	SenderID    string `form:"sender_id"`
+	ReceiverID  string `form:"receiver_id"`
+	Page        int    `form:"page,default=1"`
+	Limit       int    `form:"limit,default=50"`
+	Before      string `form:"before"`
+	Marketplace bool   `form:"marketplace"` // If true, only return messages with product_id
 }
 
 type MessageRequest struct {

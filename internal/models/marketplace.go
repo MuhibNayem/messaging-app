@@ -45,20 +45,20 @@ type Category struct {
 
 // ProductResponse is for API responses, potentially including expanded Seller/Category info
 type ProductResponse struct {
-	ID          primitive.ObjectID `json:"id"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Price       float64            `json:"price"`
-	Currency    string             `json:"currency"`
-	Images      []string           `json:"images"`
-	Location    string             `json:"location"`
-	Status      ProductStatus      `json:"status"`
-	Tags        []string           `json:"tags,omitempty"`
-	Views       int64              `json:"views"`
-	CreatedAt   time.Time          `json:"created_at"`
-	Seller      UserShortResponse  `json:"seller"`
-	Category    Category           `json:"category"`
-	IsSaved     bool               `json:"is_saved"` // If the requesting user has saved this
+	ID          primitive.ObjectID `bson:"_id" json:"id"`
+	Title       string             `bson:"title" json:"title"`
+	Description string             `bson:"description" json:"description"`
+	Price       float64            `bson:"price" json:"price"`
+	Currency    string             `bson:"currency" json:"currency"`
+	Images      []string           `bson:"images" json:"images"`
+	Location    string             `bson:"location" json:"location"`
+	Status      ProductStatus      `bson:"status" json:"status"`
+	Tags        []string           `bson:"tags,omitempty" json:"tags,omitempty"`
+	Views       int64              `bson:"views" json:"views"`
+	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
+	Seller      UserShortResponse  `bson:"seller" json:"seller"`
+	Category    Category           `bson:"category" json:"category"`
+	IsSaved     bool               `bson:"is_saved" json:"is_saved"` // If the requesting user has saved this
 }
 
 type CreateProductRequest struct {

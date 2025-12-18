@@ -239,7 +239,7 @@ func (r *MarketplaceRepository) ListProducts(ctx context.Context, filter models.
 
 	// Projection
 	pipeline = append(pipeline, bson.D{{Key: "$project", Value: bson.M{
-		"id":          "$_id",
+		"_id":         1, // Keep original _id for product
 		"title":       1,
 		"description": 1,
 		"price":       1,
@@ -251,13 +251,13 @@ func (r *MarketplaceRepository) ListProducts(ctx context.Context, filter models.
 		"views":       1,
 		"created_at":  1,
 		"seller": bson.M{
-			"id":        "$seller_info._id",
+			"_id":       "$seller_info._id",
 			"username":  "$seller_info.username",
 			"full_name": "$seller_info.full_name",
 			"avatar":    "$seller_info.avatar",
 		},
 		"category": bson.M{
-			"id":   "$category_info._id",
+			"_id":  "$category_info._id",
 			"name": "$category_info.name",
 			"slug": "$category_info.slug",
 			"icon": "$category_info.icon",
@@ -327,7 +327,7 @@ func (r *MarketplaceRepository) GetMarketplaceConversations(ctx context.Context,
 			"foreignField": "_id",
 			"as":           "other_user_info",
 		}}},
-		bson.D{{Key: "$unwind", Value: bson.M{"path": "$other_user_info", "preserveNullAndEmptyArrays": true}}},
+		bson.D{{Key: "$unwind", Value: "$other_user_info"}}, // Strict unwind (exclude if user not found)
 		// Lookup Product Info
 		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "products",
@@ -338,15 +338,7 @@ func (r *MarketplaceRepository) GetMarketplaceConversations(ctx context.Context,
 		bson.D{{Key: "$unwind", Value: bson.M{"path": "$product_info", "preserveNullAndEmptyArrays": true}}},
 		// Project to Summary
 		bson.D{{Key: "$project", Value: bson.M{
-			"id": "$other_user_info._id", // Use User ID as ID for now, or generate a composite ID?
-			// Ideally we want to link to the PRODUCT chat, so maybe ID should reflect that.
-			// But for now, reusing ConversationSummary which typically uses UserID or GroupID.
-			// Let's use other_user ID, and frontend will handle context via query params if needed.
-			// OR we can misuse the ID field to pass ProductID? No.
-			// Let's stick with UserID but we lose context of WHICH product if they are chatting about multiple.
-			// Better: Client needs to know it's a marketplace chat.
-			// Modification: We might need to extend ConversationSummary or just return a different struct?
-			// For now, let's map it to existing summary best we can.
+			"_id":      "$other_user_info._id",
 			"name":     "$other_user_info.username",
 			"avatar":   "$other_user_info.avatar",
 			"is_group": bson.M{"$literal": false},
@@ -369,9 +361,10 @@ func (r *MarketplaceRepository) GetMarketplaceConversations(ctx context.Context,
 	}
 	defer cursor.Close(ctx)
 
-	var summaries []models.ConversationSummary
+	var summaries []models.ConversationSummary = []models.ConversationSummary{} // Init empty
 	if err = cursor.All(ctx, &summaries); err != nil {
 		return nil, err
 	}
+
 	return summaries, nil
 }

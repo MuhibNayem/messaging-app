@@ -182,14 +182,16 @@ func (c *MessageController) GetMessages(ctx *gin.Context) {
 	groupID := ctx.Query("groupID")
 	receiverID := ctx.Query("receiverID")
 	before := ctx.Query("before")
+	marketplace := ctx.Query("marketplace") == "true"
 
 	query := models.MessageQuery{
-		SenderID:   senderID.Hex(),
-		Page:       page,
-		Limit:      limit,
-		GroupID:    groupID,
-		ReceiverID: receiverID,
-		Before:     before,
+		SenderID:    senderID.Hex(),
+		Page:        page,
+		Limit:       limit,
+		GroupID:     groupID,
+		ReceiverID:  receiverID,
+		Before:      before,
+		Marketplace: marketplace,
 	}
 
 	// Validate the query

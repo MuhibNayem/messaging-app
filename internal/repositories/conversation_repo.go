@@ -54,21 +54,28 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"as":           "user_info",
 		}}},
 		bson.D{{"$unwind", bson.M{"path": "$user_info", "preserveNullAndEmptyArrays": true}}},
-		// Find the last message for this direct conversation
+		// Find the last message for this direct conversation (excluding marketplace messages)
 		bson.D{{"$lookup", bson.M{
 			"from": "messages",
 			"let":  bson.M{"u1": userID, "u2": "$other_user_id"},
 			"pipeline": bson.A{
 				bson.M{"$match": bson.M{
 					"$expr": bson.M{
-						"$or": bson.A{
-							bson.M{"$and": bson.A{
-								bson.M{"$eq": bson.A{"$sender_id", "$$u1"}},
-								bson.M{"$eq": bson.A{"$receiver_id", "$$u2"}},
+						"$and": bson.A{
+							bson.M{"$or": bson.A{
+								bson.M{"$and": bson.A{
+									bson.M{"$eq": bson.A{"$sender_id", "$$u1"}},
+									bson.M{"$eq": bson.A{"$receiver_id", "$$u2"}},
+								}},
+								bson.M{"$and": bson.A{
+									bson.M{"$eq": bson.A{"$sender_id", "$$u2"}},
+									bson.M{"$eq": bson.A{"$receiver_id", "$$u1"}},
+								}},
 							}},
-							bson.M{"$and": bson.A{
-								bson.M{"$eq": bson.A{"$sender_id", "$$u2"}},
-								bson.M{"$eq": bson.A{"$receiver_id", "$$u1"}},
+							// Exclude marketplace messages
+							bson.M{"$or": bson.A{
+								bson.M{"$eq": bson.A{"$product_id", nil}},
+								bson.M{"$not": bson.M{"$ifNull": bson.A{"$product_id", false}}},
 							}},
 						},
 					},
@@ -79,7 +86,7 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"as": "last_message_dm",
 		}}},
 		bson.D{{"$unwind", bson.M{"path": "$last_message_dm", "preserveNullAndEmptyArrays": true}}},
-		// Count unread messages for this direct conversation
+		// Count unread messages for this direct conversation (excluding marketplace messages)
 		bson.D{{"$lookup", bson.M{
 			"from": "messages",
 			"let":  bson.M{"u1": userID, "u2": "$other_user_id"},
@@ -94,6 +101,11 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 								}},
 							}},
 							bson.M{"$not": bson.M{"$in": bson.A{"$$u1", "$seen_by"}}},
+							// Exclude marketplace messages
+							bson.M{"$or": bson.A{
+								bson.M{"$eq": bson.A{"$product_id", nil}},
+								bson.M{"$not": bson.M{"$ifNull": bson.A{"$product_id", false}}},
+							}},
 						},
 					},
 				}},
