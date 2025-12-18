@@ -160,50 +160,78 @@ func (r *FeedRepository) AddMediaToAlbum(ctx context.Context, media []models.Alb
 	return nil
 }
 
-func (r *FeedRepository) GetAlbumMedia(ctx context.Context, albumID primitive.ObjectID, limit, offset int64, mediaType string) ([]models.AlbumMedia, error) {
+func (r *FeedRepository) GetAlbumMedia(ctx context.Context, albumID primitive.ObjectID, limit, offset int64, mediaType string) ([]models.AlbumMedia, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-
-	findOptions := options.Find()
-	findOptions.SetSort(bson.D{{Key: "created_at", Value: -1}})
-	findOptions.SetLimit(limit)
-	findOptions.SetSkip(offset)
 
 	filter := bson.M{"album_id": albumID}
 	if mediaType != "" {
 		filter["type"] = mediaType
 	}
 
+	// Get total count
+	total, err := r.albumMediaCollection.CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Get paginated data
+	findOptions := options.Find()
+	findOptions.SetSort(bson.D{{Key: "created_at", Value: -1}})
+	findOptions.SetLimit(limit)
+	findOptions.SetSkip(offset)
+
 	cursor, err := r.albumMediaCollection.Find(ctx, filter, findOptions)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer cursor.Close(ctx)
 
 	var media []models.AlbumMedia
 	if err := cursor.All(ctx, &media); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return media, nil
+	return media, total, nil
 }
 
-func (r *FeedRepository) GetTimelineMedia(ctx context.Context, userID primitive.ObjectID, limit, offset int64, mediaType string) ([]models.AlbumMedia, error) {
+func (r *FeedRepository) GetTimelineMedia(ctx context.Context, userID primitive.ObjectID, limit, offset int64, mediaType string) ([]models.AlbumMedia, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	pipeline := mongo.Pipeline{
-		bson.D{{Key: "$match", Value: bson.D{
+	matchStage := bson.D{
+		{Key: "$match", Value: bson.D{
 			{Key: "user_id", Value: userID},
 			{Key: "media", Value: bson.D{{Key: "$exists", Value: true}, {Key: "$not", Value: bson.D{{Key: "$size", Value: 0}}}}},
-		}}},
-		bson.D{{Key: "$unwind", Value: "$media"}},
+		}},
 	}
+
+	unwindStage := bson.D{{Key: "$unwind", Value: "$media"}}
+
+	pipeline := mongo.Pipeline{matchStage, unwindStage}
 
 	// Filter by media type after unwind
 	if mediaType != "" {
 		pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "media.type", Value: mediaType}}}})
 	}
 
+	// Count total - run aggregation with count
+	countPipeline := append(pipeline, bson.D{{Key: "$count", Value: "total"}})
+	countCursor, err := r.postsCollection.Aggregate(ctx, countPipeline)
+	if err != nil {
+		return nil, 0, err
+	}
+	var countResult []bson.M
+	if err := countCursor.All(ctx, &countResult); err != nil {
+		return nil, 0, err
+	}
+	var total int64
+	if len(countResult) > 0 {
+		if t, ok := countResult[0]["total"].(int32); ok {
+			total = int64(t)
+		}
+	}
+
+	// Get paginated data
 	pipeline = append(pipeline,
 		bson.D{{Key: "$sort", Value: bson.D{{Key: "created_at", Value: -1}}}},
 		bson.D{{Key: "$skip", Value: offset}},
@@ -219,15 +247,16 @@ func (r *FeedRepository) GetTimelineMedia(ctx context.Context, userID primitive.
 
 	cursor, err := r.postsCollection.Aggregate(ctx, pipeline)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer cursor.Close(ctx)
 
 	var media []models.AlbumMedia
 	if err := cursor.All(ctx, &media); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return media, nil
+
+	return media, total, nil
 }
 
 func (r *FeedRepository) UpdateAlbumCover(ctx context.Context, albumID primitive.ObjectID, coverURL string) error {

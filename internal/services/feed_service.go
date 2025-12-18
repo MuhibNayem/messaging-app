@@ -1187,7 +1187,7 @@ func (s *FeedService) EnsureAlbumExists(ctx context.Context, userID primitive.Ob
 		shouldCheck := createdNew
 		if !shouldCheck {
 			// Check if empty
-			media, err := s.feedRepo.GetAlbumMedia(ctx, album.ID, 1, 0, "")
+			media, _, err := s.feedRepo.GetAlbumMedia(ctx, album.ID, 1, 0, "")
 			if err == nil && len(media) == 0 {
 				shouldCheck = true
 			}
@@ -1276,10 +1276,10 @@ func (s *FeedService) AddMediaToAlbum(ctx context.Context, userID, albumID primi
 	return nil
 }
 
-func (s *FeedService) GetAlbumMedia(ctx context.Context, albumID primitive.ObjectID, limit, offset int64, mediaType string) ([]models.AlbumMedia, error) {
+func (s *FeedService) GetAlbumMedia(ctx context.Context, albumID primitive.ObjectID, limit, offset int64, mediaType string) ([]models.AlbumMedia, int64, error) {
 	album, err := s.feedRepo.GetAlbumByID(ctx, albumID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if album.Type == models.AlbumTypeTimeline {

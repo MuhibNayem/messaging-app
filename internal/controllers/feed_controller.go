@@ -958,14 +958,25 @@ func (c *FeedController) GetAlbumMedia(ctx *gin.Context) {
 	if limit == 0 {
 		limit = 20
 	}
-	offset, _ := strconv.ParseInt(ctx.Query("offset"), 10, 64)
+	page, _ := strconv.ParseInt(ctx.Query("page"), 10, 64)
+	if page < 1 {
+		page = 1
+	}
 	mediaType := ctx.Query("type")
 
-	media, err := c.feedService.GetAlbumMedia(ctx.Request.Context(), albumID, limit, offset, mediaType)
+	// Calculate offset from page
+	offset := (page - 1) * limit
+
+	media, total, err := c.feedService.GetAlbumMedia(ctx.Request.Context(), albumID, limit, offset, mediaType)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	ctx.JSON(http.StatusOK, media)
+	ctx.JSON(http.StatusOK, gin.H{
+		"media": media,
+		"total": total,
+		"page":  page,
+		"limit": limit,
+	})
 }
