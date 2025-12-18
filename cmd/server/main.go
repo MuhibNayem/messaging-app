@@ -170,7 +170,7 @@ func main() {
 		log.Fatal("Failed to initialize storage service:", err)
 	}
 
-	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, privacyRepo, kafkaProducer, notificationService, storageService)
+	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, communityRepo, privacyRepo, kafkaProducer, notificationService, storageService)
 	// Note: UserService now needs FeedService for profile history
 	userService := services.NewUserService(userRepo, reelRepo, redisClient.GetClient(), feedService)
 	groupService := services.NewGroupService(groupRepo, userRepo, kafkaProducer)
@@ -338,6 +338,7 @@ func main() {
 		feedRoutes.GET("/posts", feedController.ListPosts)
 		feedRoutes.GET("/posts/:id", feedController.GetPostByID)
 		feedRoutes.PUT("/posts/:id", feedController.UpdatePost)
+		feedRoutes.PUT("/posts/:id/status", feedController.UpdatePostStatus) // Support moderation
 		feedRoutes.DELETE("/posts/:id", feedController.DeletePost)
 		feedRoutes.GET("/posts/:id/comments", feedController.GetCommentsByPostID)
 		feedRoutes.GET("/posts/:id/reactions", feedController.GetReactionsByPostID)

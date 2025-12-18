@@ -478,6 +478,37 @@ func (r *FriendshipRepository) GetFriends(ctx context.Context, userID primitive.
 	return friendUsers, nil
 }
 
+// GetFriendIDs returns a list of user IDs who are friends with the given user
+func (r *FriendshipRepository) GetFriendIDs(ctx context.Context, userID primitive.ObjectID) ([]primitive.ObjectID, error) {
+	cursor, err := r.db.Collection("friendships").Find(ctx, bson.M{
+		"status": models.FriendshipStatusAccepted,
+		"$or": []bson.M{
+			{"requester_id": userID},
+			{"receiver_id": userID},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var friendships []models.Friendship
+	if err := cursor.All(ctx, &friendships); err != nil {
+		return nil, err
+	}
+
+	var friendIDs []primitive.ObjectID
+	for _, f := range friendships {
+		if f.RequesterID == userID {
+			friendIDs = append(friendIDs, f.ReceiverID)
+		} else {
+			friendIDs = append(friendIDs, f.RequesterID)
+		}
+	}
+
+	return friendIDs, nil
+}
+
 // GetPendingFriendshipByID finds a pending friendship by its ID for a specific receiver
 func (r *FriendshipRepository) GetPendingFriendshipByID(ctx context.Context, friendshipID, receiverID primitive.ObjectID) (*models.Friendship, error) {
 	var friendship models.Friendship

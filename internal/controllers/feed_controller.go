@@ -3,6 +3,7 @@ package controllers
 import (
 	"messaging-app/internal/models"
 	"messaging-app/internal/services"
+	"messaging-app/pkg/utils"
 	"net/http"
 	"strconv"
 	"strings"
@@ -309,6 +310,36 @@ func (c *FeedController) GetPostsByHashtag(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, response)
+}
+
+// UpdatePostStatus handles updating a post's status (moderation)
+func (c *FeedController) UpdatePostStatus(ctx *gin.Context) {
+	userID, err := utils.GetUserIDFromContext(ctx)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	postID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid post ID")
+		return
+	}
+
+	var req struct {
+		Status models.PostStatus `json:"status" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := c.feedService.UpdatePostStatus(ctx.Request.Context(), postID, userID, req.Status); err != nil {
+		utils.RespondWithError(ctx, utils.GetStatusCode(err), err.Error())
+		return
+	}
+
+	ctx.Status(http.StatusOK)
 }
 
 // GetCommentsByPostID godoc

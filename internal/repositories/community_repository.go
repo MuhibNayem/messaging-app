@@ -70,8 +70,16 @@ func (r *CommunityRepository) List(ctx context.Context, limit, page int64) ([]mo
 	skip := (page - 1) * limit
 	opts := options.Find().SetLimit(limit).SetSkip(skip).SetSort(bson.M{"created_at": -1})
 
-	// Filter out secret communities from general list, but for now lets list all public/closed
-	filter := bson.M{"privacy": bson.M{"$in": []models.CommunityPrivacy{models.CommunityPrivacyPublic, models.CommunityPrivacyClosed}}}
+	// List public/private comms. Generally list all, or maybe filter?
+	// For now, let's list all visibly accessible ones (Public and Private/Visible)
+	// We might want to list everything and let UI handle "Join" vs "Request"
+	// But definitively hide "Private/Hidden" unless I am a member (which List usually is generic discovery)
+	filter := bson.M{
+		"$or": []bson.M{
+			{"privacy": models.CommunityPrivacyPublic},
+			{"visibility": models.CommunityVisibilityVisible},
+		},
+	}
 
 	cursor, err := r.collection.Find(ctx, filter, opts)
 	if err != nil {
@@ -157,7 +165,7 @@ func (r *CommunityRepository) Search(ctx context.Context, query string, limit, p
 	skip := (page - 1) * limit
 	opts := options.Find().SetLimit(limit).SetSkip(skip)
 
-	// Search by name or description, exclude secret communities
+	// Search by name or description, exclude hidden communities (unless member - but search is usually global)
 	filter := bson.M{
 		"$and": []bson.M{
 			{
@@ -166,7 +174,7 @@ func (r *CommunityRepository) Search(ctx context.Context, query string, limit, p
 					{"description": bson.M{"$regex": primitive.Regex{Pattern: query, Options: "i"}}},
 				},
 			},
-			{"privacy": bson.M{"$ne": models.CommunityPrivacySecret}},
+			{"visibility": bson.M{"$ne": models.CommunityVisibilityHidden}},
 		},
 	}
 

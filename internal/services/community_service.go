@@ -27,18 +27,26 @@ func (s *CommunityService) CreateCommunity(ctx context.Context, userID primitive
 	// Generate slug from name
 	slug := strings.ToLower(strings.ReplaceAll(req.Name, " ", "-"))
 
+	// Default to visible if private and not specified, or whatever
+	visibility := models.CommunityVisibilityVisible // default
+	if req.Visibility != "" {
+		visibility = req.Visibility
+	}
+
 	community := &models.Community{
 		Name:        req.Name,
 		Description: req.Description,
 		Slug:        slug,
 		Category:    req.Category,
 		Privacy:     req.Privacy,
+		Visibility:  visibility,
 		CreatorID:   userID,
 		Members:     []primitive.ObjectID{userID},
 		Admins:      []primitive.ObjectID{userID},
 		Settings: models.CommunitySettings{
 			RequirePostApproval: req.RequirePostApproval,
 			RequireJoinApproval: req.RequireJoinApproval,
+			AllowMemberPosts:    true, // Default true
 		},
 	}
 
@@ -74,12 +82,14 @@ func (s *CommunityService) JoinCommunity(ctx context.Context, communityID, userI
 		}
 	}
 
-	if community.Settings.RequireJoinApproval && community.Privacy == models.CommunityPrivacyClosed {
-		return s.communityRepo.AddPendingMember(ctx, communityID, userID)
-	}
+	// If Hidden, can't join without invite? Or maybe they found the link.
+	// Assume if they have the ID, they can Request to Join if allowed.
 
-	if community.Privacy == models.CommunityPrivacySecret {
-		return errors.New("cannot join secret community without invite")
+	if community.Settings.RequireJoinApproval || community.Privacy == models.CommunityPrivacyPrivate {
+		// Private groups usually require approval unless explicitly disabled
+		// actually user said "does not it include member approval for private group ?"
+		// so yes, private = approval needed typically.
+		return s.communityRepo.AddPendingMember(ctx, communityID, userID)
 	}
 
 	return s.communityRepo.AddMember(ctx, communityID, userID)
@@ -175,6 +185,12 @@ func (s *CommunityService) ListCommunities(ctx context.Context, userID primitive
 		responses[i] = *s.mapToResponse(&community, userID)
 	}
 
+	// Filter Hidden communities if user is NOT a member
+	// Although repo Search excludes hidden, repo List might include Visibles
+	// We double check here or trust repo. Repo Search excluded hidden.
+	// But List included Public || Visible. Hidden is excluded.
+	// So we are good.
+
 	return responses, total, nil
 }
 
@@ -219,11 +235,27 @@ func (s *CommunityService) UpdateSettings(ctx context.Context, communityID, user
 	if req.Privacy != "" {
 		community.Privacy = req.Privacy
 	}
+	if req.Visibility != "" {
+		community.Visibility = req.Visibility
+	}
+	// Settings
 	if req.RequirePostApproval != nil {
 		community.Settings.RequirePostApproval = *req.RequirePostApproval
 	}
 	if req.RequireJoinApproval != nil {
 		community.Settings.RequireJoinApproval = *req.RequireJoinApproval
+	}
+	if req.AllowMemberPosts != nil {
+		community.Settings.AllowMemberPosts = *req.AllowMemberPosts
+	}
+	if req.ShowGroupAffiliation != nil {
+		community.Settings.ShowGroupAffiliation = *req.ShowGroupAffiliation
+	}
+	if req.Rules != nil {
+		community.Rules = req.Rules
+	}
+	if req.MembershipQuestions != nil {
+		community.MembershipQuestions = req.MembershipQuestions
 	}
 
 	return s.communityRepo.Update(ctx, community)
@@ -290,20 +322,23 @@ func (s *CommunityService) mapToResponse(community *models.Community, userID pri
 	}
 
 	return &models.CommunityResponse{
-		ID:          community.ID.Hex(),
-		Name:        community.Name,
-		Description: community.Description,
-		Slug:        community.Slug,
-		Category:    community.Category,
-		Avatar:      community.Avatar,
-		CoverImage:  community.CoverImage,
-		Privacy:     community.Privacy,
-		Settings:    community.Settings,
-		Stats:       community.Stats,
-		IsMember:    isMember,
-		IsAdmin:     isAdmin,
-		IsPending:   isPending,
-		CreatedAt:   community.CreatedAt,
+		ID:                  community.ID.Hex(),
+		Name:                community.Name,
+		Description:         community.Description,
+		Slug:                community.Slug,
+		Category:            community.Category,
+		Avatar:              community.Avatar,
+		CoverImage:          community.CoverImage,
+		Privacy:             community.Privacy,
+		Visibility:          community.Visibility,
+		Settings:            community.Settings,
+		Rules:               community.Rules,
+		MembershipQuestions: community.MembershipQuestions,
+		Stats:               community.Stats,
+		IsMember:            isMember,
+		IsAdmin:             isAdmin,
+		IsPending:           isPending,
+		CreatedAt:           community.CreatedAt,
 	}
 }
 
@@ -313,13 +348,13 @@ func (s *CommunityService) GetMembers(ctx context.Context, communityID, viewerID
 		return nil, 0, err
 	}
 
-	if community.Privacy == models.CommunityPrivacySecret {
+	if community.Privacy == models.CommunityPrivacyPrivate {
 		isMember, err := s.IsMember(ctx, communityID, viewerID)
 		if err != nil {
 			return nil, 0, err
 		}
 		if !isMember {
-			return nil, 0, errors.New("unauthorized: cannot view members of secret community")
+			return nil, 0, errors.New("unauthorized: cannot view members of private community")
 		}
 	}
 

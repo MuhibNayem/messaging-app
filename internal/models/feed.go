@@ -6,6 +6,14 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+type PostStatus string
+
+const (
+	PostStatusActive   PostStatus = "active"
+	PostStatusPending  PostStatus = "pending"
+	PostStatusDeclined PostStatus = "declined"
+)
+
 type MediaItem struct {
 	URL  string `bson:"url" json:"url"`
 	Type string `bson:"type" json:"type"` // "image", "video"
@@ -20,6 +28,7 @@ type Post struct {
 	Media                  []MediaItem            `bson:"media,omitempty" json:"media,omitempty"`
 	Location               string                 `bson:"location,omitempty" json:"location,omitempty"`
 	Privacy                PrivacySettingType     `bson:"privacy" json:"privacy"`                                     // PUBLIC, FRIENDS, ONLY_ME, CUSTOM
+	Status                 PostStatus             `bson:"status" json:"status"`                                       // New: active, pending, declined
 	CommunityID            *primitive.ObjectID    `bson:"community_id,omitempty" json:"community_id,omitempty"`       // If post belongs to a community
 	CustomAudience         []primitive.ObjectID   `bson:"custom_audience,omitempty" json:"custom_audience,omitempty"` // For CUSTOM privacy
 	CommentIDs             []primitive.ObjectID   `bson:"comment_ids" json:"-"`                                       // Stored as IDs in DB, not directly exposed in JSON

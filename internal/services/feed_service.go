@@ -25,14 +25,15 @@ type FeedService struct {
 	feedRepo            *repositories.FeedRepository
 	userRepo            *repositories.UserRepository
 	friendshipRepo      *repositories.FriendshipRepository
+	communityRepo       *repositories.CommunityRepository // Added
 	privacyRepo         repositories.PrivacyRepository
 	kafkaProducer       *kafka.MessageProducer
 	notificationService *notifications.NotificationService
 	storageService      *StorageService
 }
 
-func NewFeedService(feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, friendshipRepo *repositories.FriendshipRepository, privacyRepo repositories.PrivacyRepository, kafkaProducer *kafka.MessageProducer, notificationService *notifications.NotificationService, storageService *StorageService) *FeedService {
-	return &FeedService{feedRepo: feedRepo, userRepo: userRepo, friendshipRepo: friendshipRepo, privacyRepo: privacyRepo, kafkaProducer: kafkaProducer, notificationService: notificationService, storageService: storageService}
+func NewFeedService(feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, friendshipRepo *repositories.FriendshipRepository, communityRepo *repositories.CommunityRepository, privacyRepo repositories.PrivacyRepository, kafkaProducer *kafka.MessageProducer, notificationService *notifications.NotificationService, storageService *StorageService) *FeedService {
+	return &FeedService{feedRepo: feedRepo, userRepo: userRepo, friendshipRepo: friendshipRepo, communityRepo: communityRepo, privacyRepo: privacyRepo, kafkaProducer: kafkaProducer, notificationService: notificationService, storageService: storageService}
 }
 
 // Post operations
@@ -69,6 +70,45 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 		communityID = &id
 	}
 
+	// Check Community Logic
+	status := models.PostStatusActive
+	if communityID != nil {
+		community, err := s.communityRepo.GetByID(ctx, *communityID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get community: %w", err)
+		}
+
+		// Check if member posts are allowed
+		// Note provided schema says AllowMemberPosts in Settings, check if implemented in models
+		if !community.Settings.AllowMemberPosts {
+			// Check if user is admin
+			isAdmin := false
+			for _, adminID := range community.Admins {
+				if adminID == userID {
+					isAdmin = true
+					break
+				}
+			}
+			if !isAdmin {
+				return nil, errors.New("members are not allowed to post in this community")
+			}
+		}
+
+		if community.Settings.RequirePostApproval {
+			// Check if user is admin (admins surely bypass approval)
+			isAdmin := false
+			for _, adminID := range community.Admins {
+				if adminID == userID {
+					isAdmin = true
+					break
+				}
+			}
+			if !isAdmin {
+				status = models.PostStatusPending
+			}
+		}
+	}
+
 	post := &models.Post{
 		UserID:         userID,
 		Content:        req.Content,
@@ -77,6 +117,7 @@ func (s *FeedService) CreatePost(ctx context.Context, userID primitive.ObjectID,
 		Privacy:        req.Privacy,
 		CommunityID:    communityID,
 		CustomAudience: req.CustomAudience,
+		Status:         status,                 // New Field
 		Comments:       []models.Comment{},     // Initialize as empty array
 		CommentIDs:     []primitive.ObjectID{}, // Initialize as empty array
 		Mentions:       mentionedUserIDs,
@@ -181,6 +222,44 @@ func (s *FeedService) GetPostByID(ctx context.Context, viewerID, postID primitiv
 	}
 
 	return post, nil
+}
+
+// UpdatePostStatus updates the status of a post (e.g., for moderation)
+func (s *FeedService) UpdatePostStatus(ctx context.Context, postID primitive.ObjectID, userID primitive.ObjectID, status models.PostStatus) error {
+	post, err := s.feedRepo.GetPostByID(ctx, postID)
+	if err != nil {
+		return err
+	}
+
+	// Check if post belongs to a community
+	if post.CommunityID == nil {
+		return errors.New("post does not belong to a community")
+	}
+
+	// Check authorization: Must be Community Admin
+	community, err := s.communityRepo.GetByID(ctx, *post.CommunityID)
+	if err != nil {
+		return fmt.Errorf("failed to get community: %w", err)
+	}
+
+	isAdmin := false
+	for _, adminID := range community.Admins {
+		if adminID == userID {
+			isAdmin = true
+			break
+		}
+	}
+
+	if !isAdmin {
+		return errors.New("unauthorized: only community admins can update post status")
+	}
+
+	// Update status
+	_, err = s.feedRepo.UpdatePost(ctx, post.ID, bson.M{
+		"status":     status,
+		"updated_at": time.Now(),
+	})
+	return err
 }
 
 // canViewPost checks if a user has permission to view a post based on its privacy settings
@@ -416,33 +495,60 @@ func (s *FeedService) ListPosts(ctx context.Context, viewerID primitive.ObjectID
 		}
 		filter["user_id"] = objFilterUserID
 	} else {
+
+		// Default to only showing Active posts
+		// BACKWARD COMPATIBILITY: Include posts where "status" does not exist or is null
+		filter["$or"] = []bson.M{
+			{"status": models.PostStatusActive},
+			{"status": bson.M{"$exists": false}},
+			{"status": nil},
+		}
+
 		// If no specific user or community is requested (Main Feed), apply privacy filters
 		// Exclude community posts from the main feed
 		filter["community_id"] = bson.M{"$exists": false}
 
-		filter["$or"] = []bson.M{
+		// Combined $or for privacy and status is tricky.
+		// We have two distinct requirements: STATUS IS (Active OR Missing) AND PRIVACY IS (Public OR Friends).
+		// MongoDB doesn't allow multiple top-level $or operators easily without $and.
+
+		privacyFilter := []bson.M{
 			{"privacy": models.PrivacySettingPublic},
-			{"user_id": viewerID}, // Author can always see their own posts, regardless of privacy
 		}
 
-		// Get viewer's friends for FRIENDS privacy
-		friends, err := s.friendshipRepo.GetFriends(ctx, viewerID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get viewer's friends: %w", err)
+		// If user is logged in, include friends' posts
+		if viewerID != primitive.NilObjectID {
+			friendIDs, err := s.friendshipRepo.GetFriendIDs(ctx, viewerID)
+			if err == nil {
+				privacyFilter = append(privacyFilter, bson.M{
+					"privacy": models.PrivacySettingFriends,
+					"user_id": bson.M{"$in": friendIDs},
+				})
+				// Also include own posts
+				privacyFilter = append(privacyFilter, bson.M{"user_id": viewerID})
+			}
 		}
 
-		var friendIDs []primitive.ObjectID
-		for _, friend := range friends {
-			friendIDs = append(friendIDs, friend.ID)
+		// Combine Status and Privacy filters using $and
+		filter = bson.M{
+			"$and": []bson.M{
+				filter, // Includes community_id exists:false
+				{
+					"$or": []bson.M{
+						{"status": models.PostStatusActive},
+						{"status": bson.M{"$exists": false}},
+						{"status": nil},
+					},
+				},
+				{
+					"$or": privacyFilter,
+				},
+			},
 		}
 
-		// Add FRIENDS privacy filter if viewer has friends
-		if len(friendIDs) > 0 {
-			filter["$or"] = append(filter["$or"].([]bson.M), bson.M{
-				"privacy": models.PrivacySettingFriends,
-				"user_id": bson.M{"$in": friendIDs},
-			})
-		}
+		// Note regarding the previous code structure:
+		// The original code was appending to top-level $or for privacy.
+		// We need to completely restructure the query construction to avoid overwriting.
 	}
 
 	// Apply filter for posts with media
