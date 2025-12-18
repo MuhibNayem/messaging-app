@@ -16,10 +16,6 @@ type Story struct {
 	AllowedViewers []primitive.ObjectID `bson:"allowed_viewers,omitempty" json:"allowed_viewers,omitempty"` // For CUSTOM
 	BlockedViewers []primitive.ObjectID `bson:"blocked_viewers,omitempty" json:"blocked_viewers,omitempty"` // For FRIENDS_EXCEPT
 
-	// Scalability Refactor: Moved lists to separate collections
-	// Viewers        []primitive.ObjectID `bson:"viewers,omitempty" json:"viewers,omitempty"`
-	// Reactions      []StoryReaction      `bson:"reactions,omitempty" json:"reactions,omitempty"`
-
 	ViewCount     int `bson:"view_count" json:"view_count"`
 	ReactionCount int `bson:"reaction_count" json:"reaction_count"`
 
@@ -51,7 +47,7 @@ type CreateStoryRequest struct {
 }
 
 type StoryViewerResponse struct {
-	User         UserShortResponse `json:"user"`
-	ReactionType string            `json:"reaction_type,omitempty"` // "LIKE", "LOVE", etc. or empty
-	ViewedAt     time.Time         `json:"viewed_at,omitempty"`     // (Optional, if we track view time later, for now just useful for structure)
+	User         UserShortResponse `json:"user" bson:"user"`
+	ReactionType string            `json:"reaction_type,omitempty" bson:"reaction_type"` // "LIKE", "LOVE", etc. or empty
+	ViewedAt     time.Time         `json:"viewed_at,omitempty" bson:"viewed_at"`         // (Optional, if we track view time later, for now just useful for structure)
 }

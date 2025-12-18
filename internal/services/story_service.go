@@ -116,6 +116,7 @@ func (s *StoryService) RecordView(ctx context.Context, storyID primitive.ObjectI
 
 func (s *StoryService) ReactToStory(ctx context.Context, storyID primitive.ObjectID, userID primitive.ObjectID, reactionType string) error {
 	reaction := models.StoryReaction{
+		StoryID:   storyID,
 		UserID:    userID,
 		Type:      reactionType,
 		CreatedAt: time.Now(),

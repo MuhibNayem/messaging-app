@@ -417,8 +417,9 @@ func (r *StoryRepository) GetStoryViewersWithReactions(ctx context.Context, stor
 		{{Key: "$sort", Value: bson.M{"viewed_at": -1}}},
 		// Project
 		{{Key: "$project", Value: bson.M{
+			"_id": 0, // Exclude document-level _id to prevent decode interference
 			"user": bson.M{
-				"id":         "$user._id",
+				"_id":        "$user._id",
 				"username":   "$user.username",
 				"full_name":  "$user.full_name",
 				"avatar":     "$user.avatar",
