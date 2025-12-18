@@ -273,6 +273,20 @@ func (r *FeedRepository) UpdateAlbumCover(ctx context.Context, albumID primitive
 	return err
 }
 
+func (r *FeedRepository) RemoveAlbumCoverByURL(ctx context.Context, coverURL string) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	_, err := r.albumsCollection.UpdateMany(
+		ctx,
+		bson.M{"cover_url": coverURL},
+		bson.M{
+			"$set": bson.M{"cover_url": "", "updated_at": time.Now()},
+		},
+	)
+	return err
+}
+
 // ----------------------------- Posts -----------------------------
 
 func (r *FeedRepository) CreatePost(ctx context.Context, post *models.Post) (*models.Post, error) {

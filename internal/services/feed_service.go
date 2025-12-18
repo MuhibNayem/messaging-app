@@ -348,6 +348,11 @@ func (s *FeedService) DeletePost(ctx context.Context, userID, postID primitive.O
 				fmt.Printf("Failed to delete album media link %s: %v\n", media.URL, err)
 			}
 
+			// Remove from Album Covers if used
+			if err := s.feedRepo.RemoveAlbumCoverByURL(ctx, media.URL); err != nil {
+				fmt.Printf("Failed to remove album cover for url %s: %v\n", media.URL, err)
+			}
+
 			// Delete from Object Storage
 			if err := s.storageService.DeleteFile(ctx, media.URL); err != nil {
 				fmt.Printf("Failed to delete file from storage %s: %v\n", media.URL, err)
