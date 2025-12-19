@@ -11,7 +11,7 @@ type CassandraClient struct {
 	Session *gocql.Session
 }
 
-func NewCassandraClient(hosts []string, keyspace string) (*CassandraClient, error) {
+func NewCassandraClient(hosts []string, keyspace, username, password string) (*CassandraClient, error) {
 	var session *gocql.Session
 	var err error
 
@@ -23,8 +23,8 @@ func NewCassandraClient(hosts []string, keyspace string) (*CassandraClient, erro
 		cluster.ProtoVersion = 4
 		cluster.ConnectTimeout = 10 * time.Second
 		cluster.Authenticator = gocql.PasswordAuthenticator{
-			Username: "cassandra",
-			Password: "cassandra",
+			Username: username,
+			Password: password,
 		}
 		cluster.RetryPolicy = &gocql.SimpleRetryPolicy{NumRetries: 3}
 
@@ -80,10 +80,10 @@ func createKeyspace(session *gocql.Session, keyspace string) error {
 func createTables(session *gocql.Session) error {
 	// Table 1: Messages by Conversation (Chat History)
 	// Partition: conversation_id (Grouping messages together)
-	// Cluster: created_at DESC (Ordering by time)
+	// Cluster: message_id (TimeUUID implies timestamp, so it orders by time naturally)
 	msgsQuery := `CREATE TABLE IF NOT EXISTS messages (
 		conversation_id text,
-		message_id uuid,
+		message_id timeuuid,
 		sender_id text,
 		receiver_id text,
 		group_id text,
@@ -100,8 +100,8 @@ func createTables(session *gocql.Session) error {
 		created_at timestamp,
 		updated_at timestamp,
 		is_deleted boolean,
-		PRIMARY KEY ((conversation_id), created_at, message_id)
-	) WITH CLUSTERING ORDER BY (created_at DESC);`
+		PRIMARY KEY ((conversation_id), message_id)
+	) WITH CLUSTERING ORDER BY (message_id DESC);`
 	if err := session.Query(msgsQuery).Exec(); err != nil {
 		return err
 	}

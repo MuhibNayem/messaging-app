@@ -38,6 +38,8 @@ type Config struct {
 	// New DBs
 	CassandraHosts    []string
 	CassandraKeyspace string
+	CassandraUser     string
+	CassandraPassword string
 	Neo4jURI          string
 	Neo4jUser         string
 	Neo4jPassword     string
@@ -84,6 +86,8 @@ func LoadConfig() *Config {
 		// New DBs
 		CassandraHosts:    strings.Split(getEnv("CASSANDRA_HOSTS", "localhost"), ","),
 		CassandraKeyspace: getEnv("CASSANDRA_KEYSPACE", "connectify_keyspace"),
+		CassandraUser:     getEnv("CASSANDRA_USER", "cassandra"),
+		CassandraPassword: getEnv("CASSANDRA_PASSWORD", "cassandra"),
 		Neo4jURI:          getEnv("NEO4J_URI", "bolt://localhost:7687"),
 		Neo4jUser:         getEnv("NEO4J_USER", "neo4j"),
 		Neo4jPassword:     getEnv("NEO4J_PASSWORD", "connectify"),

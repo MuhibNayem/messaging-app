@@ -261,9 +261,9 @@ func (r *MessageCassandraRepository) GetMessages(ctx context.Context, query mode
 	var cqlQuery string
 	var iter *gocql.Iter
 
-	// Cassandra optimized pagination uses 'created_at' clustering key
-	// Updated columns to include receiver_id, group_id, is_marketplace, etc.
-	columns := "message_id, sender_id, receiver_id, group_id, content, created_at, reactions, media_urls, is_marketplace, content_type"
+	// Cassandra optimized pagination uses 'message_id' clustering key (TimeUUID)
+	// Updated columns to include receiver_id, group_id, is_marketplace, product_id, etc.
+	columns := "message_id, sender_id, receiver_id, group_id, content, created_at, reactions, media_urls, is_marketplace, content_type, product_id"
 	if query.Before == "" {
 		cqlQuery = fmt.Sprintf(`SELECT %s FROM messages WHERE conversation_id = ? LIMIT ?`, columns)
 		iter = r.client.Session.Query(cqlQuery, conversationID, limit).Iter()
@@ -274,20 +274,25 @@ func (r *MessageCassandraRepository) GetMessages(ctx context.Context, query mode
 			cqlQuery = fmt.Sprintf(`SELECT %s FROM messages WHERE conversation_id = ? LIMIT ?`, columns)
 			iter = r.client.Session.Query(cqlQuery, conversationID, limit).Iter()
 		} else {
-			cqlQuery = fmt.Sprintf(`SELECT %s FROM messages WHERE conversation_id = ? AND created_at < ? LIMIT ?`, columns)
-			iter = r.client.Session.Query(cqlQuery, conversationID, beforeTime, limit).Iter()
+			// Create a TimeUUID from the beforeTime to use for pagination
+			// We want messages strictly BEFORE this time.
+			// UUIDFromTime creates a UUID with the given time.
+			// Since we sort DESC, `message_id < ?` gives us older messages.
+			maxTimeUUID := gocql.UUIDFromTime(beforeTime)
+			cqlQuery = fmt.Sprintf(`SELECT %s FROM messages WHERE conversation_id = ? AND message_id < ? LIMIT ?`, columns)
+			iter = r.client.Session.Query(cqlQuery, conversationID, maxTimeUUID, limit).Iter()
 		}
 	}
 
 	// 3. Scan Results
 	var messages []models.Message
-	var sID, rID, gID, content, reactions, contentType string
+	var sID, rID, gID, content, reactions, contentType, productID string
 	var msgUUID gocql.UUID
 	var createdAt time.Time
 	var mediaUrls []string
 	var isMarketplace bool
 
-	for iter.Scan(&msgUUID, &sID, &rID, &gID, &content, &createdAt, &reactions, &mediaUrls, &isMarketplace, &contentType) {
+	for iter.Scan(&msgUUID, &sID, &rID, &gID, &content, &createdAt, &reactions, &mediaUrls, &isMarketplace, &contentType, &productID) {
 		sid, _ := primitive.ObjectIDFromHex(sID)
 
 		var rid, gid primitive.ObjectID
@@ -303,6 +308,14 @@ func (r *MessageCassandraRepository) GetMessages(ctx context.Context, query mode
 			_ = json.Unmarshal([]byte(reactions), &parsedReactions)
 		}
 
+		var pid *primitive.ObjectID
+		if productID != "" {
+			parsedPID, err := primitive.ObjectIDFromHex(productID)
+			if err == nil {
+				pid = &parsedPID
+			}
+		}
+
 		messages = append(messages, models.Message{
 			ID:            primitive.NewObjectID(), // Placeholder
 			StringID:      msgUUID.String(),
@@ -315,6 +328,7 @@ func (r *MessageCassandraRepository) GetMessages(ctx context.Context, query mode
 			Reactions:     parsedReactions,
 			MediaURLs:     mediaUrls,
 			IsMarketplace: isMarketplace,
+			ProductID:     pid,
 		})
 	}
 
@@ -374,6 +388,7 @@ func (r *MessageCassandraRepository) MarkMessagesAsSeen(ctx context.Context, con
 
 	// Cassandra Batch Update
 	batch := r.client.Session.NewBatch(gocql.LoggedBatch)
+	// Simplified query due to schema change: PK is ((conversation_id), message_id)
 	query := `UPDATE messages SET is_read = true WHERE conversation_id = ? AND message_id = ?`
 
 	for _, msgID := range messageIDs {
@@ -410,16 +425,10 @@ func (r *MessageCassandraRepository) MarkMessagesAsDelivered(ctx context.Context
 		}
 	}
 
-	// Cassandra PRIMARY KEY is ((conversation_id), created_at, message_id)
-	// We need created_at for UPDATEs. Use concurrent fetches for O(1) latency.
+	// Cassandra PRIMARY KEY is ((conversation_id), message_id)
+	// We no longer need created_at for UPDATEs. Just conversation_id and message_id.
 
-	type msgTimestamp struct {
-		msgID     gocql.UUID
-		createdAt time.Time
-		err       error
-	}
-
-	// Parse UUIDs first
+	// Parse UUIDs
 	var validMsgIDs []gocql.UUID
 	for _, msgID := range messageIDs {
 		uuid, err := gocql.ParseUUID(msgID)
@@ -434,37 +443,12 @@ func (r *MessageCassandraRepository) MarkMessagesAsDelivered(ctx context.Context
 		return nil
 	}
 
-	// Concurrent fetch of created_at for all messages
-	results := make(chan msgTimestamp, len(validMsgIDs))
+	// Batch Update directly without lookup
+	batch := r.client.Session.NewBatch(gocql.LoggedBatch)
+	updateQuery := fmt.Sprintf(`UPDATE messages SET delivered_to = delivered_to + {'%s'} WHERE conversation_id = ? AND message_id = ?`, userID)
 
 	for _, uuid := range validMsgIDs {
-		go func(msgUUID gocql.UUID) {
-			var createdAt time.Time
-			selectQuery := `SELECT created_at FROM messages WHERE conversation_id = ? AND message_id = ? LIMIT 1 ALLOW FILTERING`
-			err := r.client.Session.Query(selectQuery, conversationID, msgUUID).Scan(&createdAt)
-			if err != nil {
-				log.Printf("[DEBUG] MarkMessagesAsDelivered lookup failed - conversationID: %s, messageID: %s, error: %v", conversationID, msgUUID.String(), err)
-			}
-			results <- msgTimestamp{msgID: msgUUID, createdAt: createdAt, err: err}
-		}(uuid)
-	}
-
-	// Collect results and build batch
-	batch := r.client.Session.NewBatch(gocql.LoggedBatch)
-	updateQuery := fmt.Sprintf(`UPDATE messages SET delivered_to = delivered_to + {'%s'} WHERE conversation_id = ? AND created_at = ? AND message_id = ?`, userID)
-
-	for i := 0; i < len(validMsgIDs); i++ {
-		result := <-results
-		if result.err != nil {
-			log.Printf("Failed to fetch created_at for message %s: %v", result.msgID.String(), result.err)
-			continue
-		}
-		batch.Query(updateQuery, conversationID, result.createdAt, result.msgID)
-	}
-	close(results)
-
-	if batch.Size() == 0 {
-		return nil
+		batch.Query(updateQuery, conversationID, uuid)
 	}
 
 	return r.client.Session.ExecuteBatch(batch)

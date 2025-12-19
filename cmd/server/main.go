@@ -151,7 +151,7 @@ func main() {
 	}
 
 	// Initialize Cassandra
-	cassandraClient, err := cassdb.NewCassandraClient(cfg.CassandraHosts, cfg.CassandraKeyspace)
+	cassandraClient, err := cassdb.NewCassandraClient(cfg.CassandraHosts, cfg.CassandraKeyspace, cfg.CassandraUser, cfg.CassandraPassword)
 	if err != nil {
 		log.Printf("Warning: Failed to connect to Cassandra: %v", err)
 	} else {
