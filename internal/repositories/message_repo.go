@@ -433,21 +433,21 @@ func (r *MessageRepository) EditMessage(
 
 func (r *MessageRepository) SearchMessages(ctx context.Context, userID primitive.ObjectID, query string, groupIDs []primitive.ObjectID, page, limit int64) ([]models.Message, error) {
 	// Define the text search stage
-	textSearchStage := bson.D{{"$match", bson.D{{"$text", bson.D{{"$search", query}}}}}}
+	textSearchStage := bson.D{{Key: "$match", Value: bson.D{{Key: "$text", Value: bson.D{{Key: "$search", Value: query}}}}}}
 
 	// Define the filter to only include user's conversations
-	conversationFilter := bson.D{{"$match", bson.D{{"$or", []bson.M{
+	conversationFilter := bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: []bson.M{
 		{"group_id": bson.M{"$in": groupIDs}},
 		{"sender_id": userID},
 		{"receiver_id": userID},
 	}}}}}
 
 	// Pagination stages
-	skipStage := bson.D{{"$skip", (page - 1) * limit}}
-	limitStage := bson.D{{"$limit", limit}}
+	skipStage := bson.D{{Key: "$skip", Value: (page - 1) * limit}}
+	limitStage := bson.D{{Key: "$limit", Value: limit}}
 
 	// Sorting by text search score
-	sortStage := bson.D{{"$sort", bson.D{{"score", bson.D{{"$meta", "textScore"}}}}}}
+	sortStage := bson.D{{Key: "$sort", Value: bson.D{{Key: "score", Value: bson.D{{Key: "$meta", Value: "textScore"}}}}}}
 
 	pipeline := mongo.Pipeline{textSearchStage, conversationFilter, sortStage, skipStage, limitStage}
 

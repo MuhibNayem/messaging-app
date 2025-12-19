@@ -66,7 +66,7 @@ type Client struct {
 
 // MessageUpdater defines the interface for updating message statuses
 type MessageUpdater interface {
-	MarkMessagesAsDelivered(ctx context.Context, userID primitive.ObjectID, messageIDs []primitive.ObjectID) error
+	MarkMessagesAsDelivered(ctx context.Context, userID primitive.ObjectID, conversationID string, messageIDs []string) error
 }
 
 // Hub maintains the set of active clients and broadcasts messages to them.
@@ -655,42 +655,58 @@ func (h *Hub) run() {
 			}(conversationSeenEvent)
 
 		case dev := <-h.DeliveredEvents:
-			// Mark messages as delivered in the database asynchronously
-			go func(delivererID primitive.ObjectID, messageIDs []primitive.ObjectID) {
-				// Create a new context as the hub's context might be cancelled or not appropriate for long running DB ops if we wanted strict timeouts
-				// But context.Background() is safer for detached async ops
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-
-				err := h.messageUpdater.MarkMessagesAsDelivered(ctx, delivererID, messageIDs)
-				if err != nil {
-					log.Printf("Error marking messages as delivered: %v", err)
-				}
-			}(dev.DelivererID, dev.MessageIDs)
-
-			// Notify relevant clients about the delivery update
-			deliveredEventJSON, err := json.Marshal(dev)
-			if err != nil {
-				log.Printf("Error marshaling DeliveredEvent for WebSocket: %v", err)
-				continue
-			}
-			wsEvent := models.WebSocketEvent{
-				Type: "MESSAGE_DELIVERED_UPDATE",
-				Data: deliveredEventJSON,
-			}
-			// Find the message to get its conversation context for targeted broadcast
+			// Fetch the message first to determine conversation context
 			if len(dev.MessageIDs) > 0 {
 				msg, err := h.messageRepo.GetMessageByID(h.ctx, dev.MessageIDs[0])
 				if err != nil {
-					log.Printf("Error getting message %s for delivered event broadcast: %v", dev.MessageIDs[0].Hex(), err)
+					log.Printf("Error getting message %s for delivered processing: %v", dev.MessageIDs[0].Hex(), err)
 					continue
 				}
-				// Determine conversation type and ID
+
+				// Determine conversation ID
+				var conversationID string
+				if !msg.GroupID.IsZero() {
+					conversationID = msg.GroupID.Hex()
+				} else {
+					// Recalculate conversation ID for DMs
+					// Note: validation needed on which ID comes first.
+					// utils.GetConversationID sorts them.
+					conversationID = utils.GetConversationID(msg.SenderID, msg.ReceiverID)
+				}
+
+				// Convert ObjectIDs to Strings for Cassandra compatibility
+				var msgIDs []string
+				for _, mid := range dev.MessageIDs {
+					msgIDs = append(msgIDs, mid.Hex())
+				}
+
+				// Mark messages as delivered in the database asynchronously
+				go func(delivererID primitive.ObjectID, convID string, mIDs []string) {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+
+					err := h.messageUpdater.MarkMessagesAsDelivered(ctx, delivererID, convID, mIDs)
+					if err != nil {
+						log.Printf("Error marking messages as delivered: %v", err)
+					}
+				}(dev.DelivererID, conversationID, msgIDs)
+
+				// Notify relevant clients about the delivery update
+				deliveredEventJSON, err := json.Marshal(dev)
+				if err != nil {
+					log.Printf("Error marshaling DeliveredEvent for WebSocket: %v", err)
+					continue
+				}
+				wsEvent := models.WebSocketEvent{
+					Type: "MESSAGE_DELIVERED_UPDATE",
+					Data: deliveredEventJSON,
+				}
+
+				// Broadcast to conversation participants
 				var clients []*Client
 				if !msg.GroupID.IsZero() {
 					clients = h.getClientsByGroup(msg.GroupID.Hex())
 				} else if !msg.ReceiverID.IsZero() {
-					// For direct messages, send to sender and receiver
 					clients = append(h.getClientsByUser(msg.SenderID.Hex()), h.getClientsByUser(msg.ReceiverID.Hex())...)
 				}
 
@@ -701,7 +717,6 @@ func (h *Hub) run() {
 				}
 
 				for _, c := range clients {
-					// Don't send delivered update to the deliverer themselves
 					if c.userID == dev.DelivererID.Hex() {
 						continue
 					}
@@ -925,24 +940,38 @@ func (h *Hub) sendToClients(clients []*Client, msg models.Message) {
 
 			// Async delivery update & notification to Sender
 			// Bypassing the DeliveredEvents channel to avoid blocking the hub loop
-			go func(c *Client, msgID primitive.ObjectID) {
+			go func(c *Client, message models.Message) {
 				delivererObjectID, err := primitive.ObjectIDFromHex(c.userID)
 				if err != nil {
 					log.Printf("Error converting deliverer ID to ObjectID: %v", err)
 					return
 				}
 
+				// Determine Conversation ID
+				var conversationID string
+				if !message.GroupID.IsZero() {
+					conversationID = message.GroupID.Hex()
+				} else {
+					conversationID = utils.GetConversationID(message.SenderID, message.ReceiverID)
+				}
+
+				// Use StringID if available (Cassandra), else Hex
+				msgIDStr := message.StringID
+				if msgIDStr == "" {
+					msgIDStr = message.ID.Hex()
+				}
+
 				// 1. Update DB
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				if err := h.messageUpdater.MarkMessagesAsDelivered(ctx, delivererObjectID, []primitive.ObjectID{msgID}); err != nil {
-					log.Printf("Error marking message %s as delivered to %s: %v", msgID.Hex(), c.userID, err)
+				if err := h.messageUpdater.MarkMessagesAsDelivered(ctx, delivererObjectID, conversationID, []string{msgIDStr}); err != nil {
+					log.Printf("Error marking message %s as delivered to %s: %v", msgIDStr, c.userID, err)
 				}
 
 				// 2. Notify Sender
 				// Construct the event
 				deliveredEvent := models.DeliveredEvent{
-					MessageIDs:  []primitive.ObjectID{msgID},
+					MessageIDs:  []primitive.ObjectID{message.ID},
 					DelivererID: delivererObjectID,
 					Timestamp:   time.Now(),
 				}
@@ -962,9 +991,8 @@ func (h *Hub) sendToClients(clients []*Client, msg models.Message) {
 				}
 
 				// Send to msg Sender
-				// We need to fetch the message or pass senderID? We have msg object.
-				h.sendToUser(msg.SenderID.Hex(), wsEventJSON)
-			}(c, msg.ID)
+				h.sendToUser(message.SenderID.Hex(), wsEventJSON)
+			}(c, msg)
 
 		default:
 			// Client buffer full or closed

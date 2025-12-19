@@ -199,7 +199,7 @@ func (r *FriendshipRepository) GetFriendRequests(ctx context.Context, userID pri
 			{"receiver_id": userID},
 		},
 	}
-	matchStage := bson.D{{"$match", matchFilter}}
+	matchStage := bson.D{{Key: "$match", Value: matchFilter}}
 
 	// Use CountDocuments for a robust total count
 	total, err := r.db.Collection("friendships").CountDocuments(ctx, matchFilter)
@@ -211,24 +211,24 @@ func (r *FriendshipRepository) GetFriendRequests(ctx context.Context, userID pri
 	pipeline := mongo.Pipeline{
 		matchStage,
 		// Lookup requester info
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "users",
 			"localField":   "requester_id",
 			"foreignField": "_id",
 			"as":           "requester_info",
 		}}},
 		// Lookup receiver info
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "users",
 			"localField":   "receiver_id",
 			"foreignField": "_id",
 			"as":           "receiver_info",
 		}}},
 		// Unwind the arrays created by lookup
-		bson.D{{"$unwind", "$requester_info"}},
-		bson.D{{"$unwind", "$receiver_info"}},
+		bson.D{{Key: "$unwind", Value: "$requester_info"}},
+		bson.D{{Key: "$unwind", Value: "$receiver_info"}},
 		// Project the final structure
-		bson.D{{"$project", bson.M{
+		bson.D{{Key: "$project", Value: bson.M{
 			"_id":            1,
 			"status":         1,
 			"created_at":     1,
@@ -239,9 +239,9 @@ func (r *FriendshipRepository) GetFriendRequests(ctx context.Context, userID pri
 			"receiver_info":  "$receiver_info",
 		}}},
 		// Sorting and pagination
-		bson.D{{"$sort", bson.D{{"updated_at", -1}}}},
-		bson.D{{"$skip", (page - 1) * limit}},
-		bson.D{{"$limit", limit}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "updated_at", Value: -1}}}},
+		bson.D{{Key: "$skip", Value: (page - 1) * limit}},
+		bson.D{{Key: "$limit", Value: limit}},
 	}
 
 	cursor, err := r.db.Collection("friendships").Aggregate(ctx, pipeline)
@@ -534,7 +534,7 @@ func (r *FriendshipRepository) SearchFriends(ctx context.Context, userID primiti
 
 	pipeline := mongo.Pipeline{
 		// 1. Match accepted friendships involving the user
-		bson.D{{"$match", bson.M{
+		bson.D{{Key: "$match", Value: bson.M{
 			"status": models.FriendshipStatusAccepted,
 			"$or": []bson.M{
 				{"requester_id": userID},
@@ -544,22 +544,22 @@ func (r *FriendshipRepository) SearchFriends(ctx context.Context, userID primiti
 		// 2. Lookup friend details
 		// We need to figure out which field is the "friend" (not the current user)
 		// Simpler approach: Lookup both, then pick the right one
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "users",
 			"localField":   "requester_id",
 			"foreignField": "_id",
 			"as":           "requester_info",
 		}}},
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "users",
 			"localField":   "receiver_id",
 			"foreignField": "_id",
 			"as":           "receiver_info",
 		}}},
-		bson.D{{"$unwind", "$requester_info"}},
-		bson.D{{"$unwind", "$receiver_info"}},
+		bson.D{{Key: "$unwind", Value: "$requester_info"}},
+		bson.D{{Key: "$unwind", Value: "$receiver_info"}},
 		// 3. Project the "friend" info into a common field
-		bson.D{{"$project", bson.M{
+		bson.D{{Key: "$project", Value: bson.M{
 			"friend_info": bson.M{
 				"$cond": bson.A{
 					bson.M{"$eq": bson.A{"$requester_id", userID}},
@@ -569,16 +569,16 @@ func (r *FriendshipRepository) SearchFriends(ctx context.Context, userID primiti
 			},
 		}}},
 		// 4. Match against the search query
-		bson.D{{"$match", bson.M{
+		bson.D{{Key: "$match", Value: bson.M{
 			"$or": []bson.M{
 				{"friend_info.username": bson.M{"$regex": regexPattern, "$options": "i"}},
 				{"friend_info.full_name": bson.M{"$regex": regexPattern, "$options": "i"}},
 			},
 		}}},
 		// 5. Limit results
-		bson.D{{"$limit", limit}},
+		bson.D{{Key: "$limit", Value: limit}},
 		// 6. Project final shape
-		bson.D{{"$replaceRoot", bson.M{"newRoot": "$friend_info"}}},
+		bson.D{{Key: "$replaceRoot", Value: bson.M{"newRoot": "$friend_info"}}},
 	}
 
 	cursor, err := r.db.Collection("friendships").Aggregate(ctx, pipeline)

@@ -5,27 +5,33 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"messaging-app/internal/db"
 	"messaging-app/internal/kafka"
 	"messaging-app/internal/models"
 	"messaging-app/internal/repositories"
 	"time"
 
+	"github.com/gocql/gocql"
 	kafkago "github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type GroupService struct {
-	groupRepo *repositories.GroupRepository
-	userRepo  *repositories.UserRepository
-	producer  *kafka.MessageProducer
+	groupRepo       *repositories.GroupRepository
+	userRepo        *repositories.UserRepository
+	activityRepo    *repositories.GroupActivityRepository
+	cassandraClient *db.CassandraClient
+	producer        *kafka.MessageProducer
 }
 
-func NewGroupService(groupRepo *repositories.GroupRepository, userRepo *repositories.UserRepository, producer *kafka.MessageProducer) *GroupService {
+func NewGroupService(groupRepo *repositories.GroupRepository, userRepo *repositories.UserRepository, activityRepo *repositories.GroupActivityRepository, cassandraClient *db.CassandraClient, producer *kafka.MessageProducer) *GroupService {
 	return &GroupService{
-		groupRepo: groupRepo,
-		userRepo:  userRepo,
-		producer:  producer,
+		groupRepo:       groupRepo,
+		userRepo:        userRepo,
+		activityRepo:    activityRepo,
+		cassandraClient: cassandraClient,
+		producer:        producer,
 	}
 }
 
@@ -62,10 +68,32 @@ func (s *GroupService) CreateGroup(ctx context.Context, creatorID primitive.Obje
 		return nil, err
 	}
 
+	// Get creator details for activity
+	creator, err := s.userRepo.FindUserByID(ctx, creatorID)
+	if err != nil {
+		fmt.Printf("Failed to fetch creator details: %v\n", err)
+		// Continue without activity
+	} else {
+		// Create GROUP_CREATED activity
+		activity := &models.GroupActivity{
+			GroupID:      createdGroup.ID,
+			ActivityType: models.ActivityGroupCreated,
+			ActorID:      creatorID,
+			ActorName:    creator.Username,
+			CreatedAt:    time.Now(),
+		}
+
+		if err := s.activityRepo.CreateActivity(ctx, activity); err != nil {
+			fmt.Printf("Failed to create group activity: %v\n", err)
+		}
+
+		// Update inbox for all members
+		s.updateInboxForMembers(ctx, createdGroup, activity)
+	}
+
 	// Publish GROUP_CREATED event
 	if err := s.publishGroupEvent(ctx, createdGroup.ID, "GROUP_CREATED"); err != nil {
 		fmt.Printf("Failed to publish group created event: %v\n", err)
-		// Don't fail the request if event publishing fails
 	}
 	return createdGroup, nil
 }
@@ -91,11 +119,45 @@ func (s *GroupService) AddMember(ctx context.Context, groupID, requesterID, newM
 	}
 
 	// Verify new member exists
-	if _, err := s.userRepo.FindUserByID(ctx, newMemberID); err != nil {
+	newMember, err := s.userRepo.FindUserByID(ctx, newMemberID)
+	if err != nil {
 		return fmt.Errorf("user not found")
 	}
 
-	return s.groupRepo.AddMember(ctx, groupID, newMemberID)
+	// Add member to group
+	if err := s.groupRepo.AddMember(ctx, groupID, newMemberID); err != nil {
+		return err
+	}
+
+	// Get requester details for activity
+	requester, err := s.userRepo.FindUserByID(ctx, requesterID)
+	if err != nil {
+		fmt.Printf("Failed to fetch requester details: %v\n", err)
+		return nil // Member added successfully, activity creation is optional
+	}
+
+	// Create MEMBER_ADDED activity
+	activity := &models.GroupActivity{
+		GroupID:      groupID,
+		ActivityType: models.ActivityMemberAdded,
+		ActorID:      requesterID,
+		ActorName:    requester.Username,
+		TargetID:     &newMemberID,
+		TargetName:   newMember.Username,
+		CreatedAt:    time.Now(),
+	}
+
+	if err := s.activityRepo.CreateActivity(ctx, activity); err != nil {
+		fmt.Printf("Failed to create member added activity: %v\n", err)
+	}
+
+	// Update inbox for all members (including newly added member)
+	updatedGroup, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err == nil {
+		s.updateInboxForMembers(ctx, updatedGroup, activity)
+	}
+
+	return nil
 }
 
 func (s *GroupService) AddAdmin(ctx context.Context, groupID, requesterID, newAdminID primitive.ObjectID) error {
@@ -128,8 +190,11 @@ func (s *GroupService) RemoveMember(ctx context.Context, groupID, requesterID, m
 		return fmt.Errorf("group not found")
 	}
 
-	// Check if requester is admin
-	if !containsID(group.Admins, requesterID) {
+	// Determine if this is a self-leave or admin removal
+	isSelfLeave := requesterID == memberID
+
+	// If not self-leave, check if requester is admin
+	if !isSelfLeave && !containsID(group.Admins, requesterID) {
 		return errors.New("only admins can remove members")
 	}
 
@@ -138,8 +203,55 @@ func (s *GroupService) RemoveMember(ctx context.Context, groupID, requesterID, m
 		return errors.New("cannot remove the last admin")
 	}
 
+	// Get member details before removal
+	member, err := s.userRepo.FindUserByID(ctx, memberID)
+	if err != nil {
+		return fmt.Errorf("member not found")
+	}
+
+	// Remove member from group
 	if err := s.groupRepo.RemoveMember(ctx, groupID, memberID); err != nil {
 		return err
+	}
+
+	// Create activity based on who is removing
+	var activity *models.GroupActivity
+	if isSelfLeave {
+		// Member left on their own
+		activity = &models.GroupActivity{
+			GroupID:      groupID,
+			ActivityType: models.ActivityMemberLeft,
+			ActorID:      memberID,
+			ActorName:    member.Username,
+			CreatedAt:    time.Now(),
+		}
+	} else {
+		// Admin removed the member
+		requester, err := s.userRepo.FindUserByID(ctx, requesterID)
+		if err != nil {
+			fmt.Printf("Failed to fetch requester details: %v\n", err)
+			return nil // Member removed successfully, activity creation is optional
+		}
+
+		activity = &models.GroupActivity{
+			GroupID:      groupID,
+			ActivityType: models.ActivityMemberRemoved,
+			ActorID:      requesterID,
+			ActorName:    requester.Username,
+			TargetID:     &memberID,
+			TargetName:   member.Username,
+			CreatedAt:    time.Now(),
+		}
+	}
+
+	if err := s.activityRepo.CreateActivity(ctx, activity); err != nil {
+		fmt.Printf("Failed to create member removal activity: %v\n", err)
+	}
+
+	// Update inbox for remaining members
+	updatedGroup, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err == nil {
+		s.updateInboxForMembers(ctx, updatedGroup, activity)
 	}
 
 	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
@@ -200,6 +312,22 @@ func (s *GroupService) UpdateGroup(ctx context.Context, groupID, requesterID pri
 	}
 
 	return nil
+}
+
+func (s *GroupService) GetActivities(ctx context.Context, groupID primitive.ObjectID, requesterID primitive.ObjectID, limit int) ([]*models.GroupActivity, error) {
+	// Verify group exists
+	group, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("group not found")
+	}
+
+	// Check if requester is a member
+	if !containsID(group.Members, requesterID) {
+		return nil, errors.New("only group members can view activities")
+	}
+
+	// Fetch activities from repository
+	return s.activityRepo.GetActivities(ctx, groupID, limit)
 }
 
 func (s *GroupService) GetUserGroups(ctx context.Context, userID primitive.ObjectID) ([]*models.Group, error) {
@@ -435,6 +563,48 @@ func (s *GroupService) UpdateGroupSettings(ctx context.Context, groupID, request
 	}
 
 	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
+}
+
+// updateInboxForMembers updates user_inbox for all group members with activity
+// Uses Cassandra BATCH for O(1) network roundtrip (Facebook-scale optimization)
+func (s *GroupService) updateInboxForMembers(ctx context.Context, group *models.Group, activity *models.GroupActivity) {
+	if len(group.Members) == 0 {
+		return
+	}
+
+	activityText := activity.FormatActivity()
+	conversationID := "group_" + group.ID.Hex()
+	now := time.Now()
+
+	query := `INSERT INTO user_inbox (
+		user_id, conversation_id, conversation_name, conversation_avatar,
+		is_group, is_marketplace, last_message_content,
+		last_message_sender_id, last_message_sender_name, last_message_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	// Use UnloggedBatch for maximum performance
+	// Unlogged is safe here because these are independent writes to different partitions
+	batch := s.cassandraClient.Session.NewBatch(gocql.UnloggedBatch)
+
+	for _, memberID := range group.Members {
+		batch.Query(query,
+			memberID.Hex(),
+			conversationID,
+			group.Name,
+			group.Avatar,
+			true,  // is_group
+			false, // is_marketplace
+			activityText,
+			activity.ActorID.Hex(),
+			activity.ActorName,
+			now,
+		)
+	}
+
+	// Execute all writes in a single network roundtrip
+	if err := s.cassandraClient.Session.ExecuteBatch(batch); err != nil {
+		fmt.Printf("Failed to batch update inbox for group %s: %v\n", group.ID.Hex(), err)
+	}
 }
 
 func containsID(ids []primitive.ObjectID, id primitive.ObjectID) bool {

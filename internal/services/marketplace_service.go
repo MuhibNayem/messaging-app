@@ -12,14 +12,16 @@ import (
 )
 
 type MarketplaceService struct {
-	repo     *repositories.MarketplaceRepository
-	userRepo *repositories.UserRepository
+	repo                 *repositories.MarketplaceRepository
+	userRepo             *repositories.UserRepository
+	messageCassandraRepo *repositories.MessageCassandraRepository
 }
 
-func NewMarketplaceService(repo *repositories.MarketplaceRepository, userRepo *repositories.UserRepository) *MarketplaceService {
+func NewMarketplaceService(repo *repositories.MarketplaceRepository, userRepo *repositories.UserRepository, mcr *repositories.MessageCassandraRepository) *MarketplaceService {
 	return &MarketplaceService{
-		repo:     repo,
-		userRepo: userRepo,
+		repo:                 repo,
+		userRepo:             userRepo,
+		messageCassandraRepo: mcr,
 	}
 }
 
@@ -137,7 +139,8 @@ func (s *MarketplaceService) SearchProducts(ctx context.Context, filter models.P
 }
 
 func (s *MarketplaceService) GetMarketplaceConversations(ctx context.Context, userID primitive.ObjectID) ([]models.ConversationSummary, error) {
-	return s.repo.GetMarketplaceConversations(ctx, userID)
+	// Use Cassandra for scalable marketplace inbox
+	return s.messageCassandraRepo.GetInbox(ctx, userID, true) // isMarketplace = true
 }
 
 func (s *MarketplaceService) MarkProductSold(ctx context.Context, productID, userID primitive.ObjectID) error {

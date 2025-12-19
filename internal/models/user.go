@@ -44,6 +44,8 @@ type NotificationSettings struct {
 	NotifyOnLike          bool `bson:"notify_on_like" json:"notify_on_like"`
 	NotifyOnTag           bool `bson:"notify_on_tag" json:"notify_on_tag"`
 	NotifyOnMessage       bool `bson:"notify_on_message" json:"notify_on_message"`
+	NotifyOnBirthday      bool `bson:"notify_on_birthday" json:"notify_on_birthday"`
+	NotifyOnEventInvite   bool `bson:"notify_on_event_invite" json:"notify_on_event_invite"`
 }
 
 type Friendship struct {
@@ -238,6 +240,8 @@ type UpdateNotificationSettingsRequest struct {
 	NotifyOnLike          *bool `json:"notify_on_like,omitempty"`
 	NotifyOnTag           *bool `json:"notify_on_tag,omitempty"`
 	NotifyOnMessage       *bool `json:"notify_on_message,omitempty"`
+	NotifyOnBirthday      *bool `json:"notify_on_birthday,omitempty"`
+	NotifyOnEventInvite   *bool `json:"notify_on_event_invite,omitempty"`
 }
 
 // DTOs for Account Settings

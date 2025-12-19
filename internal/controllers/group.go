@@ -434,6 +434,37 @@ func (c *GroupController) UpdateGroupSettings(ctx *gin.Context) {
 	ctx.Status(http.StatusNoContent)
 }
 
+func (c *GroupController) GetActivities(ctx *gin.Context) {
+	userID, err := utils.GetUserIDFromContext(ctx)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	groupID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusBadRequest, "Invalid group ID")
+		return
+	}
+
+	// Get limit from query params, default to 50
+	limit := 50
+	if limitStr := ctx.Query("limit"); limitStr != "" {
+		fmt.Sscanf(limitStr, "%d", &limit)
+		if limit <= 0 || limit > 100 {
+			limit = 50
+		}
+	}
+
+	activities, err := c.groupService.GetActivities(ctx, groupID, userID, limit)
+	if err != nil {
+		utils.RespondWithError(ctx, utils.GetStatusCode(err), err.Error())
+		return
+	}
+
+	ctx.JSON(http.StatusOK, activities)
+}
+
 // Helper methods
 func (c *GroupController) convertGroupToResponse(ctx context.Context, group *models.Group) (*models.GroupResponse, error) {
 	creator, err := c.userService.GetUserByID(ctx, group.CreatorID)

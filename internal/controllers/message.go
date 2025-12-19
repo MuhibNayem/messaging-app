@@ -106,7 +106,7 @@ func (c *MessageController) SendMessage(ctx *gin.Context) {
 			return
 		}
 	}
-	
+
 	// DEBUG LOG
 	// fmt.Printf("[MessageController] SendMessage: IsMarketplace=%v, ContentType=%s\n", req.IsMarketplace, req.ContentType)
 
@@ -190,17 +190,19 @@ func (c *MessageController) GetMessages(ctx *gin.Context) {
 	// Check if this is a group conversation or direct message
 	groupID := ctx.Query("groupID")
 	receiverID := ctx.Query("receiverID")
+	conversationID := ctx.Query("conversationID") // Support direct Conversation ID
 	before := ctx.Query("before")
 	marketplace := ctx.Query("marketplace") == "true"
 
 	query := models.MessageQuery{
-		SenderID:    senderID.Hex(),
-		Page:        page,
-		Limit:       limit,
-		GroupID:     groupID,
-		ReceiverID:  receiverID,
-		Before:      before,
-		Marketplace: marketplace,
+		SenderID:       senderID.Hex(),
+		Page:           page,
+		Limit:          limit,
+		GroupID:        groupID,
+		ReceiverID:     receiverID,
+		ConversationID: conversationID, // Add to query model
+		Before:         before,
+		Marketplace:    marketplace,
 	}
 
 	// Validate the query
@@ -208,8 +210,8 @@ func (c *MessageController) GetMessages(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "cannot specify both groupID and receiverID"})
 		return
 	}
-	if groupID == "" && receiverID == "" {
-		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "must specify either groupID or receiverID"})
+	if groupID == "" && receiverID == "" && conversationID == "" {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "must specify groupID, receiverID, or conversationID"})
 		return
 	}
 
@@ -256,29 +258,58 @@ func (c *MessageController) MarkMessagesAsSeen(ctx *gin.Context) {
 		return
 	}
 
-	var messageIDs []string
-	if err := ctx.ShouldBindJSON(&messageIDs); err != nil {
+	// Expecting JSON: { "conversation_id": "...", "message_ids": ["..."] }
+	var req struct {
+		ConversationID string   `json:"conversation_id"`
+		MessageIDs     []string `json:"message_ids"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
 		return
 	}
 
-	if len(messageIDs) == 0 {
+	if len(req.MessageIDs) == 0 {
 		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "at least one message ID required"})
 		return
 	}
-
-	// Convert string IDs to ObjectIDs
-	var objectIDs []primitive.ObjectID
-	for _, id := range messageIDs {
-		objID, err := primitive.ObjectIDFromHex(id)
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid message ID: " + id})
-			return
-		}
-		objectIDs = append(objectIDs, objID)
+	if req.ConversationID == "" {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "conversation_id is required"})
+		return
 	}
 
-	err = c.messageService.MarkMessagesAsSeen(ctx.Request.Context(), currentUserID, objectIDs)
+	// Convert string IDs to ObjectIDs (for legacy signature)
+	// NOTE: The service now expects conversationID and MessageIDs.
+	// But Service signature for messageIDs is still []primitive.ObjectID (I missed updating that in previous step?)
+	// Step 1484 updated: `func (s *MessageService) MarkMessagesAsSeen(ctx context.Context, userID primitive.ObjectID, conversationID string, messageIDs []primitive.ObjectID) error`
+	// Wait, I SHOULD HAVE CHANGED messageIDs to []string because Cassandra uses UUID strings!
+	// In Step 1493 replacement content:
+	// `func (s *MessageService) MarkMessagesAsSeen(ctx context.Context, userID primitive.ObjectID, conversationID string, messageIDs []primitive.ObjectID) error`
+	// And inside it loops `for _, id := range messageIDs { strIDs = append(strIDs, id.Hex()) ... }`
+	// This forces me to convert strings to ObjectIDs just to convert them back to strings inside the service.
+	// This creates an issue if the ID is a Cassandra UUID string that IS NOT a valid ObjectID Hex.
+	//
+	// CRITICAL FIX: I must assume the IDs passed might NOT be ObjectIDs.
+	// But `primitive.ObjectIDFromHex` will fail if they are not.
+	// I need to update the SERVICE METHOD signature to accept `[]string` instead of `[]primitive.ObjectID`.
+	// But for now, to satisfy the CURRENT signature, I have to try to convert.
+	// BUT Cassandra IDs are UUIDs. Standard UUID is 36 chars. ObjectID is 24 hex chars.
+	// They are NOT compatible.
+	//
+	// I MUST update the service signature in `message_service.go` to `[]string`.
+	// I will do that in the NEXT step.
+	// For this step, I will prepare the controller to pass strings, but I acknowledge the service signature mismatch.
+	// Actually, Go won't compile if I pass []string to []ObjectID.
+	//
+	// I will convert them blindly to ObjectID for now? No, that will error.
+	//
+	// I MUST update the service signature FIRST or SIMULTANEOUSLY.
+	// Since I can't do multiple files in one step properly without potential conflict (though tool allows it, it's risky).
+	//
+	// I will update the Controller to assume Service takes `[]string`.
+	// AND I will update the Service in the next step to take `[]string`.
+
+	err = c.messageService.MarkMessagesAsSeen(ctx.Request.Context(), currentUserID, req.ConversationID, req.MessageIDs)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
 		return
@@ -308,9 +339,10 @@ func (c *MessageController) MarkConversationAsSeen(ctx *gin.Context) {
 	}
 
 	conversationIDStr := ctx.Param("id")
-	conversationID, err := primitive.ObjectIDFromHex(conversationIDStr)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid conversation ID"})
+	// Removed ObjectID conversion here to support string IDs (dm_...).
+	// Validation (basic)
+	if conversationIDStr == "" {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "conversation ID required"})
 		return
 	}
 
@@ -329,7 +361,7 @@ func (c *MessageController) MarkConversationAsSeen(ctx *gin.Context) {
 		return
 	}
 
-	err = c.messageService.MarkConversationAsSeen(ctx.Request.Context(), currentUserID, conversationID, timestamp, req.IsGroup)
+	err = c.messageService.MarkConversationAsSeen(ctx.Request.Context(), currentUserID, conversationIDStr, timestamp, req.IsGroup)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
 		return
@@ -386,13 +418,16 @@ func (c *MessageController) DeleteMessage(ctx *gin.Context) {
 	}
 
 	messageID := ctx.Param("id")
-	objID, err := primitive.ObjectIDFromHex(messageID)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid message ID"})
+	// For Cassandra delete, we need the UUID provided by the frontend as string_id or id (if mapped)
+	// But check logic: Service expects string ID for delete.
+
+	conversationID := ctx.Query("conversation_id")
+	if conversationID == "" {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "conversation_id query parameter is required"})
 		return
 	}
 
-	_, err = c.messageService.DeleteMessage(ctx.Request.Context(), objID.Hex(), currentUserID)
+	_, err = c.messageService.DeleteMessage(ctx.Request.Context(), conversationID, messageID, currentUserID)
 	if err != nil {
 		switch err.Error() {
 		case "message not found", "message not found or not owned by user":
@@ -423,32 +458,36 @@ func (c *MessageController) DeleteMessage(ctx *gin.Context) {
 // @Router /messages/{id} [put]
 func (c *MessageController) EditMessage(ctx *gin.Context) {
 	messageID := ctx.Param("id")
+	conversationID := ctx.Query("conversation_id")
+	if conversationID == "" {
+		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "conversation_id query parameter is required"})
+		return
+	}
+
 	userID := ctx.MustGet("userID").(string)
 
 	var req struct {
 		Content string `json:"content" binding:"required"`
 	}
+
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
 		return
 	}
 
-	updatedMessage, err := c.messageService.EditMessage(ctx.Request.Context(), messageID, userID, req.Content)
+	updatedMsg, err := c.messageService.EditMessage(ctx.Request.Context(), conversationID, messageID, userID, req.Content)
 	if err != nil {
-		switch err.Error() {
-		case "message not found, not owned by user, or already deleted":
+		if err.Error() == "message not found or not owned by user" {
 			ctx.JSON(http.StatusNotFound, models.ErrorResponse{Error: err.Error()})
-		case "message can only be edited within 1 hour of creation":
+		} else if err.Error() == "message can only be edited within 1 hour of creation" {
 			ctx.JSON(http.StatusForbidden, models.ErrorResponse{Error: err.Error()})
-		case "invalid message ID format", "invalid requester ID format":
-			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
-		default:
+		} else {
 			ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
 		}
 		return
 	}
 
-	ctx.JSON(http.StatusOK, updatedMessage)
+	ctx.JSON(http.StatusOK, updatedMsg)
 }
 
 // @Summary Search messages
@@ -591,29 +630,29 @@ func (c *MessageController) MarkMessagesAsDelivered(ctx *gin.Context) {
 		return
 	}
 
-	var messageIDs []string
-	if err := ctx.ShouldBindJSON(&messageIDs); err != nil {
+	var req struct {
+		ConversationID string   `json:"conversation_id" binding:"required"`
+		MessageIDs     []string `json:"message_ids" binding:"required"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		// Fallback for backward compatibility if just array is sent (though unlikely given the error)
+		// Or if user sends raw array, binding fails.
+		// Since we are fixing the API, we enforce the new struct.
+		// If binding fails, try binding raw array for legacy?
+		// No, user error showed "invalid message ID", meaning it DID bind to []string but failed on Hex conversion.
+		// Now we want to bind to a struct.
 		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
 		return
 	}
 
-	if len(messageIDs) == 0 {
+	if len(req.MessageIDs) == 0 {
 		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "at least one message ID required"})
 		return
 	}
 
-	// Convert string IDs to ObjectIDs
-	var objectIDs []primitive.ObjectID
-	for _, id := range messageIDs {
-		objID, err := primitive.ObjectIDFromHex(id)
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid message ID: " + id})
-			return
-		}
-		objectIDs = append(objectIDs, objID)
-	}
-
-	err = c.messageService.MarkMessagesAsDelivered(ctx.Request.Context(), currentUserID, objectIDs)
+	// Pass string IDs directly to service (which now handles Cassandra UUIDs)
+	err = c.messageService.MarkMessagesAsDelivered(ctx.Request.Context(), currentUserID, req.ConversationID, req.MessageIDs)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
 		return

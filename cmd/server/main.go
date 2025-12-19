@@ -12,6 +12,8 @@ import (
 
 	"messaging-app/config"
 	"messaging-app/internal/controllers"
+	cassdb "messaging-app/internal/db"
+	"messaging-app/internal/graph"
 	"messaging-app/internal/kafka"
 	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/redis"
@@ -140,6 +142,22 @@ func main() {
 		log.Fatal("Failed to connect to Redis cluster")
 	}
 
+	// Initialize Neo4j
+	neo4jClient, err := graph.NewNeo4jClient(cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword)
+	if err != nil {
+		log.Printf("Warning: Failed to connect to Neo4j: %v", err)
+	} else {
+		defer neo4jClient.Close(context.Background())
+	}
+
+	// Initialize Cassandra
+	cassandraClient, err := cassdb.NewCassandraClient(cfg.CassandraHosts, cfg.CassandraKeyspace)
+	if err != nil {
+		log.Printf("Warning: Failed to connect to Cassandra: %v", err)
+	} else {
+		defer cassandraClient.Close()
+	}
+
 	// Initialize Repositories
 	userRepo := repositories.NewUserRepository(db)
 	messageRepo := repositories.NewMessageRepository(db)
@@ -153,7 +171,17 @@ func main() {
 	communityRepo := repositories.NewCommunityRepository(db)
 	storyRepo := repositories.NewStoryRepository(db)
 	reelRepo := repositories.NewReelRepository(db)
-	marketplaceRepo := repositories.NewMarketplaceRepository(db) // Marketplace Repo
+	marketplaceRepo := repositories.NewMarketplaceRepository(db)
+	eventRepo := repositories.NewEventRepository(db)
+
+	// Graph Repositories (Only if Neo4j is connected)
+	var userGraphRepo *repositories.UserGraphRepository
+	var eventGraphRepo *repositories.EventGraphRepository
+	if neo4jClient != nil {
+		userGraphRepo = repositories.NewUserGraphRepository(neo4jClient.Driver)
+		eventGraphRepo = repositories.NewEventGraphRepository(neo4jClient.Driver)
+		log.Printf("Graph Repositories Initialized: UserGraph=%v, EventGraph=%v", userGraphRepo != nil, eventGraphRepo != nil)
+	}
 
 	// Seeding
 	marketplaceSeeder := seeds.NewMarketplaceSeeder(marketplaceRepo)
@@ -181,18 +209,27 @@ func main() {
 	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, communityRepo, privacyRepo, kafkaProducer, notificationService, storageService)
 	// Note: UserService now needs FeedService for profile history
 	userService := services.NewUserService(userRepo, reelRepo, redisClient.GetClient(), feedService)
-	groupService := services.NewGroupService(groupRepo, userRepo, kafkaProducer)
-	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo)
-	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService)
+	// Inject Graph Repo into User Service if needed later
+
+	messageCassandraRepo := repositories.NewMessageCassandraRepository(cassandraClient)
+	groupActivityRepo := repositories.NewGroupActivityRepository(cassandraClient)
+
+	groupService := services.NewGroupService(groupRepo, userRepo, groupActivityRepo, cassandraClient, kafkaProducer)
+	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo, userGraphRepo)
+	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService, messageCassandraRepo)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
 
-	searchService := services.NewSearchService(userRepo, feedRepo, friendshipRepo) // Initialize SearchService
-	conversationService := services.NewConversationService(conversationRepo)
+	searchService := services.NewSearchService(userRepo, feedRepo, friendshipRepo)
+	conversationService := services.NewConversationService(conversationRepo, messageCassandraRepo, userRepo, groupRepo)
 
 	communityService := services.NewCommunityService(communityRepo, userRepo)
 	storyService := services.NewStoryService(storyRepo, userRepo, friendshipRepo)
 	reelService := services.NewReelService(reelRepo, userRepo, friendshipRepo)
-	marketplaceService := services.NewMarketplaceService(marketplaceRepo, userRepo) // Marketplace Service
+	marketplaceService := services.NewMarketplaceService(marketplaceRepo, userRepo, messageCassandraRepo)
+
+	// Inject Graph Repo into Event Service?
+	// For now, let's keep EventService signature same until we refactor it.
+	eventService := services.NewEventService(eventRepo, userRepo, eventGraphRepo)
 
 	// Initialize Controllers
 	authController := controllers.NewAuthController(authService)
@@ -202,15 +239,16 @@ func main() {
 	messageController := controllers.NewMessageController(messageService, storageService)
 	feedController := controllers.NewFeedController(feedService, userService, privacyService, storageService)
 	privacyController := controllers.NewPrivacyController(privacyService, userService)
-	searchController := controllers.NewSearchController(searchService)                   // Initialize SearchController
-	notificationController := controllers.NewNotificationController(notificationService) // Initialize NotificationController
+	searchController := controllers.NewSearchController(searchService)
+	notificationController := controllers.NewNotificationController(notificationService)
 	conversationController := controllers.NewConversationController(conversationService)
 	uploadController := controllers.NewUploadController(storageService)
 
 	communityController := controllers.NewCommunityController(communityService)
 	storyController := controllers.NewStoryController(storyService)
 	reelController := controllers.NewReelController(reelService)
-	marketplaceController := controllers.NewMarketplaceController(marketplaceService) // Marketplace Controller
+	marketplaceController := controllers.NewMarketplaceController(marketplaceService)
+	eventController := controllers.NewEventController(eventService)
 
 	// Initialize WebSocket Hub
 	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, friendshipRepo, messageRepo, messageService)
@@ -438,6 +476,9 @@ func main() {
 		// Group settings
 		groupRoutes.PUT("/:id/settings", groupController.UpdateGroupSettings)
 
+		// Group activities
+		groupRoutes.GET("/:id/activities", groupController.GetActivities)
+
 		// Group admins
 		groupRoutes.POST("/:id/admins", groupController.AddAdmin)
 		groupRoutes.DELETE("/:id/admins/:userId", groupController.RemoveAdmin)
@@ -541,6 +582,19 @@ func main() {
 		marketplaceRoutes.POST("/products/:id/sold", marketplaceController.MarkSold)
 		marketplaceRoutes.POST("/products/:id/save", marketplaceController.ToggleSave)
 		marketplaceRoutes.GET("/conversations", marketplaceController.GetConversations)
+	}
+
+	// Event Routes
+	eventGroup := api.Group("/events")
+	{
+		eventGroup.POST("", eventController.CreateEvent)
+		eventGroup.GET("", eventController.ListEvents)
+		eventGroup.GET("/my-events", eventController.GetMyEvents)
+		eventGroup.GET("/birthdays", eventController.GetBirthdays)
+		eventGroup.GET("/:id", eventController.GetEvent)
+		eventGroup.PUT("/:id", eventController.UpdateEvent)
+		eventGroup.DELETE("/:id", eventController.DeleteEvent)
+		eventGroup.POST("/:id/rsvp", eventController.RSVP)
 	}
 
 	// WebSocket endpoint

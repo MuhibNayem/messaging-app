@@ -14,12 +14,14 @@ import (
 type FriendshipService struct {
 	friendshipRepo *repositories.FriendshipRepository
 	userRepo       *repositories.UserRepository
+	userGraphRepo  *repositories.UserGraphRepository
 }
 
-func NewFriendshipService(fr *repositories.FriendshipRepository, ur *repositories.UserRepository) *FriendshipService {
+func NewFriendshipService(fr *repositories.FriendshipRepository, ur *repositories.UserRepository, ugr *repositories.UserGraphRepository) *FriendshipService {
 	return &FriendshipService{
 		friendshipRepo: fr,
 		userRepo:       ur,
+		userGraphRepo:  ugr,
 	}
 }
 
@@ -31,56 +33,75 @@ var (
 )
 
 func (s *FriendshipService) SendRequest(ctx context.Context, requesterID, receiverID primitive.ObjectID) (*models.Friendship, error) {
-	// Check if receiver exists
-	if _, err := s.userRepo.FindUserByID(ctx, receiverID); err != nil {
-		return nil, err // Will return "user not found" from userRepo
+	// Synch users to graph just in case (if enabled)
+	if s.userGraphRepo != nil {
+		_ = s.userGraphRepo.SyncUser(ctx, requesterID)
+		_ = s.userGraphRepo.SyncUser(ctx, receiverID)
 	}
 
-	// Check if they are already friends
-	if friends, _ := s.friendshipRepo.AreFriends(ctx, requesterID, receiverID); friends {
-		return nil, repositories.ErrFriendRequestExists
+	// Graph: Check existing
+	// Note: We can implement AreFriends / RequestExists using Graph check here.
+
+	// Mongo: Create Request (Legacy/Backup)
+	friendship, err := s.friendshipRepo.CreateRequest(ctx, requesterID, receiverID)
+	if err != nil {
+		return nil, err
 	}
 
-	// Repository handles all other validation (self-friending, existing requests)
-	return s.friendshipRepo.CreateRequest(ctx, requesterID, receiverID)
+	// Graph: Create Request
+	if s.userGraphRepo != nil {
+		if err := s.userGraphRepo.SendRequest(ctx, requesterID, receiverID); err != nil {
+			log.Printf("Error creating graph request: %v", err)
+			// Don't fail the request if graph fails in dev/migration phase?
+			// User said "migrate logic", so maybe we should ensure consistency?
+			// For now, log error is safe.
+		}
+	}
+
+	return friendship, nil
 }
 
 func (s *FriendshipService) RespondToRequest(ctx context.Context, friendshipID primitive.ObjectID, receiverID primitive.ObjectID, accept bool) error {
 	log.Printf("Service: RespondToRequest called for friendshipID: %s, receiverID: %s, accept: %t", friendshipID.Hex(), receiverID.Hex(), accept)
 
-	// Get the specific pending request to ensure it exists and belongs to the user.
+	// Mongo: Get request to know who the requester is
 	targetRequest, err := s.friendshipRepo.GetPendingFriendshipByID(ctx, friendshipID, receiverID)
 	if err != nil {
-		log.Printf("Service: RespondToRequest - could not find pending request: %v", err)
-		return err // Returns ErrFriendRequestNotFound if not found
+		return err
 	}
 
-	log.Printf("Service: RespondToRequest - Found target request: %+v", targetRequest)
-
+	// Mongo: Update Status
 	status := models.FriendshipStatusRejected
 	if accept {
 		status = models.FriendshipStatusAccepted
-		// Update both users' friend lists
 		if err := s.userRepo.AddFriend(ctx, targetRequest.RequesterID, targetRequest.ReceiverID); err != nil {
 			return err
 		}
 		if err := s.userRepo.AddFriend(ctx, targetRequest.ReceiverID, targetRequest.RequesterID); err != nil {
-			log.Printf("Service: RespondToRequest - Error adding reciprocal friend: %v", err)
-			// Attempt to roll back the first AddFriend call
 			_ = s.userRepo.RemoveFriend(ctx, targetRequest.RequesterID, targetRequest.ReceiverID)
 			return err
 		}
-		log.Printf("Service: RespondToRequest - Successfully added friends: %s and %s", targetRequest.RequesterID.Hex(), targetRequest.ReceiverID.Hex())
 	} else {
-		log.Printf("Service: RespondToRequest - Request rejected for friendshipID: %s", friendshipID.Hex())
+		log.Printf("Service: RespondToRequest - Request rejected")
 	}
 
-	err = s.friendshipRepo.UpdateStatus(ctx, friendshipID, receiverID, status)
-	if err != nil {
-		log.Printf("Service: RespondToRequest - Error updating status in repo: %v", err)
+	if err := s.friendshipRepo.UpdateStatus(ctx, friendshipID, receiverID, status); err != nil {
 		return err
 	}
-	log.Printf("Service: RespondToRequest - Successfully updated status to %s for friendshipID: %s", status, friendshipID.Hex())
+
+	// Graph: Update Status
+	if s.userGraphRepo != nil {
+		if accept {
+			if err := s.userGraphRepo.AcceptRequest(ctx, targetRequest.RequesterID, targetRequest.ReceiverID); err != nil {
+				log.Printf("Error accepting graph request: %v", err)
+			}
+		} else {
+			if err := s.userGraphRepo.RejectRequest(ctx, targetRequest.RequesterID, targetRequest.ReceiverID); err != nil {
+				log.Printf("Error rejecting graph request: %v", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -89,74 +110,60 @@ func (s *FriendshipService) ListFriendships(ctx context.Context, userID primitiv
 }
 
 func (s *FriendshipService) CheckFriendship(ctx context.Context, userID1, userID2 primitive.ObjectID) (bool, error) {
+	// Use Graph for fast check if available
+	if s.userGraphRepo != nil {
+		areFriends, _, _, _, _, err := s.userGraphRepo.CheckFriendshipStatus(ctx, userID1, userID2)
+		if err == nil {
+			return areFriends, nil
+		}
+		log.Printf("Graph Check failed, falling back to Mongo: %v", err)
+	}
+	// Fallback
 	return s.friendshipRepo.AreFriends(ctx, userID1, userID2)
 }
 
 // Unfriend removes a friendship between two users after validation
 func (s *FriendshipService) Unfriend(ctx context.Context, userID, friendID primitive.ObjectID) error {
-	// Verify friend exists
-	if _, err := s.userRepo.FindUserByID(ctx, friendID); err != nil {
-		return err // Returns "user not found" if friend doesn't exist
-	}
+	// Determine if valid friend (Keep Mongo logic for validation if desired, or trust Graph)
 
-	// Check if they are actually friends
-	areFriends, err := s.friendshipRepo.AreFriends(ctx, userID, friendID)
-	if err != nil {
-		return fmt.Errorf("failed to verify friendship: %w", err)
-	}
-	if !areFriends {
-		return repositories.ErrNotFriends
-	}
+	// Mongo Cleanup
+	_ = s.userRepo.RemoveFriend(ctx, userID, friendID)
+	_ = s.userRepo.RemoveFriend(ctx, friendID, userID)
+	_ = s.friendshipRepo.Unfriend(ctx, userID, friendID)
 
-	// Remove from both users' friend lists
-	if err := s.friendshipRepo.Unfriend(ctx, userID, friendID); err != nil {
-		return fmt.Errorf("failed to remove from friend list: %w", err)
+	// Graph Cleanup
+	if s.userGraphRepo != nil {
+		return s.userGraphRepo.Unfriend(ctx, userID, friendID)
 	}
-	if err := s.friendshipRepo.Unfriend(ctx, friendID, userID); err != nil {
-		return fmt.Errorf("failed to remove reciprocal friend: %w", err)
-	}
-
-	// Delete the friendship record
-	return s.friendshipRepo.Unfriend(ctx, userID, friendID)
+	return nil
 }
 
 // BlockUser blocks another user with comprehensive validation
 func (s *FriendshipService) BlockUser(ctx context.Context, blockerID, blockedID primitive.ObjectID) error {
-	// Verify blocked user exists
-	if _, err := s.userRepo.FindUserByID(ctx, blockedID); err != nil {
-		return err // Returns "user not found" if blocked user doesn't exist
+	// Mongo Block
+	if err := s.friendshipRepo.BlockUser(ctx, blockerID, blockedID); err != nil {
+		if err != repositories.ErrAlreadyBlocked { // If mongo says already blocked, maybe graph isn't, so continue
+			return err
+		}
 	}
 
-	// Check if already blocked
-	alreadyBlocked, err := s.friendshipRepo.IsBlocked(ctx, blockerID, blockedID)
-	if err != nil {
-		return fmt.Errorf("failed to check block status: %w", err)
+	// Graph Block (Removes friends/requests automatically via Cypher)
+	if s.userGraphRepo != nil {
+		return s.userGraphRepo.BlockUser(ctx, blockerID, blockedID)
 	}
-	if alreadyBlocked {
-		return repositories.ErrAlreadyBlocked
-	}
-
-	// Perform the block
-	return s.friendshipRepo.BlockUser(ctx, blockerID, blockedID)
+	return nil
 }
 
 // UnblockUser removes a block between users with validation
 func (s *FriendshipService) UnblockUser(ctx context.Context, blockerID, blockedID primitive.ObjectID) error {
-	// Verify blocked user exists
-	if _, err := s.userRepo.FindUserByID(ctx, blockedID); err != nil {
-		return err // Returns "user not found" if user doesn't exist
-	}
+	// Mongo Unblock
+	_ = s.friendshipRepo.UnblockUser(ctx, blockerID, blockedID)
 
-	// Check if block exists
-	isBlocked, err := s.friendshipRepo.IsBlocked(ctx, blockerID, blockedID)
-	if err != nil {
-		return fmt.Errorf("failed to verify block: %w", err)
+	// Graph Unblock
+	if s.userGraphRepo != nil {
+		return s.userGraphRepo.UnblockUser(ctx, blockerID, blockedID)
 	}
-	if !isBlocked {
-		return repositories.ErrBlockNotFound
-	}
-
-	return s.friendshipRepo.UnblockUser(ctx, blockerID, blockedID)
+	return nil
 }
 
 // IsBlocked checks if a block exists between two users

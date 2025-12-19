@@ -135,7 +135,6 @@ func IsEmpty(value interface{}) bool {
 	}
 }
 
-
 func ValidationError(fields map[string]string) map[string]interface{} {
 	return map[string]interface{}{
 		"error":   true,
@@ -212,14 +211,13 @@ func GetUserIDFromContext(c *gin.Context) (primitive.ObjectID, error) {
 	}
 }
 
-
 func GetUserIDFromClaims(claims jwt.Claims) (primitive.ObjectID, error) {
 	mapClaims, ok := claims.(jwt.MapClaims)
 	if !ok {
 		return primitive.NilObjectID, errors.New("invalid claims type")
 	}
 
-	userIDKey := "id" 
+	userIDKey := "id"
 	userIDValue, ok := mapClaims[userIDKey].(string)
 	if !ok {
 		return primitive.NilObjectID, fmt.Errorf("claim '%s' not found or invalid type", userIDKey)
@@ -248,4 +246,12 @@ func getClaims(token *jwt.Token) (jwt.MapClaims, error) {
 	}
 
 	return claims, nil
+}
+
+// GetConversationID generates a consistent conversation ID for two users (direct message)
+func GetConversationID(user1, user2 primitive.ObjectID) string {
+	if user1.Hex() < user2.Hex() {
+		return fmt.Sprintf("dm_%s_%s", user1.Hex(), user2.Hex())
+	}
+	return fmt.Sprintf("dm_%s_%s", user2.Hex(), user1.Hex())
 }

@@ -65,6 +65,26 @@ func (r *GroupRepository) GetGroup(ctx context.Context, id primitive.ObjectID) (
 	return &group, err
 }
 
+// GetGroupsByIDs retrieves multiple groups by their IDs in a single query
+func (r *GroupRepository) GetGroupsByIDs(ctx context.Context, ids []primitive.ObjectID) ([]*models.Group, error) {
+	if len(ids) == 0 {
+		return []*models.Group{}, nil
+	}
+	filter := bson.M{"_id": bson.M{"$in": ids}}
+
+	cursor, err := r.db.Collection("groups").Find(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var groups []*models.Group
+	if err := cursor.All(ctx, &groups); err != nil {
+		return nil, err
+	}
+	return groups, nil
+}
+
 func (r *GroupRepository) AddMember(ctx context.Context, groupID, userID primitive.ObjectID) error {
 	_, err := r.db.Collection("groups").UpdateOne(
 		ctx,

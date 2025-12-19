@@ -10,26 +10,29 @@ import (
 type NotificationType string
 
 const (
-	NotificationTypeMention NotificationType = "MENTION"
-	NotificationTypeLike    NotificationType = "LIKE"
-	NotificationTypeComment NotificationType = "COMMENT"
-	NotificationTypeReply   NotificationType = "REPLY"
+	NotificationTypeMention       NotificationType = "MENTION"
+	NotificationTypeLike          NotificationType = "LIKE"
+	NotificationTypeComment       NotificationType = "COMMENT"
+	NotificationTypeReply         NotificationType = "REPLY"
 	NotificationTypeFriendRequest NotificationType = "FRIEND_REQUEST"
-	NotificationTypeFriendAccept NotificationType = "FRIEND_ACCEPT"
+	NotificationTypeFriendAccept  NotificationType = "FRIEND_ACCEPT"
+	NotificationTypeBirthday      NotificationType = "BIRTHDAY"
+	NotificationTypeEventInvite   NotificationType = "EVENT_INVITE"
+	NotificationTypeEventReminder NotificationType = "EVENT_REMINDER"
 )
 
 // Notification represents a single notification for a user
 type Notification struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	RecipientID primitive.ObjectID `bson:"recipient_id" json:"recipient_id"` // The user who receives the notification
-	SenderID    primitive.ObjectID `bson:"sender_id" json:"sender_id"`     // The user who triggered the notification
-	Type        NotificationType   `bson:"type" json:"type"`
-	TargetID    primitive.ObjectID `bson:"target_id" json:"target_id"`     // ID of the related entity (post, comment, reply, etc.)
-	TargetType  string             `bson:"target_type" json:"target_type"` // Type of the related entity ("post", "comment", "reply", "friendship")
-	Content     string             `bson:"content" json:"content"`         // A short message for the notification
+	ID          primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
+	RecipientID primitive.ObjectID     `bson:"recipient_id" json:"recipient_id"` // The user who receives the notification
+	SenderID    primitive.ObjectID     `bson:"sender_id" json:"sender_id"`       // The user who triggered the notification
+	Type        NotificationType       `bson:"type" json:"type"`
+	TargetID    primitive.ObjectID     `bson:"target_id" json:"target_id"`           // ID of the related entity (post, comment, reply, etc.)
+	TargetType  string                 `bson:"target_type" json:"target_type"`       // Type of the related entity ("post", "comment", "reply", "friendship")
+	Content     string                 `bson:"content" json:"content"`               // A short message for the notification
 	Data        map[string]interface{} `bson:"data,omitempty" json:"data,omitempty"` // Structured data for the notification
-	Read        bool               `bson:"read" json:"read"`
-	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
+	Read        bool                   `bson:"read" json:"read"`
+	CreatedAt   time.Time              `bson:"created_at" json:"created_at"`
 }
 
 // DTOs for Notifications

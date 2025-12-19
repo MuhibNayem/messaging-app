@@ -25,6 +25,7 @@ type MessageProduct struct {
 
 type Message struct {
 	ID               primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
+	StringID         string               `bson:"string_id,omitempty" json:"string_id,omitempty"` // For Cassandra UUID mapping
 	SenderID         primitive.ObjectID   `bson:"sender_id" json:"sender_id"`
 	SenderName       string               `bson:"sender_name,omitempty" json:"sender_name,omitempty"`
 	ReceiverID       primitive.ObjectID   `bson:"receiver_id,omitempty" json:"receiver_id,omitempty"`
@@ -56,13 +57,14 @@ type Message struct {
 }
 
 type MessageQuery struct {
-	GroupID     string `form:"group_id"`
-	SenderID    string `form:"sender_id"`
-	ReceiverID  string `form:"receiver_id"`
-	Page        int    `form:"page,default=1"`
-	Limit       int    `form:"limit,default=50"`
-	Before      string `form:"before"`
-	Marketplace bool   `form:"marketplace"` // If true, only return messages with product_id
+	GroupID        string `form:"group_id"`
+	SenderID       string `form:"sender_id"`
+	ReceiverID     string `form:"receiver_id"`
+	ConversationID string `form:"conversation_id"` // New field
+	Page           int    `form:"page,default=1"`
+	Limit          int    `form:"limit,default=50"`
+	Before         string `form:"before"`
+	Marketplace    bool   `form:"marketplace"` // If true, only return messages with product_id
 }
 
 type MessageRequest struct {
@@ -168,7 +170,7 @@ func IsValidContentType(contentType string) bool {
 
 // ConversationSummary represents a summary of a chat conversation for the list view
 type ConversationSummary struct {
-	ID                     primitive.ObjectID `bson:"_id" json:"id"`
+	ID                     string             `bson:"_id" json:"id"`
 	Name                   string             `bson:"name" json:"name"`
 	Avatar                 string             `bson:"avatar" json:"avatar,omitempty"`
 	IsGroup                bool               `bson:"is_group" json:"is_group"`

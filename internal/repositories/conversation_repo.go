@@ -32,7 +32,7 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 	// --- 1. Get Direct Message Conversations (Friends) ---
 	log.Printf("Repo: Starting direct message aggregation for user %s", userID.Hex())
 	friendshipsCursor, err := r.db.Collection("friendships").Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$match", bson.M{
+		bson.D{{Key: "$match", Value: bson.M{
 			"status": models.FriendshipStatusAccepted,
 			"$or": []bson.M{
 				{"requester_id": userID},
@@ -40,22 +40,22 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			},
 		}}},
 		// Project the other user's ID
-		bson.D{{"$project", bson.M{
+		bson.D{{Key: "$project", Value: bson.M{
 			"_id": 0,
 			"other_user_id": bson.M{
 				"$cond": bson.A{bson.M{"$eq": bson.A{"$requester_id", userID}}, "$receiver_id", "$requester_id"},
 			},
 		}}},
 		// Lookup user info for the other user
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "users",
 			"localField":   "other_user_id",
 			"foreignField": "_id",
 			"as":           "user_info",
 		}}},
-		bson.D{{"$unwind", bson.M{"path": "$user_info", "preserveNullAndEmptyArrays": true}}},
+		bson.D{{Key: "$unwind", Value: bson.M{"path": "$user_info", "preserveNullAndEmptyArrays": true}}},
 		// Find the last message for this direct conversation (excluding marketplace messages)
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from": "messages",
 			"let":  bson.M{"u1": userID, "u2": "$other_user_id"},
 			"pipeline": bson.A{
@@ -82,9 +82,9 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			},
 			"as": "last_message_dm",
 		}}},
-		bson.D{{"$unwind", bson.M{"path": "$last_message_dm", "preserveNullAndEmptyArrays": true}}},
+		bson.D{{Key: "$unwind", Value: bson.M{"path": "$last_message_dm", "preserveNullAndEmptyArrays": true}}},
 		// Count unread messages for this direct conversation (excluding marketplace messages)
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from": "messages",
 			"let":  bson.M{"u1": userID, "u2": "$other_user_id"},
 			"pipeline": bson.A{
@@ -108,7 +108,7 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"as": "unread_count_result",
 		}}},
 		// Project into ConversationSummary format
-		bson.D{{"$project", bson.M{
+		bson.D{{Key: "$project", Value: bson.M{
 			"_id":      "$user_info._id",
 			"name":     "$user_info.username",
 			"avatar":   "$user_info.avatar",
@@ -157,9 +157,9 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 	// --- 2. Get Group Message Conversations ---
 	log.Printf("Repo: Starting group message aggregation for user %s", userID.Hex())
 	groupsCursor, err := r.db.Collection("groups").Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$match", bson.M{"members": userID}}},
+		bson.D{{Key: "$match", Value: bson.M{"members": userID}}},
 		// Find the last message for this group conversation
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from": "messages",
 			"let":  bson.M{"groupId": "$_id"},
 			"pipeline": bson.A{
@@ -171,17 +171,17 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			},
 			"as": "last_message_group",
 		}}},
-		bson.D{{"$unwind", bson.M{"path": "$last_message_group", "preserveNullAndEmptyArrays": true}}},
+		bson.D{{Key: "$unwind", Value: bson.M{"path": "$last_message_group", "preserveNullAndEmptyArrays": true}}},
 		// Lookup sender info for the last message
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from":         "users",
 			"localField":   "last_message_group.sender_id",
 			"foreignField": "_id",
 			"as":           "last_message_sender_info",
 		}}},
-		bson.D{{"$unwind", bson.M{"path": "$last_message_sender_info", "preserveNullAndEmptyArrays": true}}},
+		bson.D{{Key: "$unwind", Value: bson.M{"path": "$last_message_sender_info", "preserveNullAndEmptyArrays": true}}},
 		// Count unread messages for this group conversation
-		bson.D{{"$lookup", bson.M{
+		bson.D{{Key: "$lookup", Value: bson.M{
 			"from": "messages",
 			"let":  bson.M{"groupId": "$_id", "userId": userID},
 			"pipeline": bson.A{
@@ -198,7 +198,7 @@ func (r *ConversationRepository) GetConversationSummaries(ctx context.Context, u
 			"as": "unread_count_result",
 		}}},
 		// Project into ConversationSummary format
-		bson.D{{"$project", bson.M{
+		bson.D{{Key: "$project", Value: bson.M{
 			"id":       "$_id",
 			"name":     "$name",
 			"avatar":   "$avatar",
