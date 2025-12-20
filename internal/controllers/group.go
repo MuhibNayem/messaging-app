@@ -93,9 +93,14 @@ func (c *GroupController) GetGroup(ctx *gin.Context) {
 		utils.RespondWithError(ctx, http.StatusUnauthorized, "User not authenticated")
 		return
 	}
-	userID, ok := userIDValue.(primitive.ObjectID)
+	userIDStr, ok := userIDValue.(string)
 	if !ok {
-		utils.RespondWithError(ctx, http.StatusInternalServerError, "Invalid user ID format")
+		utils.RespondWithError(ctx, http.StatusInternalServerError, "Invalid user ID format in context")
+		return
+	}
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusInternalServerError, "Invalid user ID hex string")
 		return
 	}
 

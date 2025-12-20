@@ -263,13 +263,17 @@ func (s *GroupService) AddMember(ctx context.Context, groupID, requesterID, newM
 	// Update inbox for all members (including newly added member)
 	updatedGroup, err := s.groupRepo.GetGroup(ctx, groupID)
 	if err == nil {
+		// Ensure new member is included in the update list even if DB read is stale
+		if !containsID(updatedGroup.Members, newMemberID) {
+			updatedGroup.Members = append(updatedGroup.Members, newMemberID)
+		}
 		s.updateInboxForMembers(ctx, updatedGroup, activity)
 	}
 
 	// Invalidate membership cache
 	s.invalidateMembershipCache(ctx, groupID)
 
-	return nil
+	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
 }
 
 func (s *GroupService) AddAdmin(ctx context.Context, groupID, requesterID, newAdminID primitive.ObjectID) error {
@@ -368,9 +372,11 @@ func (s *GroupService) RemoveMember(ctx context.Context, groupID, requesterID, m
 		s.invalidateActivityCache(ctx, groupID)
 	}
 
-	// Update inbox for remaining members
+	// Update inbox for remaining members AND the removed member
 	updatedGroup, err := s.groupRepo.GetGroup(ctx, groupID)
 	if err == nil {
+		// Explicitly add the removed member to the list so their inbox gets updated too
+		updatedGroup.Members = append(updatedGroup.Members, memberID)
 		s.updateInboxForMembers(ctx, updatedGroup, activity)
 	}
 
@@ -519,6 +525,48 @@ func (s *GroupService) ApproveMember(ctx context.Context, groupID, adminID, targ
 	if err := s.groupRepo.AddMember(ctx, groupID, targetUserID); err != nil {
 		return err
 	}
+
+	// Sync to Neo4j graph (async, non-blocking)
+	if s.groupGraphRepo != nil {
+		go s.groupGraphRepo.AddMember(context.Background(), targetUserID, groupID)
+	}
+
+	// Create MEMBER_ADDED activity
+	// We need admin details (actor) and target user details
+	adminUser, err := s.userRepo.FindUserByID(ctx, adminID)
+	if err == nil {
+		targetUser, err := s.userRepo.FindUserByID(ctx, targetUserID)
+		if err == nil {
+			activity := &models.GroupActivity{
+				GroupID:      groupID,
+				ActivityType: models.ActivityMemberAdded, // Or specific "APPROVED"? standardizing on ADDED for now
+				ActorID:      adminID,
+				ActorName:    adminUser.Username,
+				TargetID:     &targetUserID,
+				TargetName:   targetUser.Username,
+				CreatedAt:    time.Now(),
+			}
+
+			if err := s.activityRepo.CreateActivity(ctx, activity); err != nil {
+				fmt.Printf("Failed to create member approved activity: %v\n", err)
+			} else {
+				s.invalidateActivityCache(ctx, groupID)
+			}
+
+			// Update inbox for all members (including newly added member)
+			updatedGroup, err := s.groupRepo.GetGroup(ctx, groupID)
+			if err == nil {
+				// Ensure new member is included even if DB read stale
+				if !containsID(updatedGroup.Members, targetUserID) {
+					updatedGroup.Members = append(updatedGroup.Members, targetUserID)
+				}
+				s.updateInboxForMembers(ctx, updatedGroup, activity)
+			}
+		}
+	}
+
+	// Invalidate membership cache
+	s.invalidateMembershipCache(ctx, groupID)
 
 	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
 }
@@ -695,6 +743,9 @@ func (s *GroupService) updateInboxForMembers(ctx context.Context, group *models.
 		return
 	}
 
+	fmt.Printf("[DEBUG] updateInboxForMembers started for GroupID=%s, ActivityType=%s, MembersCount=%d\n",
+		group.ID.Hex(), activity.ActivityType, len(group.Members))
+
 	activityText := activity.FormatActivity()
 	conversationID := "group_" + group.ID.Hex()
 	now := time.Now()
@@ -707,27 +758,44 @@ func (s *GroupService) updateInboxForMembers(ctx context.Context, group *models.
 
 	// Use UnloggedBatch for maximum performance
 	// Unlogged is safe here because these are independent writes to different partitions
-	batch := s.cassandraClient.Session.NewBatch(gocql.UnloggedBatch)
+	// CHUNKING: Split into batches of 50 to support groups with 10k+ members
+	// Cassandra recommends keeping batches < 5KB or < 100 statements
+	batchSize := 50
+	totalUpdated := 0
 
-	for _, memberID := range group.Members {
-		batch.Query(query,
-			memberID.Hex(),
-			conversationID,
-			group.Name,
-			group.Avatar,
-			true,  // is_group
-			false, // is_marketplace
-			activityText,
-			activity.ActorID.Hex(),
-			activity.ActorName,
-			now,
-		)
+	for i := 0; i < len(group.Members); i += batchSize {
+		end := i + batchSize
+		if end > len(group.Members) {
+			end = len(group.Members)
+		}
+
+		batch := s.cassandraClient.Session.NewBatch(gocql.UnloggedBatch)
+		chunk := group.Members[i:end]
+
+		for _, memberID := range chunk {
+			batch.Query(query,
+				memberID.Hex(),
+				conversationID,
+				group.Name,
+				group.Avatar,
+				true,  // is_group
+				false, // is_marketplace
+				activityText,
+				activity.ActorID.Hex(),
+				activity.ActorName,
+				now,
+			)
+		}
+
+		// Execute chunk
+		if err := s.cassandraClient.Session.ExecuteBatch(batch); err != nil {
+			fmt.Printf("[ERROR] Failed to execute batch chunk %d-%d for group %s: %v\n", i, end, group.ID.Hex(), err)
+		} else {
+			totalUpdated += len(chunk)
+		}
 	}
 
-	// Execute all writes in a single network roundtrip
-	if err := s.cassandraClient.Session.ExecuteBatch(batch); err != nil {
-		fmt.Printf("Failed to batch update inbox for group %s: %v\n", group.ID.Hex(), err)
-	}
+	fmt.Printf("[DEBUG] Successfully updated inbox for %d/%d members (Chunked)\n", totalUpdated, len(group.Members))
 }
 
 func containsID(ids []primitive.ObjectID, id primitive.ObjectID) bool {

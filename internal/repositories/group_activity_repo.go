@@ -45,6 +45,10 @@ func (r *GroupActivityRepository) CreateActivity(ctx context.Context, activity *
 		targetID = activity.TargetID.Hex()
 	}
 
+	// DEBUG: Trace activity creation
+	log.Printf("[DEBUG] Creating activity: Type=%s, GroupID=%s, Actor=%s, Target=%s",
+		activity.ActivityType, activity.GroupID.Hex(), activity.ActorName, activity.TargetName)
+
 	err := r.client.Session.Query(query,
 		activity.GroupID.Hex(),
 		activity.ActivityID,
@@ -58,7 +62,7 @@ func (r *GroupActivityRepository) CreateActivity(ctx context.Context, activity *
 	).Exec()
 
 	if err != nil {
-		log.Printf("Error creating group activity: %v", err)
+		log.Printf("[ERROR] Failed to insert group activity into Cassandra: %v", err)
 		return err
 	}
 

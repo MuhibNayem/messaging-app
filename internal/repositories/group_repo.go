@@ -166,6 +166,7 @@ func (r *GroupRepository) GetUserGroups(ctx context.Context, userID primitive.Ob
 }
 
 func (r *GroupRepository) AddPendingMember(ctx context.Context, groupID, userID primitive.ObjectID) error {
+	// Try adding to set. If pending_members is null, this will fail.
 	_, err := r.db.Collection("groups").UpdateOne(
 		ctx,
 		bson.M{"_id": groupID},
@@ -174,6 +175,31 @@ func (r *GroupRepository) AddPendingMember(ctx context.Context, groupID, userID 
 			"$set":      bson.M{"updated_at": time.Now()},
 		},
 	)
+
+	// If error indicates null field, initialize it
+	if err != nil {
+		// Just try simpler approach: use $set if null (via query check or just force set if failed)
+		// Since we know it failed, we can force reset if needed, but risky if concurrent.
+		// Better: FindOne and Update if pending_members is null?
+
+		// Actually simplest fix for the specific user error:
+		// Use an aggregation pipeline update which can handle conditionals (Mongo 4.2+)
+		// But let's stick to simple retry logic for this specific corruption case.
+		_, updateErr := r.db.Collection("groups").UpdateOne(
+			ctx,
+			bson.M{"_id": groupID, "pending_members": nil},
+			bson.M{
+				"$set": bson.M{
+					"pending_members": []primitive.ObjectID{userID},
+					"updated_at":      time.Now(),
+				},
+			},
+		)
+		if updateErr == nil {
+			return nil // Recovered
+		}
+		// If updateErr has error, return the original error if secondary failed too
+	}
 	return err
 }
 
