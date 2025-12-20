@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init
+  namespace: messaging
+spec:
+  template:
+    metadata:
+      labels:
+        job: redis-cluster-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: init
+        image: redis:7.0
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -e
+          echo "Waiting for Redis pods to be Ready";
+          for i in $(seq 0 5); do
+            host="redis-cluster-$i.redis-cluster.messaging.svc.cluster.local";
+            until redis-cli -h "$host" -a $REDIS_PASSWORD ping; do
+              echo "Waiting for $host";
+              sleep 5;
+            done;
+          done;
+          echo "Creating Redis Cluster";
+          NODES=""
+          for i in $(seq 0 5); do
+            NODES="$NODES redis-cluster-$i.redis-cluster.messaging.svc.cluster.local:6379"
+          done;
+          yes yes | redis-cli -a $REDIS_PASSWORD --cluster create $NODES --cluster-replicas 1;
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-auth
+              key: password

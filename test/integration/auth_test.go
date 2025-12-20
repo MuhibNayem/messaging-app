@@ -17,13 +17,13 @@ import (
 
 type AuthIntegrationTestSuite struct {
 	suite.Suite
-	authService    *services.AuthService
-	userRepo       *repositories.UserRepository
-	redisClient    *redis.ClusterClient
-	mongoClient    *mongo.Client
-	testDBName     string
-	testUser       *models.User
-	ctx            context.Context
+	authService *services.AuthService
+	userRepo    *repositories.UserRepository
+	redisClient *redis.ClusterClient
+	mongoClient *mongo.Client
+	testDBName  string
+	testUser    *models.User
+	ctx         context.Context
 }
 
 func (suite *AuthIntegrationTestSuite) SetupSuite() {
@@ -49,6 +49,7 @@ func (suite *AuthIntegrationTestSuite) SetupSuite() {
 		config.LoadConfig().JWTSecret,
 		suite.redisClient,
 		config.LoadConfig(),
+		nil, // No Neo4j for integration tests
 	)
 
 	// Create test user

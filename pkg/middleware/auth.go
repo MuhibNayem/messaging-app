@@ -96,7 +96,7 @@ func ValidateToken(tokenString, jwtSecret string, redisClient *redis.ClusterClie
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("invalid token")
+		return "", fmt.Errorf("invalid token: %w", err)
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {

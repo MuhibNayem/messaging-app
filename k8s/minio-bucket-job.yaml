@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-bucket-init
+  namespace: messaging
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: mc
+        image: minio/mc:RELEASE.2024-11-07T00-39-23Z
+        env:
+        - name: MINIO_ENDPOINT
+          value: http://minio.messaging.svc.cluster.local:9000
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: accesskey
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: secretkey
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          until curl -sf "$MINIO_ENDPOINT/minio/health/ready"; do
+            echo "Waiting for MinIO";
+            sleep 5;
+          done;
+          mc alias set local $MINIO_ENDPOINT $MINIO_ACCESS_KEY $MINIO_SECRET_KEY;
+          mc mb --ignore-existing local/connectify-uploads;
+          mc anonymous set public local/connectify-uploads;

@@ -15,12 +15,14 @@ import (
 type MessageController struct {
 	messageService *services.MessageService
 	storageService *services.StorageService
+	groupService   *services.GroupService
 }
 
-func NewMessageController(messageService *services.MessageService, storageService *services.StorageService) *MessageController {
+func NewMessageController(messageService *services.MessageService, storageService *services.StorageService, groupService *services.GroupService) *MessageController {
 	return &MessageController{
 		messageService: messageService,
 		storageService: storageService,
+		groupService:   groupService,
 	}
 }
 
@@ -215,6 +217,20 @@ func (c *MessageController) GetMessages(ctx *gin.Context) {
 		return
 	}
 
+	// IDOR FIX: Verify user is a member of the group before returning messages
+	if groupID != "" {
+		gID, err := primitive.ObjectIDFromHex(groupID)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid group ID"})
+			return
+		}
+		isMember, err := c.groupService.IsMember(ctx.Request.Context(), gID, senderID)
+		if err != nil || !isMember {
+			ctx.JSON(http.StatusForbidden, models.ErrorResponse{Error: "you are not a member of this group"})
+			return
+		}
+	}
+
 	messages, err := c.messageService.GetAllMessages(ctx.Request.Context(), query)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
@@ -360,6 +376,20 @@ func (c *MessageController) MarkConversationAsSeen(ctx *gin.Context) {
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid timestamp format"})
 		return
+	}
+
+	// IDOR FIX: Verify user is a member of the group before marking as seen
+	if req.IsGroup {
+		gID, err := primitive.ObjectIDFromHex(conversationIDStr)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid group ID"})
+			return
+		}
+		isMember, err := c.groupService.IsMember(ctx.Request.Context(), gID, currentUserID)
+		if err != nil || !isMember {
+			ctx.JSON(http.StatusForbidden, models.ErrorResponse{Error: "you are not a member of this group"})
+			return
+		}
 	}
 
 	err = c.messageService.MarkConversationAsSeen(ctx.Request.Context(), currentUserID, conversationIDStr, req.ConversationKey, timestamp, req.IsGroup)

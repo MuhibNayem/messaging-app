@@ -776,13 +776,14 @@ func (s *MessageService) GetAllMessages(ctx context.Context, query models.Messag
 					})
 				}
 
-				// Sort all messages chronologically (oldest first for display)
-				sort.Slice(messages, func(i, j int) bool {
-					return messages[i].CreatedAt.Before(messages[j].CreatedAt)
-				})
 			}
 		}
 	}
+
+	// Always sort all messages chronologically (oldest first for display)
+	sort.Slice(messages, func(i, j int) bool {
+		return messages[i].CreatedAt.Before(messages[j].CreatedAt)
+	})
 
 	return messages, nil
 }
@@ -863,6 +864,34 @@ func (s *MessageService) AddReaction(ctx context.Context, messageIDStr, userIDSt
 		return errors.New("invalid user ID format")
 	}
 
+	// IDOR FIX: Fetch message and verify user is part of the conversation
+	msg, err := s.messageRepo.GetMessageByID(ctx, messageID)
+	if err != nil {
+		return errors.New("message not found")
+	}
+
+	// Check if user is participant in this conversation
+	isParticipant := false
+	if !msg.GroupID.IsZero() {
+		// Group message: check group membership
+		group, err := s.groupRepo.GetGroup(ctx, msg.GroupID)
+		if err == nil {
+			for _, memberID := range group.Members {
+				if memberID == userID {
+					isParticipant = true
+					break
+				}
+			}
+		}
+	} else {
+		// DM message: check sender/receiver
+		isParticipant = msg.SenderID == userID || msg.ReceiverID == userID
+	}
+
+	if !isParticipant {
+		return errors.New("you are not authorized to react to this message")
+	}
+
 	err = s.messageRepo.AddReaction(ctx, messageID, userID, emoji)
 	if err != nil {
 		return err
@@ -902,6 +931,34 @@ func (s *MessageService) RemoveReaction(ctx context.Context, messageIDStr, userI
 	userID, err := primitive.ObjectIDFromHex(userIDStr)
 	if err != nil {
 		return errors.New("invalid user ID format")
+	}
+
+	// IDOR FIX: Fetch message and verify user is part of the conversation
+	msg, err := s.messageRepo.GetMessageByID(ctx, messageID)
+	if err != nil {
+		return errors.New("message not found")
+	}
+
+	// Check if user is participant in this conversation
+	isParticipant := false
+	if !msg.GroupID.IsZero() {
+		// Group message: check group membership
+		group, err := s.groupRepo.GetGroup(ctx, msg.GroupID)
+		if err == nil {
+			for _, memberID := range group.Members {
+				if memberID == userID {
+					isParticipant = true
+					break
+				}
+			}
+		}
+	} else {
+		// DM message: check sender/receiver
+		isParticipant = msg.SenderID == userID || msg.ReceiverID == userID
+	}
+
+	if !isParticipant {
+		return errors.New("you are not authorized to remove reaction from this message")
 	}
 
 	err = s.messageRepo.RemoveReaction(ctx, messageID, userID, emoji)

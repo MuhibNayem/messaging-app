@@ -177,10 +177,12 @@ func main() {
 	// Graph Repositories (Only if Neo4j is connected)
 	var userGraphRepo *repositories.UserGraphRepository
 	var eventGraphRepo *repositories.EventGraphRepository
+	var groupGraphRepo *repositories.GroupGraphRepository
 	if neo4jClient != nil {
 		userGraphRepo = repositories.NewUserGraphRepository(neo4jClient.Driver)
 		eventGraphRepo = repositories.NewEventGraphRepository(neo4jClient.Driver)
-		log.Printf("Graph Repositories Initialized: UserGraph=%v, EventGraph=%v", userGraphRepo != nil, eventGraphRepo != nil)
+		groupGraphRepo = repositories.NewGroupGraphRepository(neo4jClient.Driver)
+		log.Printf("Graph Repositories Initialized: UserGraph=%v, EventGraph=%v, GroupGraph=%v", userGraphRepo != nil, eventGraphRepo != nil, groupGraphRepo != nil)
 	}
 
 	// Seeding
@@ -198,7 +200,7 @@ func main() {
 	}()
 
 	// Initialize Services
-	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg)
+	authService := services.NewAuthService(userRepo, cfg.JWTSecret, redisClient.GetClient(), cfg, userGraphRepo)
 	notificationService := notifications.NewNotificationService(notificationRepo, userRepo, kafkaProducer)
 
 	storageService, err := services.NewStorageService(cfg)
@@ -233,7 +235,7 @@ func main() {
 		messageCassandraRepo.SetArchiveFetcher(messageArchiveService)
 	}
 
-	groupService := services.NewGroupService(groupRepo, userRepo, groupActivityRepo, cassandraClient, kafkaProducer, redisClient.GetClient())
+	groupService := services.NewGroupService(groupRepo, userRepo, groupActivityRepo, cassandraClient, kafkaProducer, redisClient.GetClient(), groupGraphRepo)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo, userGraphRepo)
 	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService, messageCassandraRepo, groupActivityRepo)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
@@ -255,7 +257,7 @@ func main() {
 	userController := controllers.NewUserController(userService)
 	friendshipController := controllers.NewFriendshipController(friendshipService)
 	groupController := controllers.NewGroupController(groupService, userService)
-	messageController := controllers.NewMessageController(messageService, storageService)
+	messageController := controllers.NewMessageController(messageService, storageService, groupService)
 	feedController := controllers.NewFeedController(feedService, userService, privacyService, storageService)
 	privacyController := controllers.NewPrivacyController(privacyService, userService)
 	searchController := controllers.NewSearchController(searchService)

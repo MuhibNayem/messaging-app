@@ -25,9 +25,10 @@ type GroupService struct {
 	cassandraClient *db.CassandraClient
 	producer        *kafka.MessageProducer
 	redisClient     *redis.ClusterClient
+	groupGraphRepo  *repositories.GroupGraphRepository
 }
 
-func NewGroupService(groupRepo *repositories.GroupRepository, userRepo *repositories.UserRepository, activityRepo *repositories.GroupActivityRepository, cassandraClient *db.CassandraClient, producer *kafka.MessageProducer, redisClient *redis.ClusterClient) *GroupService {
+func NewGroupService(groupRepo *repositories.GroupRepository, userRepo *repositories.UserRepository, activityRepo *repositories.GroupActivityRepository, cassandraClient *db.CassandraClient, producer *kafka.MessageProducer, redisClient *redis.ClusterClient, groupGraphRepo *repositories.GroupGraphRepository) *GroupService {
 	return &GroupService{
 		groupRepo:       groupRepo,
 		userRepo:        userRepo,
@@ -35,6 +36,7 @@ func NewGroupService(groupRepo *repositories.GroupRepository, userRepo *reposito
 		cassandraClient: cassandraClient,
 		producer:        producer,
 		redisClient:     redisClient,
+		groupGraphRepo:  groupGraphRepo,
 	}
 }
 
@@ -44,6 +46,85 @@ func (s *GroupService) invalidateActivityCache(ctx context.Context, groupID prim
 	if s.redisClient != nil {
 		cacheKey := "group_activities:" + groupID.Hex()
 		s.redisClient.Del(ctx, cacheKey)
+	}
+}
+
+// invalidateMembershipCache deletes the cached member set for a group
+// Call this after any membership change (add/remove/leave)
+func (s *GroupService) invalidateMembershipCache(ctx context.Context, groupID primitive.ObjectID) {
+	if s.redisClient != nil {
+		cacheKey := "group_members:" + groupID.Hex()
+		s.redisClient.Del(ctx, cacheKey)
+	}
+}
+
+// IsMember checks if a user is a member of a group (for IDOR authorization)
+// Uses hybrid Redis cache + Neo4j graph for O(1) lookups
+func (s *GroupService) IsMember(ctx context.Context, groupID, userID primitive.ObjectID) (bool, error) {
+	cacheKey := "group_members:" + groupID.Hex()
+
+	// 1. Try Redis SET membership check (O(1) lookup, sub-ms)
+	if s.redisClient != nil {
+		isMember, err := s.redisClient.SIsMember(ctx, cacheKey, userID.Hex()).Result()
+		if err == nil {
+			// Check if key exists (SIsMember returns false for non-existent keys)
+			exists, _ := s.redisClient.Exists(ctx, cacheKey).Result()
+			if exists > 0 {
+				return isMember, nil
+			}
+		}
+	}
+
+	// 2. Cache miss - try Neo4j graph (O(1) pattern match)
+	if s.groupGraphRepo != nil {
+		isMember, err := s.groupGraphRepo.IsMember(ctx, userID, groupID)
+		if err == nil {
+			// Populate Redis cache async for future requests
+			go s.populateMembersCacheFromNeo4j(groupID)
+			return isMember, nil
+		}
+	}
+
+	// 3. Fallback to MongoDB (defensive, should rarely hit)
+	group, err := s.groupRepo.GetGroup(ctx, groupID)
+	if err != nil {
+		return false, err
+	}
+
+	// Populate Redis cache async
+	if s.redisClient != nil && len(group.Members) > 0 {
+		go func(key string, members []primitive.ObjectID) {
+			memberHexes := make([]interface{}, len(members))
+			for i, m := range members {
+				memberHexes[i] = m.Hex()
+			}
+			s.redisClient.SAdd(context.Background(), key, memberHexes...)
+			s.redisClient.Expire(context.Background(), key, 10*time.Minute)
+		}(cacheKey, group.Members)
+	}
+
+	for _, memberID := range group.Members {
+		if memberID == userID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// populateMembersCacheFromNeo4j fetches members from Neo4j and caches in Redis
+func (s *GroupService) populateMembersCacheFromNeo4j(groupID primitive.ObjectID) {
+	if s.groupGraphRepo == nil || s.redisClient == nil {
+		return
+	}
+	cacheKey := "group_members:" + groupID.Hex()
+	members, err := s.groupGraphRepo.GetMembers(context.Background(), groupID)
+	if err == nil && len(members) > 0 {
+		memberInterfaces := make([]interface{}, len(members))
+		for i, m := range members {
+			memberInterfaces[i] = m
+		}
+		s.redisClient.SAdd(context.Background(), cacheKey, memberInterfaces...)
+		s.redisClient.Expire(context.Background(), cacheKey, 10*time.Minute)
 	}
 }
 
@@ -74,10 +155,15 @@ func (s *GroupService) CreateGroup(ctx context.Context, creatorID primitive.Obje
 		Admins:    []primitive.ObjectID{creatorID},
 	}
 
-	// Create group in repository
+	// Create group in repository (MongoDB - primary source of truth)
 	createdGroup, err := s.groupRepo.CreateGroup(ctx, group)
 	if err != nil {
 		return nil, err
+	}
+
+	// Sync all members to Neo4j graph (async, non-blocking)
+	if s.groupGraphRepo != nil {
+		go s.groupGraphRepo.SyncAllMembers(context.Background(), createdGroup.ID, createdGroup.Members)
 	}
 
 	// Get creator details for activity
@@ -139,9 +225,14 @@ func (s *GroupService) AddMember(ctx context.Context, groupID, requesterID, newM
 		return fmt.Errorf("user not found")
 	}
 
-	// Add member to group
+	// Add member to group (MongoDB - primary source of truth)
 	if err := s.groupRepo.AddMember(ctx, groupID, newMemberID); err != nil {
 		return err
+	}
+
+	// Sync to Neo4j graph (async, non-blocking)
+	if s.groupGraphRepo != nil {
+		go s.groupGraphRepo.AddMember(context.Background(), newMemberID, groupID)
 	}
 
 	// Get requester details for activity
@@ -174,6 +265,9 @@ func (s *GroupService) AddMember(ctx context.Context, groupID, requesterID, newM
 	if err == nil {
 		s.updateInboxForMembers(ctx, updatedGroup, activity)
 	}
+
+	// Invalidate membership cache
+	s.invalidateMembershipCache(ctx, groupID)
 
 	return nil
 }
@@ -227,9 +321,14 @@ func (s *GroupService) RemoveMember(ctx context.Context, groupID, requesterID, m
 		return fmt.Errorf("member not found")
 	}
 
-	// Remove member from group
+	// Remove member from group (MongoDB - primary source of truth)
 	if err := s.groupRepo.RemoveMember(ctx, groupID, memberID); err != nil {
 		return err
+	}
+
+	// Sync to Neo4j graph (async, non-blocking)
+	if s.groupGraphRepo != nil {
+		go s.groupGraphRepo.RemoveMember(context.Background(), memberID, groupID)
 	}
 
 	// Create activity based on who is removing
@@ -274,6 +373,9 @@ func (s *GroupService) RemoveMember(ctx context.Context, groupID, requesterID, m
 	if err == nil {
 		s.updateInboxForMembers(ctx, updatedGroup, activity)
 	}
+
+	// Invalidate membership cache
+	s.invalidateMembershipCache(ctx, groupID)
 
 	return s.publishGroupEvent(ctx, groupID, "GROUP_UPDATED")
 }

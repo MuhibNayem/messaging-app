@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: messaging
+spec:
+  type: ClusterIP
+  selector:
+    app: minio
+  ports:
+  - name: api
+    port: 9000
+  - name: console
+    port: 9001
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: messaging
+  labels:
+    app: minio
+spec:
+  serviceName: minio
+  replicas: 4
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+      - name: minio
+        image: quay.io/minio/minio:RELEASE.2024-11-07T00-39-23Z
+        args:
+        - server
+        - --console-address
+        - ":9001"
+        - http://minio-0.minio.messaging.svc.cluster.local/export
+        - http://minio-1.minio.messaging.svc.cluster.local/export
+        - http://minio-2.minio.messaging.svc.cluster.local/export
+        - http://minio-3.minio.messaging.svc.cluster.local/export
+        env:
+        - name: MINIO_ROOT_USER
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: accesskey
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: secretkey
+        ports:
+        - containerPort: 9000
+          name: api
+        - containerPort: 9001
+          name: console
+        volumeMounts:
+        - name: data
+          mountPath: /export
+        readinessProbe:
+          httpGet:
+            path: /minio/health/ready
+            port: api
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: api
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            cpu: 2
+            memory: 4Gi
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 200Gi

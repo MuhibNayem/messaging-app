@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-init-script
+  namespace: messaging
+data:
+  init.js: |
+    const hosts = [
+      "mongodb-0.mongodb.messaging.svc.cluster.local:27017",
+      "mongodb-1.mongodb.messaging.svc.cluster.local:27017",
+      "mongodb-2.mongodb.messaging.svc.cluster.local:27017"
+    ];
+    const config = {
+      _id: "rs0",
+      protocolVersion: 1,
+      members: hosts.map((host, idx) => ({ _id: idx, host, priority: Math.max(1, 3 - idx) }))
+    };
+
+    let initialized = false;
+    try {
+      const status = rs.status();
+      if (status.ok) {
+        print("Replica set already initialized");
+        initialized = true;
+      }
+    } catch (err) {
+      print("Replica set not initialized yet:", err.message);
+    }
+
+    if (!initialized) {
+      print("Initializing replica set with config:", JSON.stringify(config));
+      rs.initiate(config);
+    }
+
+    let retries = 0;
+    while (retries < 10) {
+      try {
+        const status = rs.status();
+        if (status.ok && status.members.some((m) => m.state === 1)) {
+          print("Replica set healthy:", JSON.stringify(status));
+          break;
+        }
+      } catch (_) {}
+      sleep(5000);
+      retries += 1;
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-rs-init
+  namespace: messaging
+spec:
+  template:
+    metadata:
+      labels:
+        job: mongodb-rs-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: init
+        image: mongo:6.0
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Waiting for MongoDB pods...";
+          for host in mongodb-0.mongodb mongodb-1.mongodb mongodb-2.mongodb; do
+            until mongosh --quiet --host "$host" --eval "db.adminCommand({ ping: 1 })"; do
+              echo "Waiting for $host";
+              sleep 5;
+            done;
+          done;
+          echo "Executing replica set init script";
+          mongosh "mongodb://$MONGO_INITDB_ROOT_USERNAME:$MONGO_INITDB_ROOT_PASSWORD@mongodb-0.mongodb:27017/admin" /scripts/init.js;
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-root
+              key: username
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-root
+              key: password
+        volumeMounts:
+        - name: init-script
+          mountPath: /scripts
+      volumes:
+      - name: init-script
+        configMap:
+          name: mongodb-init-script
+          defaultMode: 0755

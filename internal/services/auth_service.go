@@ -17,10 +17,11 @@ import (
 )
 
 type AuthService struct {
-	userRepo    *repositories.UserRepository
-	jwtSecret   string
-	redisClient *redis.ClusterClient
-	cfg         *config.Config
+	userRepo      *repositories.UserRepository
+	jwtSecret     string
+	redisClient   *redis.ClusterClient
+	cfg           *config.Config
+	userGraphRepo *repositories.UserGraphRepository
 }
 
 func NewAuthService(
@@ -28,12 +29,14 @@ func NewAuthService(
 	jwtSecret string,
 	redisClient *redis.ClusterClient,
 	cfg *config.Config,
+	userGraphRepo *repositories.UserGraphRepository,
 ) *AuthService {
 	return &AuthService{
-		userRepo:    userRepo,
-		jwtSecret:   jwtSecret,
-		redisClient: redisClient,
-		cfg:         cfg,
+		userRepo:      userRepo,
+		jwtSecret:     jwtSecret,
+		redisClient:   redisClient,
+		cfg:           cfg,
+		userGraphRepo: userGraphRepo,
 	}
 }
 
@@ -63,6 +66,11 @@ func (s *AuthService) Register(ctx context.Context, user *models.User) (*models.
 	createdUser, err := s.userRepo.CreateUser(ctx, user)
 	if err != nil {
 		return nil, err
+	}
+
+	// Sync new user to graph database immediately (async)
+	if s.userGraphRepo != nil {
+		go s.userGraphRepo.SyncUser(context.Background(), createdUser.ID)
 	}
 
 	accessToken, refreshToken, err := s.generateTokens(ctx, createdUser)

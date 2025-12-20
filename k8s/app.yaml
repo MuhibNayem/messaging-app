@@ -1,0 +1,176 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: messaging-app
+  namespace: messaging
+  labels:
+    app: messaging-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: messaging-app
+  template:
+    metadata:
+      labels:
+        app: messaging-app
+    spec:
+      containers:
+      - name: api
+        image: ghcr.io/your-org/messaging-app:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 8081
+          name: ws
+        - containerPort: 9091
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: messaging-app-config
+        env:
+        - name: MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: mongo-uri
+        - name: MONGO_USER
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-root
+              key: username
+        - name: MONGO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-root
+              key: password
+        - name: REDIS_PASS
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: redis-pass
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: jwt-secret
+        - name: STORAGE_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: storage-access-key
+        - name: STORAGE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: storage-secret-key
+        - name: NEO4J_URI
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: neo4j-uri
+        - name: NEO4J_USER
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: neo4j-user
+        - name: NEO4J_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: neo4j-password
+        - name: CASSANDRA_HOSTS
+          value: cassandra.messaging.svc.cluster.local
+        - name: CASSANDRA_USER
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: cassandra-user
+        - name: CASSANDRA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: messaging-app-secrets
+              key: cassandra-password
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1.5
+            memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: messaging-app
+  namespace: messaging
+spec:
+  selector:
+    app: messaging-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  - name: ws
+    port: 81
+    targetPort: 8081
+  - name: metrics
+    port: 9091
+    targetPort: 9091
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: messaging-app
+  namespace: messaging
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  tls:
+  - hosts:
+    - api.example.com
+    secretName: messaging-api-tls
+  rules:
+  - host: api.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: messaging-app
+            port:
+              number: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: messaging-app
+  namespace: messaging
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: messaging-app
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
