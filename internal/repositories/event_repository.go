@@ -18,8 +18,53 @@ type EventRepository struct {
 }
 
 func NewEventRepository(db *mongo.Database) *EventRepository {
+	collection := db.Collection("events")
+
+	// Create indexes for optimized event queries
+	_, err := collection.Indexes().CreateMany(context.Background(), []mongo.IndexModel{
+		// Creator index for "Your Events" queries
+		{
+			Keys:    bson.D{{Key: "creator_id", Value: 1}},
+			Options: options.Index(),
+		},
+		// Start date index for chronological sorting
+		{
+			Keys:    bson.D{{Key: "start_date", Value: 1}},
+			Options: options.Index(),
+		},
+		// Category + start date compound index for filtered discovery
+		{
+			Keys:    bson.D{{Key: "category", Value: 1}, {Key: "start_date", Value: 1}},
+			Options: options.Index(),
+		},
+		// Privacy + start date for public event listings
+		{
+			Keys:    bson.D{{Key: "privacy", Value: 1}, {Key: "start_date", Value: 1}},
+			Options: options.Index(),
+		},
+		// Attendee user ID for "events I'm attending" queries
+		{
+			Keys:    bson.D{{Key: "attendees.user_id", Value: 1}},
+			Options: options.Index(),
+		},
+		// Attendee status for filtering going/interested
+		{
+			Keys:    bson.D{{Key: "attendees.status", Value: 1}},
+			Options: options.Index(),
+		},
+		// Text index for event search
+		{
+			Keys:    bson.D{{Key: "title", Value: "text"}, {Key: "description", Value: "text"}},
+			Options: options.Index().SetName("event_text_search"),
+		},
+	})
+	if err != nil {
+		// Log but don't panic - indexes may already exist
+		// In production, consider logging this properly
+	}
+
 	return &EventRepository{
-		collection: db.Collection("events"),
+		collection: collection,
 	}
 }
 

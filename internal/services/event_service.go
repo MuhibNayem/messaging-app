@@ -5,12 +5,18 @@ import (
 	"errors"
 	"time"
 
+	"messaging-app/internal/cache"
 	"messaging-app/internal/models"
 	"messaging-app/internal/repositories"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+// EventBroadcaster defines interface for broadcasting event updates
+type EventBroadcaster interface {
+	BroadcastRSVP(event models.EventRSVPEvent)
+}
 
 type EventService struct {
 	eventRepo        *repositories.EventRepository
@@ -19,6 +25,8 @@ type EventService struct {
 	invitationRepo   *repositories.EventInvitationRepository
 	postRepo         *repositories.EventPostRepository
 	notificationRepo *repositories.NotificationRepository
+	eventCache       *cache.EventCache
+	broadcaster      EventBroadcaster
 }
 
 func NewEventService(
@@ -28,6 +36,8 @@ func NewEventService(
 	invitationRepo *repositories.EventInvitationRepository,
 	postRepo *repositories.EventPostRepository,
 	notificationRepo *repositories.NotificationRepository,
+	eventCache *cache.EventCache,
+	broadcaster EventBroadcaster,
 ) *EventService {
 	return &EventService{
 		eventRepo:        eventRepo,
@@ -36,6 +46,8 @@ func NewEventService(
 		invitationRepo:   invitationRepo,
 		postRepo:         postRepo,
 		notificationRepo: notificationRepo,
+		eventCache:       eventCache,
+		broadcaster:      broadcaster,
 	}
 }
 
@@ -321,6 +333,26 @@ func (s *EventService) RSVP(ctx context.Context, eventID primitive.ObjectID, use
 			ShareCount:      updatedEvent.Stats.ShareCount,
 		}
 		s.eventRepo.UpdateStats(ctx, eventID, stats)
+
+		// Cache the updated stats
+		if s.eventCache != nil {
+			s.eventCache.SetEventStats(ctx, eventID.Hex(), &stats)
+			// Invalidate user's RSVP status cache
+			s.eventCache.InvalidateUserRSVPStatus(ctx, userID.Hex(), eventID.Hex())
+			// Cache the new RSVP status
+			s.eventCache.SetUserRSVPStatus(ctx, userID.Hex(), eventID.Hex(), status)
+		}
+
+		// Broadcast RSVP update
+		if s.broadcaster != nil {
+			s.broadcaster.BroadcastRSVP(models.EventRSVPEvent{
+				EventID:   eventID.Hex(),
+				UserID:    userID.Hex(),
+				Status:    status,
+				Timestamp: time.Now(),
+				Stats:     stats,
+			})
+		}
 	}
 
 	// Dual Write to Graph (if enabled)
@@ -583,6 +615,12 @@ func (s *EventService) RespondToInvitation(ctx context.Context, invitationID, us
 		return errors.New("invitation already responded")
 	}
 
+	// Get event info for notification
+	event, err := s.eventRepo.GetByID(ctx, invitation.EventID)
+	if err != nil {
+		return err
+	}
+
 	var newStatus models.EventInvitationStatus
 	if accept {
 		newStatus = models.InvitationStatusAccepted
@@ -594,7 +632,55 @@ func (s *EventService) RespondToInvitation(ctx context.Context, invitationID, us
 		newStatus = models.InvitationStatusDeclined
 	}
 
-	return s.invitationRepo.UpdateStatus(ctx, invitationID, newStatus)
+	if err := s.invitationRepo.UpdateStatus(ctx, invitationID, newStatus); err != nil {
+		return err
+	}
+
+	// Create notification for the inviter
+	if s.notificationRepo != nil {
+		invitee, _ := s.userRepo.FindUserByID(ctx, userID)
+		inviteeUsername := "Someone"
+		inviteeAvatar := ""
+		if invitee != nil {
+			inviteeUsername = invitee.Username
+			inviteeAvatar = invitee.Avatar
+		}
+
+		var notificationType models.NotificationType
+		var content string
+		if accept {
+			notificationType = models.NotificationTypeEventInviteAccepted
+			content = inviteeUsername + " accepted your invitation to " + event.Title
+		} else {
+			notificationType = models.NotificationTypeEventInviteDeclined
+			content = inviteeUsername + " declined your invitation to " + event.Title
+		}
+
+		notification := &models.Notification{
+			RecipientID: invitation.InviterID,
+			SenderID:    userID,
+			Type:        notificationType,
+			TargetID:    invitation.EventID,
+			TargetType:  "event",
+			Content:     content,
+			Data: map[string]interface{}{
+				"event_id":        invitation.EventID.Hex(),
+				"event_title":     event.Title,
+				"sender_id":       userID.Hex(),
+				"sender_username": inviteeUsername,
+				"sender_avatar":   inviteeAvatar,
+				"accepted":        accept,
+			},
+			Read: false,
+		}
+		go func(n *models.Notification) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.notificationRepo.CreateNotification(ctx, n)
+		}(notification)
+	}
+
+	return nil
 }
 
 // ===============================

@@ -158,6 +158,15 @@ type InvitationRespondRequest struct {
 	Accept bool `json:"accept"`
 }
 
+// EventRSVPEvent represents a WebSocket event for RSVP updates
+type EventRSVPEvent struct {
+	EventID   string     `json:"event_id"`
+	UserID    string     `json:"user_id"`
+	Status    RSVPStatus `json:"status"`
+	Timestamp time.Time  `json:"timestamp"`
+	Stats     EventStats `json:"stats,omitempty"` // Included to update counts
+}
+
 type EventInvitationResponse struct {
 	ID        string                `json:"id"`
 	Event     EventShort            `json:"event"`

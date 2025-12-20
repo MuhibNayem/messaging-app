@@ -13,13 +13,49 @@ import (
 )
 
 type EventController struct {
-	eventService *services.EventService
+	eventService          *services.EventService
+	recommendationService *services.EventRecommendationService
 }
 
-func NewEventController(eventService *services.EventService) *EventController {
+func NewEventController(eventService *services.EventService, recommendationService *services.EventRecommendationService) *EventController {
 	return &EventController{
-		eventService: eventService,
+		eventService:          eventService,
+		recommendationService: recommendationService,
 	}
+}
+
+// GetRecommendations returns personalized event recommendations for the user
+func (c *EventController) GetRecommendations(ctx *gin.Context) {
+	userID, err := utils.GetUserIDFromContext(ctx)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	limitStr := ctx.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+
+	recommendations, err := c.recommendationService.GetRecommendations(ctx.Request.Context(), userID, limit)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.RespondWithSuccess(ctx, recommendations)
+}
+
+// GetTrending returns trending events
+func (c *EventController) GetTrending(ctx *gin.Context) {
+	limitStr := ctx.DefaultQuery("limit", "10")
+	limit, _ := strconv.Atoi(limitStr)
+
+	trending, err := c.recommendationService.GetTrendingEvents(ctx.Request.Context(), limit)
+	if err != nil {
+		utils.RespondWithError(ctx, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.RespondWithSuccess(ctx, trending)
 }
 
 func (c *EventController) CreateEvent(ctx *gin.Context) {

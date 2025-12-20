@@ -17,8 +17,37 @@ type EventInvitationRepository struct {
 }
 
 func NewEventInvitationRepository(db *mongo.Database) *EventInvitationRepository {
+	collection := db.Collection("event_invitations")
+
+	// Create indexes for optimized invitation queries
+	_, err := collection.Indexes().CreateMany(context.Background(), []mongo.IndexModel{
+		// Invitee + status index for user's pending invitations
+		{
+			Keys:    bson.D{{Key: "invitee_id", Value: 1}, {Key: "status", Value: 1}},
+			Options: options.Index(),
+		},
+		// Event ID index for listing event invitations
+		{
+			Keys:    bson.D{{Key: "event_id", Value: 1}},
+			Options: options.Index(),
+		},
+		// Inviter ID index
+		{
+			Keys:    bson.D{{Key: "inviter_id", Value: 1}},
+			Options: options.Index(),
+		},
+		// Compound index for checking existing invitations
+		{
+			Keys:    bson.D{{Key: "event_id", Value: 1}, {Key: "invitee_id", Value: 1}},
+			Options: options.Index().SetUnique(true),
+		},
+	})
+	if err != nil {
+		// Log but don't panic - indexes may already exist
+	}
+
 	return &EventInvitationRepository{
-		collection: db.Collection("event_invitations"),
+		collection: collection,
 	}
 }
 

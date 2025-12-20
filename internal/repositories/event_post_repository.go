@@ -18,8 +18,27 @@ type EventPostRepository struct {
 }
 
 func NewEventPostRepository(db *mongo.Database) *EventPostRepository {
+	collection := db.Collection("event_posts")
+
+	// Create indexes for optimized post queries
+	_, err := collection.Indexes().CreateMany(context.Background(), []mongo.IndexModel{
+		// Event ID + created_at for paginated post listing
+		{
+			Keys:    bson.D{{Key: "event_id", Value: 1}, {Key: "created_at", Value: -1}},
+			Options: options.Index(),
+		},
+		// Author ID for "my posts" functionality
+		{
+			Keys:    bson.D{{Key: "author_id", Value: 1}},
+			Options: options.Index(),
+		},
+	})
+	if err != nil {
+		// Log but don't panic - indexes may already exist
+	}
+
 	return &EventPostRepository{
-		collection: db.Collection("event_posts"),
+		collection: collection,
 	}
 }
 

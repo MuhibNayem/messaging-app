@@ -172,6 +172,11 @@ func RespondWithError(c *gin.Context, statusCode int, message string) {
 	c.Abort()
 }
 
+// RespondWithSuccess sends a JSON success response with the given data
+func RespondWithSuccess(c *gin.Context, data interface{}) {
+	c.JSON(http.StatusOK, data)
+}
+
 // GetStatusCode determines the appropriate HTTP status code for different error types
 func GetStatusCode(err error) int {
 	if err == nil {

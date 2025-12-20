@@ -127,3 +127,7 @@ func (c *MessageConsumer) ConsumeMessages(ctx context.Context) {
 		log.Printf("Error closing Kafka reader: %v", err)
 	}
 }
+
+func (c *MessageConsumer) Close() error {
+	return c.reader.Close()
+}

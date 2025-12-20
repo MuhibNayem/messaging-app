@@ -10,15 +10,17 @@ import (
 type NotificationType string
 
 const (
-	NotificationTypeMention       NotificationType = "MENTION"
-	NotificationTypeLike          NotificationType = "LIKE"
-	NotificationTypeComment       NotificationType = "COMMENT"
-	NotificationTypeReply         NotificationType = "REPLY"
-	NotificationTypeFriendRequest NotificationType = "FRIEND_REQUEST"
-	NotificationTypeFriendAccept  NotificationType = "FRIEND_ACCEPT"
-	NotificationTypeBirthday      NotificationType = "BIRTHDAY"
-	NotificationTypeEventInvite   NotificationType = "EVENT_INVITE"
-	NotificationTypeEventReminder NotificationType = "EVENT_REMINDER"
+	NotificationTypeMention             NotificationType = "MENTION"
+	NotificationTypeLike                NotificationType = "LIKE"
+	NotificationTypeComment             NotificationType = "COMMENT"
+	NotificationTypeReply               NotificationType = "REPLY"
+	NotificationTypeFriendRequest       NotificationType = "FRIEND_REQUEST"
+	NotificationTypeFriendAccept        NotificationType = "FRIEND_ACCEPT"
+	NotificationTypeBirthday            NotificationType = "BIRTHDAY"
+	NotificationTypeEventInvite         NotificationType = "EVENT_INVITE"
+	NotificationTypeEventReminder       NotificationType = "EVENT_REMINDER"
+	NotificationTypeEventInviteAccepted NotificationType = "EVENT_INVITE_ACCEPTED"
+	NotificationTypeEventInviteDeclined NotificationType = "EVENT_INVITE_DECLINED"
 )
 
 // Notification represents a single notification for a user
