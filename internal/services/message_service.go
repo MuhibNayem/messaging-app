@@ -11,8 +11,10 @@ import (
 	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/repositories"
 	"messaging-app/pkg/utils"
+	"strings"
 	"time"
 
+	"github.com/gocql/gocql"
 	"github.com/redis/go-redis/v9"
 	kafkago "github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -51,6 +53,47 @@ func NewMessageService(
 	}
 }
 
+func (s *MessageService) normalizeConversationKey(userID primitive.ObjectID, raw string, isGroupHint *bool) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("conversation id required")
+	}
+
+	if strings.HasPrefix(raw, "dm_") || strings.HasPrefix(raw, "group_") {
+		return raw, nil
+	}
+
+	isGroup := false
+	if isGroupHint != nil && *isGroupHint {
+		isGroup = true
+	}
+
+	if strings.HasPrefix(raw, "group-") {
+		isGroup = true
+		raw = strings.TrimPrefix(raw, "group-")
+	}
+	if strings.HasPrefix(raw, "user-") {
+		raw = strings.TrimPrefix(raw, "user-")
+	}
+
+	if isGroup {
+		if !primitive.IsValidObjectID(raw) {
+			return "", fmt.Errorf("invalid group ID format")
+		}
+		return "group_" + raw, nil
+	}
+
+	if primitive.IsValidObjectID(raw) {
+		otherID, err := primitive.ObjectIDFromHex(raw)
+		if err != nil {
+			return "", err
+		}
+		return utils.GetConversationID(userID, otherID), nil
+	}
+
+	return raw, nil
+}
+
 func (s *MessageService) SendMessage(ctx context.Context, senderID primitive.ObjectID, req models.MessageRequest) (*models.Message, error) {
 	msg := &models.Message{
 		SenderID:      senderID,
@@ -60,6 +103,11 @@ func (s *MessageService) SendMessage(ctx context.Context, senderID primitive.Obj
 		IsEncrypted:   req.IsEncrypted,
 		IV:            req.IV,
 		IsMarketplace: req.IsMarketplace, // Marketplace context flag
+	}
+
+	// Ensure Cassandra and all downstream consumers share the same stable UUID
+	if msg.StringID == "" {
+		msg.StringID = gocql.TimeUUID().String()
 	}
 
 	if req.ProductID != "" {
@@ -438,15 +486,32 @@ func (s *MessageService) MarkMessagesAsSeen(ctx context.Context, userID primitiv
 		return nil
 	}
 
-	// Cassandra Update
-	// messageIDs are already strings (UUIDs from frontend)
-	// messageIDs are already strings (UUIDs from frontend)
-	return s.messageCassandraRepo.MarkMessagesAsSeen(ctx, conversationID, messageIDs)
+	convKey, err := s.normalizeConversationKey(userID, conversationID, nil)
+	if err != nil {
+		return err
+	}
+
+	// Cassandra Update - pass userID for seen_by SET update
+	return s.messageCassandraRepo.MarkMessagesAsSeen(ctx, convKey, messageIDs, userID.Hex())
 }
 
-func (s *MessageService) MarkConversationAsSeen(ctx context.Context, userID primitive.ObjectID, conversationID string, timestamp time.Time, isGroup bool) error {
+func (s *MessageService) MarkConversationAsSeen(ctx context.Context, userID primitive.ObjectID, conversationID string, conversationKey string, timestamp time.Time, isGroup bool) error {
+	keySource := conversationKey
+	if keySource == "" {
+		if isGroup {
+			keySource = "group-" + conversationID
+		} else {
+			keySource = "user-" + conversationID
+		}
+	}
+
+	convKey, err := s.normalizeConversationKey(userID, keySource, &isGroup)
+	if err != nil {
+		return err
+	}
+
 	// Sync: Cassandra (New Source of Truth for Inbox)
-	err := s.messageCassandraRepo.MarkConversationAsSeen(ctx, userID, conversationID)
+	err = s.messageCassandraRepo.MarkConversationAsSeen(ctx, userID, convKey)
 	if err != nil {
 		log.Printf("Failed to mark conversation as seen in Cassandra: %v", err)
 	}
@@ -457,12 +522,20 @@ func (s *MessageService) MarkConversationAsSeen(ctx context.Context, userID prim
 		// Sync: Mongo (Legacy)
 		_ = s.messageRepo.MarkConversationAsSeen(ctx, objID, userID, timestamp, isGroup)
 
+		uiConversationID := conversationID
+		if isGroup {
+			uiConversationID = "group-" + conversationID
+		} else {
+			uiConversationID = "user-" + conversationID
+		}
+
 		// Publish conversation seen event to Kafka (requires ObjectID)
 		conversationSeenEvent := models.ConversationSeenEvent{
-			ConversationID: objID,
-			UserID:         userID,
-			Timestamp:      timestamp,
-			IsGroup:        isGroup,
+			ConversationID:   objID,
+			ConversationUIID: uiConversationID,
+			UserID:           userID,
+			Timestamp:        timestamp,
+			IsGroup:          isGroup,
 		}
 		conversationSeenEventBytes, err := json.Marshal(conversationSeenEvent)
 		if err != nil {
@@ -487,6 +560,11 @@ func (s *MessageService) MarkMessagesAsDelivered(ctx context.Context, userID pri
 		return nil
 	}
 
+	convKey, err := s.normalizeConversationKey(userID, conversationID, nil)
+	if err != nil {
+		return err
+	}
+
 	// Use Cassandra repository (assuming it has/will have this method)
 	// If Cassandra message model doesn't support 'delivered', we might skip or stub.
 	// For now, let's implement the method in Cassandra Repo to update 'delivered_to' or similar if columns exist,
@@ -495,11 +573,7 @@ func (s *MessageService) MarkMessagesAsDelivered(ctx context.Context, userID pri
 	// If not, we might need to skip or just log.
 	// But to fix valid 400, we MUST accept string IDs.
 
-	err := s.messageCassandraRepo.MarkMessagesAsDelivered(ctx, conversationID, messageIDs, userID.Hex())
-	if err != nil {
-		return err
-	}
-	return nil
+	return s.messageCassandraRepo.MarkMessagesAsDelivered(ctx, convKey, messageIDs, userID.Hex())
 }
 
 func (s *MessageService) GetUnreadCount(ctx context.Context, userID primitive.ObjectID) (int64, error) {
@@ -660,11 +734,16 @@ func (s *MessageService) DeleteMessage(
 	messageIDStr string,
 	requesterID primitive.ObjectID,
 ) (*models.Message, error) {
+	convKey, err := s.normalizeConversationKey(requesterID, conversationID, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	// Parse Message ID
 	// uuid, err := gocql.ParseUUID(messageIDStr) -- validation happens in repo
 
 	// Delete from Cassandra
-	err := s.messageCassandraRepo.DeleteMessage(ctx, conversationID, messageIDStr)
+	err = s.messageCassandraRepo.DeleteMessage(ctx, convKey, messageIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("cassandra delete failed: %w", err)
 	}
@@ -693,7 +772,7 @@ func (s *MessageService) DeleteMessage(
 
 	deletionBytes, _ := json.Marshal(map[string]interface{}{
 		"type":            "MESSAGE_DELETED",
-		"conversation_id": conversationID,
+		"conversation_id": convKey,
 		"message_id":      messageIDStr,
 	})
 	s.redisClient.Publish(ctx, "messages", deletionBytes)
@@ -822,13 +901,18 @@ func (s *MessageService) EditMessage(ctx context.Context, conversationID, messag
 	*/
 
 	// Proceed with blind update for now.
-	err := s.messageCassandraRepo.EditMessage(ctx, conversationID, messageIDStr, newContent)
+	requesterID, _ := primitive.ObjectIDFromHex(requesterIDStr)
+	convKey, err := s.normalizeConversationKey(requesterID, conversationID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.messageCassandraRepo.EditMessage(ctx, convKey, messageIDStr, newContent)
 	if err != nil {
 		return nil, err
 	}
 
 	// Construct optimized response (partial)
-	requesterID, _ := primitive.ObjectIDFromHex(requesterIDStr)
 	updatedMsg := &models.Message{
 		StringID: messageIDStr,
 		Content:  newContent,

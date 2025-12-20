@@ -347,8 +347,9 @@ func (c *MessageController) MarkConversationAsSeen(ctx *gin.Context) {
 	}
 
 	var req struct {
-		Timestamp string `json:"timestamp" binding:"required"`
-		IsGroup   bool   `json:"is_group"`
+		Timestamp       string `json:"timestamp" binding:"required"`
+		IsGroup         bool   `json:"is_group"`
+		ConversationKey string `json:"conversation_key"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, models.ErrorResponse{Error: err.Error()})
@@ -361,7 +362,7 @@ func (c *MessageController) MarkConversationAsSeen(ctx *gin.Context) {
 		return
 	}
 
-	err = c.messageService.MarkConversationAsSeen(ctx.Request.Context(), currentUserID, conversationIDStr, timestamp, req.IsGroup)
+	err = c.messageService.MarkConversationAsSeen(ctx.Request.Context(), currentUserID, conversationIDStr, req.ConversationKey, timestamp, req.IsGroup)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: err.Error()})
 		return

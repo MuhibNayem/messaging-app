@@ -102,7 +102,7 @@ type AuthResponse struct {
 }
 
 type RefreshRequest struct {
-	RefreshToken string `json:"refresh_token" binding:"required"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type UserShortResponse struct {

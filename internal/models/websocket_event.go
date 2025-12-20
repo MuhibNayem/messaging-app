@@ -39,10 +39,11 @@ type DeliveredEvent struct {
 
 // ConversationSeenEvent represents an event where a whole conversation has been seen by a user up to a certain timestamp.
 type ConversationSeenEvent struct {
-	ConversationID primitive.ObjectID `json:"conversation_id"`
-	UserID         primitive.ObjectID `json:"user_id"`
-	Timestamp      time.Time          `json:"timestamp"`
-	IsGroup        bool               `json:"is_group"`
+	ConversationID   primitive.ObjectID `json:"conversation_id"`
+	ConversationUIID string             `json:"conversation_ui_id"`
+	UserID           primitive.ObjectID `json:"user_id"`
+	Timestamp        time.Time          `json:"timestamp"`
+	IsGroup          bool               `json:"is_group"`
 }
 
 // CallSignalEvent represents a signaling message for voice/video calls.

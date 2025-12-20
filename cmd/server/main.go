@@ -206,6 +206,20 @@ func main() {
 		log.Fatal("Failed to initialize storage service:", err)
 	}
 
+	// Initialize Message Archive Service for tiered storage
+	var messageArchiveService *services.MessageArchiveService
+	if cassandraClient != nil {
+		messageArchiveService = services.NewMessageArchiveService(
+			cassandraClient,
+			storageService,
+			redisClient,
+			cfg,
+		)
+		// Start background archive worker (runs daily)
+		go messageArchiveService.StartArchiveWorker(context.Background())
+		log.Println("Message archive worker started")
+	}
+
 	feedService := services.NewFeedService(feedRepo, userRepo, friendshipRepo, communityRepo, privacyRepo, kafkaProducer, notificationService, storageService)
 	// Note: UserService now needs FeedService for profile history
 	userService := services.NewUserService(userRepo, reelRepo, redisClient.GetClient(), feedService)
@@ -213,6 +227,11 @@ func main() {
 
 	messageCassandraRepo := repositories.NewMessageCassandraRepository(cassandraClient)
 	groupActivityRepo := repositories.NewGroupActivityRepository(cassandraClient)
+
+	// Wire archive fetcher for tiered storage merge logic
+	if messageArchiveService != nil {
+		messageCassandraRepo.SetArchiveFetcher(messageArchiveService)
+	}
 
 	groupService := services.NewGroupService(groupRepo, userRepo, groupActivityRepo, cassandraClient, kafkaProducer)
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo, userGraphRepo)
@@ -232,7 +251,7 @@ func main() {
 	eventService := services.NewEventService(eventRepo, userRepo, eventGraphRepo)
 
 	// Initialize Controllers
-	authController := controllers.NewAuthController(authService)
+	authController := controllers.NewAuthController(authService, cfg)
 	userController := controllers.NewUserController(userService)
 	friendshipController := controllers.NewFriendshipController(friendshipService)
 	groupController := controllers.NewGroupController(groupService, userService)
@@ -251,7 +270,7 @@ func main() {
 	eventController := controllers.NewEventController(eventService)
 
 	// Initialize WebSocket Hub
-	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, friendshipRepo, messageRepo, messageService)
+	hub := websocket.NewHub(redisClient, groupRepo, feedRepo, userRepo, friendshipRepo, messageRepo, messageCassandraRepo, messageService)
 
 	// Initialize Kafka Consumers
 	kafkaConsumer := kafka.NewMessageConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, "message-group", hub)
@@ -277,9 +296,14 @@ func main() {
 	router := gin.Default()
 	router.Use(config.MetricsMiddleware(metrics))
 
-	// Custom CORS configuration
+	allowedOrigins := cfg.CORSAllowedOrigins
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{"http://localhost:5173"}
+	}
+
+	// Custom CORS configuration with explicit origins
 	corsConfig := cors.Config{
-		AllowAllOrigins:  true, // Allow any origin (e.g. ngrok, localtunnel, valid for dev)
+		AllowOrigins:     allowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},

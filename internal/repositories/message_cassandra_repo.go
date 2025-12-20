@@ -15,12 +15,47 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// ArchiveFetcher interface for loading archived messages (implemented by MessageArchiveService)
+// This avoids circular dependency between repository and service
+type ArchiveFetcher interface {
+	LoadArchivedMessagesForRepo(ctx context.Context, conversationID, month string) ([]ArchivedMessageContent, error)
+	GetMessageMetadataForRepo(ctx context.Context, conversationID string, messageIDs []string) (map[string]ArchivedMessageMetadata, error)
+}
+
+// ArchivedMessageContent represents immutable content from cold storage
+type ArchivedMessageContent struct {
+	MessageID   string   `json:"message_id"`
+	SenderID    string   `json:"sender_id"`
+	ReceiverID  string   `json:"receiver_id,omitempty"`
+	GroupID     string   `json:"group_id,omitempty"`
+	Content     string   `json:"content"`
+	ContentType string   `json:"content_type"`
+	MediaURLs   []string `json:"media_urls,omitempty"`
+	ProductID   string   `json:"product_id,omitempty"`
+	CreatedAt   string   `json:"created_at"`
+}
+
+// ArchivedMessageMetadata represents mutable metadata from hot storage
+type ArchivedMessageMetadata struct {
+	Reactions   string
+	SeenBy      []string
+	DeliveredTo []string
+	IsDeleted   bool
+	IsEdited    bool
+}
+
 type MessageCassandraRepository struct {
-	client *db.CassandraClient
+	client         *db.CassandraClient
+	archiveFetcher ArchiveFetcher // Optional, for loading archived messages
 }
 
 func NewMessageCassandraRepository(client *db.CassandraClient) *MessageCassandraRepository {
 	return &MessageCassandraRepository{client: client}
+}
+
+// SetArchiveFetcher sets the archive fetcher for loading cold storage messages
+func (r *MessageCassandraRepository) SetArchiveFetcher(fetcher ArchiveFetcher) {
+	r.archiveFetcher = fetcher
 }
 
 // getConversationID derives a deterministic conversation ID for DMs or Groups.
@@ -55,6 +90,18 @@ func (r *MessageCassandraRepository) Create(ctx context.Context, msg *models.Mes
 	// 1. Prepare Data
 	conversationID := getConversationID(msg.SenderID, msg.ReceiverID, msg.GroupID)
 
+	// Parse or generate the Cassandra TimeUUID for this message
+	var messageUUID gocql.UUID
+	if msg.StringID != "" {
+		if parsed, err := gocql.ParseUUID(msg.StringID); err == nil {
+			messageUUID = parsed
+		}
+	}
+	if messageUUID == (gocql.UUID{}) {
+		messageUUID = gocql.TimeUUID()
+		msg.StringID = messageUUID.String()
+	}
+
 	if msg.ID.IsZero() {
 		msg.ID = primitive.NewObjectID()
 	}
@@ -76,7 +123,7 @@ func (r *MessageCassandraRepository) Create(ctx context.Context, msg *models.Mes
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	batch.Query(insertMessageQuery,
-		conversationID, gocql.TimeUUID(), msg.SenderID.Hex(), msg.ReceiverID.Hex(), msg.GroupID.Hex(),
+		conversationID, messageUUID, msg.SenderID.Hex(), msg.ReceiverID.Hex(), msg.GroupID.Hex(),
 		msg.Content, msg.ContentType, msg.MediaURLs, false,
 		msg.IsMarketplace, getStrID(msg.ProductID), string(reactionsJSON), msg.CreatedAt, false,
 	)
@@ -262,8 +309,8 @@ func (r *MessageCassandraRepository) GetMessages(ctx context.Context, query mode
 	var iter *gocql.Iter
 
 	// Cassandra optimized pagination uses 'message_id' clustering key (TimeUUID)
-	// Updated columns to include receiver_id, group_id, is_marketplace, product_id, etc.
-	columns := "message_id, sender_id, receiver_id, group_id, content, created_at, reactions, media_urls, is_marketplace, content_type, product_id"
+	// Updated columns to include receiver_id, group_id, is_marketplace, product_id, seen_by, delivered_to
+	columns := "message_id, sender_id, receiver_id, group_id, content, created_at, reactions, media_urls, is_marketplace, content_type, product_id, seen_by, delivered_to"
 	if query.Before == "" {
 		cqlQuery = fmt.Sprintf(`SELECT %s FROM messages WHERE conversation_id = ? LIMIT ?`, columns)
 		iter = r.client.Session.Query(cqlQuery, conversationID, limit).Iter()
@@ -291,8 +338,9 @@ func (r *MessageCassandraRepository) GetMessages(ctx context.Context, query mode
 	var createdAt time.Time
 	var mediaUrls []string
 	var isMarketplace bool
+	var seenByStr, deliveredToStr []string
 
-	for iter.Scan(&msgUUID, &sID, &rID, &gID, &content, &createdAt, &reactions, &mediaUrls, &isMarketplace, &contentType, &productID) {
+	for iter.Scan(&msgUUID, &sID, &rID, &gID, &content, &createdAt, &reactions, &mediaUrls, &isMarketplace, &contentType, &productID, &seenByStr, &deliveredToStr) {
 		sid, _ := primitive.ObjectIDFromHex(sID)
 
 		var rid, gid primitive.ObjectID
@@ -316,6 +364,19 @@ func (r *MessageCassandraRepository) GetMessages(ctx context.Context, query mode
 			}
 		}
 
+		// Convert seen_by and delivered_to strings to ObjectIDs
+		var seenBy, deliveredTo []primitive.ObjectID
+		for _, s := range seenByStr {
+			if oid, err := primitive.ObjectIDFromHex(s); err == nil {
+				seenBy = append(seenBy, oid)
+			}
+		}
+		for _, d := range deliveredToStr {
+			if oid, err := primitive.ObjectIDFromHex(d); err == nil {
+				deliveredTo = append(deliveredTo, oid)
+			}
+		}
+
 		messages = append(messages, models.Message{
 			ID:            primitive.NewObjectID(), // Placeholder
 			StringID:      msgUUID.String(),
@@ -329,12 +390,98 @@ func (r *MessageCassandraRepository) GetMessages(ctx context.Context, query mode
 			MediaURLs:     mediaUrls,
 			IsMarketplace: isMarketplace,
 			ProductID:     pid,
+			SeenBy:        seenBy,
+			DeliveredTo:   deliveredTo,
 		})
 	}
 
 	if err := iter.Close(); err != nil {
 		return nil, err
 	}
+
+	// 4. If fewer messages than requested and archive fetcher available, check cold storage
+	if len(messages) < limit && r.archiveFetcher != nil {
+		// Determine the month to check for archived messages
+		var oldestTime time.Time
+		if len(messages) > 0 {
+			oldestTime = messages[len(messages)-1].CreatedAt
+		} else if query.Before != "" {
+			oldestTime, _ = time.Parse(time.RFC3339, query.Before)
+		} else {
+			oldestTime = time.Now().AddDate(0, 0, -30) // Default 30 days ago
+		}
+
+		// Check if we're scrolling into archived territory (older than 30 days)
+		archiveThreshold := time.Now().AddDate(0, 0, -30)
+		if oldestTime.Before(archiveThreshold) {
+			month := oldestTime.Format("2006-01")
+			archivedContent, err := r.archiveFetcher.LoadArchivedMessagesForRepo(ctx, conversationID, month)
+			if err == nil && len(archivedContent) > 0 {
+				// Get metadata for archived messages
+				var msgIDs []string
+				for _, m := range archivedContent {
+					msgIDs = append(msgIDs, m.MessageID)
+				}
+				metaMap, _ := r.archiveFetcher.GetMessageMetadataForRepo(ctx, conversationID, msgIDs)
+
+				// Convert to models.Message and merge
+				for _, archived := range archivedContent {
+					sid, _ := primitive.ObjectIDFromHex(archived.SenderID)
+					var rid, gid primitive.ObjectID
+					if archived.ReceiverID != "" {
+						rid, _ = primitive.ObjectIDFromHex(archived.ReceiverID)
+					}
+					if archived.GroupID != "" {
+						gid, _ = primitive.ObjectIDFromHex(archived.GroupID)
+					}
+
+					createdAt, _ := time.Parse(time.RFC3339, archived.CreatedAt)
+
+					// Apply metadata if available
+					var parsedReactions []models.MessageReaction
+					if meta, ok := metaMap[archived.MessageID]; ok {
+						if meta.Reactions != "" {
+							_ = json.Unmarshal([]byte(meta.Reactions), &parsedReactions)
+						}
+						if meta.IsDeleted {
+							continue // Skip deleted messages
+						}
+					}
+
+					var pid *primitive.ObjectID
+					if archived.ProductID != "" {
+						parsedPID, err := primitive.ObjectIDFromHex(archived.ProductID)
+						if err == nil {
+							pid = &parsedPID
+						}
+					}
+
+					messages = append(messages, models.Message{
+						ID:          primitive.NewObjectID(),
+						StringID:    archived.MessageID,
+						SenderID:    sid,
+						ReceiverID:  rid,
+						GroupID:     gid,
+						Content:     archived.Content,
+						ContentType: archived.ContentType,
+						CreatedAt:   createdAt,
+						Reactions:   parsedReactions,
+						MediaURLs:   archived.MediaURLs,
+						ProductID:   pid,
+					})
+				}
+
+				// Re-sort by time descending and limit
+				sort.Slice(messages, func(i, j int) bool {
+					return messages[i].CreatedAt.After(messages[j].CreatedAt)
+				})
+				if len(messages) > limit {
+					messages = messages[:limit]
+				}
+			}
+		}
+	}
+
 	return messages, nil
 }
 
@@ -380,16 +527,16 @@ func (r *MessageCassandraRepository) MarkConversationAsSeen(ctx context.Context,
 	return r.client.Session.Query(query, userID.Hex(), conversationID).Exec()
 }
 
-// MarkMessagesAsSeen updates the is_read flag for specific messages
-func (r *MessageCassandraRepository) MarkMessagesAsSeen(ctx context.Context, conversationID string, messageIDs []string) error {
+// MarkMessagesAsSeen updates the is_read flag and adds user to seen_by for specific messages
+func (r *MessageCassandraRepository) MarkMessagesAsSeen(ctx context.Context, conversationID string, messageIDs []string, userID string) error {
 	if r.client == nil || r.client.Session == nil {
 		return fmt.Errorf("cassandra client not initialized")
 	}
 
 	// Cassandra Batch Update
 	batch := r.client.Session.NewBatch(gocql.LoggedBatch)
-	// Simplified query due to schema change: PK is ((conversation_id), message_id)
-	query := `UPDATE messages SET is_read = true WHERE conversation_id = ? AND message_id = ?`
+	// Update is_read and add user to seen_by SET
+	query := `UPDATE messages SET is_read = true, seen_by = seen_by + ? WHERE conversation_id = ? AND message_id = ?`
 
 	for _, msgID := range messageIDs {
 		// We need UUIDs, assuming messageIDs are TimeUUID strings
@@ -398,7 +545,8 @@ func (r *MessageCassandraRepository) MarkMessagesAsSeen(ctx context.Context, con
 			log.Printf("Invalid UUID for message seen update: %s", msgID)
 			continue
 		}
-		batch.Query(query, conversationID, uuid)
+		// Add user to seen_by set
+		batch.Query(query, []string{userID}, conversationID, uuid)
 	}
 
 	return r.client.Session.ExecuteBatch(batch)
@@ -498,4 +646,49 @@ func (r *MessageCassandraRepository) SearchMessages(ctx context.Context, userID 
 	// Implementing exact match on content using ALLOW FILTERING (Inefficient - Dev only) or just stub.
 	log.Println("WARNING: SearchMessages is not fully supported in Cassandra mode. Returning empty results.")
 	return []models.Message{}, nil
+}
+
+// GetMarketplacePartnerIDs returns unique user IDs from marketplace conversations for presence broadcasting
+func (r *MessageCassandraRepository) GetMarketplacePartnerIDs(ctx context.Context, userID primitive.ObjectID) ([]primitive.ObjectID, error) {
+	if r.client == nil || r.client.Session == nil {
+		return nil, fmt.Errorf("cassandra client not initialized")
+	}
+
+	// Query user_inbox for marketplace conversations
+	// conversation_id format is "dm_userA_userB" for DMs
+	query := `SELECT conversation_id FROM user_inbox WHERE user_id = ? AND is_marketplace = true`
+	iter := r.client.Session.Query(query, userID.Hex()).Iter()
+
+	partnerMap := make(map[string]bool)
+	var conversationID string
+	userIDHex := userID.Hex()
+
+	for iter.Scan(&conversationID) {
+		// Parse conversation_id to extract partner ID
+		// Format: "dm_userA_userB" where userA < userB alphabetically
+		if strings.HasPrefix(conversationID, "dm_") {
+			parts := strings.Split(conversationID[3:], "_")
+			if len(parts) == 2 {
+				if parts[0] == userIDHex {
+					partnerMap[parts[1]] = true
+				} else if parts[1] == userIDHex {
+					partnerMap[parts[0]] = true
+				}
+			}
+		}
+	}
+
+	if err := iter.Close(); err != nil {
+		return nil, err
+	}
+
+	// Convert to ObjectIDs
+	var partnerIDs []primitive.ObjectID
+	for partnerHex := range partnerMap {
+		if oid, err := primitive.ObjectIDFromHex(partnerHex); err == nil {
+			partnerIDs = append(partnerIDs, oid)
+		}
+	}
+
+	return partnerIDs, nil
 }

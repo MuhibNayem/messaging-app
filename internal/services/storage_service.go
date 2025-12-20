@@ -1,8 +1,11 @@
 package services
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"messaging-app/config"
 	"messaging-app/internal/models"
 	"mime/multipart"
@@ -185,4 +188,65 @@ func (s *StorageService) DeleteFile(ctx context.Context, fileURL string) error {
 	}
 
 	return nil
+}
+
+// UploadArchive uploads compressed JSON archive to a specific bucket and path
+// Used for tiered message storage - cold storage for old messages
+func (s *StorageService) UploadArchive(ctx context.Context, archiveBucket, objectPath string, data []byte) error {
+	// Compress data with gzip
+	var buf bytes.Buffer
+	gzWriter := gzip.NewWriter(&buf)
+	_, err := gzWriter.Write(data)
+	if err != nil {
+		return fmt.Errorf("failed to compress archive: %w", err)
+	}
+	if err := gzWriter.Close(); err != nil {
+		return fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+
+	// Ensure bucket exists
+	exists, err := s.client.BucketExists(ctx, archiveBucket)
+	if err != nil {
+		return fmt.Errorf("failed to check archive bucket: %w", err)
+	}
+	if !exists {
+		if err := s.client.MakeBucket(ctx, archiveBucket, minio.MakeBucketOptions{}); err != nil {
+			return fmt.Errorf("failed to create archive bucket: %w", err)
+		}
+	}
+
+	// Upload compressed archive
+	_, err = s.client.PutObject(ctx, archiveBucket, objectPath, &buf, int64(buf.Len()), minio.PutObjectOptions{
+		ContentType:     "application/gzip",
+		ContentEncoding: "gzip",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to upload archive: %w", err)
+	}
+
+	return nil
+}
+
+// DownloadArchive downloads and decompresses JSON archive from cold storage
+func (s *StorageService) DownloadArchive(ctx context.Context, archiveBucket, objectPath string) ([]byte, error) {
+	// Get object from MinIO
+	obj, err := s.client.GetObject(ctx, archiveBucket, objectPath, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get archive object: %w", err)
+	}
+	defer obj.Close()
+
+	// Decompress gzip
+	gzReader, err := gzip.NewReader(obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzReader.Close()
+
+	data, err := io.ReadAll(gzReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read archive: %w", err)
+	}
+
+	return data, nil
 }

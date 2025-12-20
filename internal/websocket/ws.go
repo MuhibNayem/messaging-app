@@ -19,6 +19,8 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+const wsAuthProtocol = "connectify.auth"
+
 var (
 	wsConnections = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "websocket_connections_total",
@@ -74,13 +76,14 @@ type Hub struct {
 	userClients  map[string]map[*Client]bool
 	groupClients map[string]map[*Client]bool
 
-	groupRepo      *repositories.GroupRepository
-	feedRepo       *repositories.FeedRepository
-	userRepo       *repositories.UserRepository
-	friendshipRepo *repositories.FriendshipRepository // New
-	messageRepo    *repositories.MessageRepository
-	redisClient    *redis.ClusterClient
-	messageCache   *MessageCache
+	groupRepo            *repositories.GroupRepository
+	feedRepo             *repositories.FeedRepository
+	userRepo             *repositories.UserRepository
+	friendshipRepo       *repositories.FriendshipRepository // New
+	messageRepo          *repositories.MessageRepository
+	messageCassandraRepo *repositories.MessageCassandraRepository
+	redisClient          *redis.ClusterClient
+	messageCache         *MessageCache
 
 	register               chan *Client
 	unregister             chan *Client
@@ -104,7 +107,7 @@ type Hub struct {
 }
 
 // NewHub creates a new Hub and starts its goroutines
-func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository, feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, friendshipRepo *repositories.FriendshipRepository, messageRepo *repositories.MessageRepository, messageUpdater MessageUpdater) *Hub {
+func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepository, feedRepo *repositories.FeedRepository, userRepo *repositories.UserRepository, friendshipRepo *repositories.FriendshipRepository, messageRepo *repositories.MessageRepository, messageCassandraRepo *repositories.MessageCassandraRepository, messageUpdater MessageUpdater) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
 		userClients:            make(map[string]map[*Client]bool),
@@ -114,6 +117,7 @@ func NewHub(redisClient *redis.ClusterClient, groupRepo *repositories.GroupRepos
 		userRepo:               userRepo,
 		friendshipRepo:         friendshipRepo, // Initialize
 		messageRepo:            messageRepo,
+		messageCassandraRepo:   messageCassandraRepo,
 		redisClient:            redisClient,
 		messageCache:           NewMessageCache(redisClient),
 		register:               make(chan *Client),
@@ -237,7 +241,16 @@ func (h *Hub) run() {
 				}
 
 				// 2. Also get marketplace conversation partners (for buyer-seller presence)
-				marketplacePartners, mpErr := h.messageRepo.GetMarketplacePartnerIDs(h.ctx, userOID)
+				// Try Cassandra first (primary source for marketplace messages)
+				var marketplacePartners []primitive.ObjectID
+				var mpErr error
+				if h.messageCassandraRepo != nil {
+					marketplacePartners, mpErr = h.messageCassandraRepo.GetMarketplacePartnerIDs(h.ctx, userOID)
+				}
+				// Fallback to MongoDB if Cassandra fails or returns empty
+				if (mpErr != nil || len(marketplacePartners) == 0) && h.messageRepo != nil {
+					marketplacePartners, mpErr = h.messageRepo.GetMarketplacePartnerIDs(h.ctx, userOID)
+				}
 				if mpErr != nil {
 					log.Printf("Error getting marketplace partners for presence: %v", mpErr)
 				} else {
@@ -666,7 +679,7 @@ func (h *Hub) run() {
 				// Determine conversation ID
 				var conversationID string
 				if !msg.GroupID.IsZero() {
-					conversationID = msg.GroupID.Hex()
+					conversationID = fmt.Sprintf("group_%s", msg.GroupID.Hex())
 				} else {
 					// Recalculate conversation ID for DMs
 					// Note: validation needed on which ID comes first.
@@ -950,7 +963,7 @@ func (h *Hub) sendToClients(clients []*Client, msg models.Message) {
 				// Determine Conversation ID
 				var conversationID string
 				if !message.GroupID.IsZero() {
-					conversationID = message.GroupID.Hex()
+					conversationID = fmt.Sprintf("group_%s", message.GroupID.Hex())
 				} else {
 					conversationID = utils.GetConversationID(message.SenderID, message.ReceiverID)
 				}
@@ -1291,6 +1304,7 @@ func ServeWs(c *gin.Context, hub *Hub) {
 			// TODO: restrict allowed origins
 			return true
 		},
+		Subprotocols: []string{wsAuthProtocol},
 	}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {

@@ -32,18 +32,20 @@ func AuthMiddleware(jwtSecret string, redisClient *redis.ClusterClient) gin.Hand
 	}
 }
 
+const wsAuthProtocolName = "connectify.auth"
+
 func WSJwtAuthMiddleware(jwtSecret string, redisClient *redis.ClusterClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tokenString := c.Query("token")
-		if tokenString == "" {
-			c.AbortWithStatus(http.StatusUnauthorized)
+		tokenString, err := extractWebsocketToken(c.GetHeader("Sec-WebSocket-Protocol"))
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			return
 		}
 
 		userID, err := ValidateToken(tokenString, jwtSecret, redisClient)
 		if err != nil {
 			fmt.Printf("WS Auth Error: %v\n", err)
-			c.AbortWithStatus(http.StatusUnauthorized)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			return
 		}
 
@@ -51,6 +53,22 @@ func WSJwtAuthMiddleware(jwtSecret string, redisClient *redis.ClusterClient) gin
 		c.Set("userID", userID)
 		c.Next()
 	}
+}
+
+func extractWebsocketToken(header string) (string, error) {
+	if header == "" {
+		return "", fmt.Errorf("Sec-WebSocket-Protocol header required")
+	}
+
+	parts := strings.Split(header, ",")
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" || trimmed == wsAuthProtocolName {
+			continue
+		}
+		return trimmed, nil
+	}
+	return "", fmt.Errorf("websocket auth token missing")
 }
 
 // ValidateToken validates a JWT token and returns the user ID if valid

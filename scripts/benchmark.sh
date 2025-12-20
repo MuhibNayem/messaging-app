@@ -5,6 +5,7 @@ USERS=100000
 MESSAGES_PER_USER=5
 ENDPOINT="http://localhost:8080/api/messages"
 WS_ENDPOINT="ws://localhost:8081/ws"
+WS_PROTOCOL="connectify.auth"
 
 # Get JWT token
 TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
@@ -24,7 +25,7 @@ ab -n $((USERS*MESSAGES_PER_USER)) -c 1000 -H "Authorization: Bearer $TOKEN" \
 # Run WebSocket test
 echo "Starting WebSocket connections..."
 for i in {1..1000}; do
-  wscat -c "$WS_ENDPOINT?token=$TOKEN" > /dev/null 2>&1 &
+  wscat -c "$WS_ENDPOINT" -s "$WS_PROTOCOL" -s "$TOKEN" > /dev/null 2>&1 &
 done
 
 echo "Load testing in progress..."

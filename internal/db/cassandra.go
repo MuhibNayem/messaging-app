@@ -106,6 +106,38 @@ func createTables(session *gocql.Session) error {
 		return err
 	}
 
+	// Table 1b: Message Metadata (Mutable fields - stays forever for archived messages)
+	// Partition: conversation_id (same as messages)
+	// Used for: reactions, seen_by, delivered_to, is_deleted, is_edited
+	metadataQuery := `CREATE TABLE IF NOT EXISTS message_metadata (
+		conversation_id text,
+		message_id timeuuid,
+		reactions text,
+		seen_by set<text>,
+		delivered_to set<text>,
+		is_deleted boolean,
+		is_edited boolean,
+		PRIMARY KEY ((conversation_id), message_id)
+	) WITH CLUSTERING ORDER BY (message_id DESC);`
+	if err := session.Query(metadataQuery).Exec(); err != nil {
+		return err
+	}
+
+	// Table 1c: Archive Index (Pointers to MinIO cold storage)
+	// Partition: conversation_id
+	// Cluster: month (YYYY-MM format for range queries)
+	archiveIndexQuery := `CREATE TABLE IF NOT EXISTS messages_archive_index (
+		conversation_id text,
+		month text,
+		archive_path text,
+		message_count int,
+		archived_at timestamp,
+		PRIMARY KEY ((conversation_id), month)
+	) WITH CLUSTERING ORDER BY (month DESC);`
+	if err := session.Query(archiveIndexQuery).Exec(); err != nil {
+		return err
+	}
+
 	// Table 2: User Inbox (Recent Conversations)
 	// Partition: user_id
 	// Proper design: ONE row per conversation, last_message_at is a regular column
