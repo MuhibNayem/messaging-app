@@ -233,9 +233,9 @@ func main() {
 		messageCassandraRepo.SetArchiveFetcher(messageArchiveService)
 	}
 
-	groupService := services.NewGroupService(groupRepo, userRepo, groupActivityRepo, cassandraClient, kafkaProducer)
+	groupService := services.NewGroupService(groupRepo, userRepo, groupActivityRepo, cassandraClient, kafkaProducer, redisClient.GetClient())
 	friendshipService := services.NewFriendshipService(friendshipRepo, userRepo, userGraphRepo)
-	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService, messageCassandraRepo)
+	messageService := services.NewMessageService(messageRepo, groupRepo, friendshipRepo, kafkaProducer, redisClient.GetClient(), userRepo, notificationService, messageCassandraRepo, groupActivityRepo)
 	privacyService := services.NewPrivacyService(privacyRepo, userRepo)
 
 	searchService := services.NewSearchService(userRepo, feedRepo, friendshipRepo)

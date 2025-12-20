@@ -11,6 +11,7 @@ import (
 	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/repositories"
 	"messaging-app/pkg/utils"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ type MessageService struct {
 	userRepo             *repositories.UserRepository
 	notificationService  *notifications.NotificationService
 	messageCassandraRepo *repositories.MessageCassandraRepository
+	groupActivityRepo    *repositories.GroupActivityRepository
 }
 
 func NewMessageService(
@@ -40,6 +42,7 @@ func NewMessageService(
 	userRepo *repositories.UserRepository,
 	notificationService *notifications.NotificationService,
 	messageCassandraRepo *repositories.MessageCassandraRepository,
+	groupActivityRepo *repositories.GroupActivityRepository,
 ) *MessageService {
 	return &MessageService{
 		messageRepo:          messageRepo,
@@ -50,6 +53,7 @@ func NewMessageService(
 		userRepo:             userRepo,
 		notificationService:  notificationService,
 		messageCassandraRepo: messageCassandraRepo,
+		groupActivityRepo:    groupActivityRepo,
 	}
 }
 
@@ -661,6 +665,19 @@ func (s *MessageService) GetAllMessages(ctx context.Context, query models.Messag
 		return nil, err
 	}
 
+	// Filter out malformed/corrupt messages
+	// (e.g., messages with empty sender_id, empty content_type, or zero timestamps)
+	validMessages := []models.Message{} // Initialize as empty slice to return [] not null
+	for _, msg := range messages {
+		// Skip messages that are clearly malformed
+		if msg.SenderID.IsZero() && msg.Content == "" && msg.ContentType == "" {
+			log.Printf("Skipping malformed message with ID: %s (empty sender, content, and content_type)", msg.StringID)
+			continue
+		}
+		validMessages = append(validMessages, msg)
+	}
+	messages = validMessages
+
 	// Enrich messages with Sender details (Batch Fetch for Scalability)
 	senderIDsMap := make(map[string]bool)
 	var senderIDs []primitive.ObjectID
@@ -708,6 +725,61 @@ func (s *MessageService) GetAllMessages(ctx context.Context, query models.Messag
 			} else {
 				msg.SenderName = "Unknown"
 				// Try Redis fallback for name if strictly needed, or just leave as Unknown to save latency
+			}
+		}
+	}
+
+	// --- FB-Style Group Activity Merge (OPTIMIZED IMPLEMENTATION) ---
+	// Only merge activities on page 1 to avoid duplicate activities in pagination
+	// Uses Redis cache with TTL to reduce Cassandra load
+	if query.GroupID != "" && s.groupActivityRepo != nil && query.Page <= 1 {
+		gID, err := primitive.ObjectIDFromHex(query.GroupID)
+		if err == nil {
+			cacheKey := "group_activities:" + query.GroupID
+			var activities []*models.GroupActivity
+
+			// Try Redis cache first (optimized: use Bytes() to avoid string conversion)
+			cachedData, cacheErr := s.redisClient.Get(ctx, cacheKey).Bytes()
+			if cacheErr == nil && len(cachedData) > 0 {
+				// Cache hit - unmarshal from JSON directly from bytes
+				if json.Unmarshal(cachedData, &activities) != nil {
+					activities = nil // Fall back to DB on unmarshal error
+				}
+			}
+
+			// Cache miss or error - fetch from Cassandra
+			if activities == nil {
+				activities, _ = s.groupActivityRepo.GetActivities(ctx, gID, 50)
+				if len(activities) > 0 {
+					// Async cache set to avoid blocking (fire-and-forget)
+					go func(key string, acts []*models.GroupActivity) {
+						if jsonData, err := json.Marshal(acts); err == nil {
+							s.redisClient.Set(context.Background(), key, jsonData, 5*time.Minute)
+						}
+					}(cacheKey, activities)
+				}
+			}
+
+			// Convert activities to system messages with pre-allocated capacity
+			if actLen := len(activities); actLen > 0 {
+				// Pre-allocate to avoid slice growth allocations
+				messages = append(make([]models.Message, 0, len(messages)+actLen), messages...)
+				for _, activity := range activities {
+					messages = append(messages, models.Message{
+						ID:          primitive.NewObjectID(),
+						StringID:    activity.ActivityID.String(),
+						GroupID:     activity.GroupID,
+						Content:     activity.FormatActivity(),
+						ContentType: "system",
+						CreatedAt:   activity.CreatedAt,
+						SenderName:  activity.ActorName,
+					})
+				}
+
+				// Sort all messages chronologically (oldest first for display)
+				sort.Slice(messages, func(i, j int) bool {
+					return messages[i].CreatedAt.Before(messages[j].CreatedAt)
+				})
 			}
 		}
 	}

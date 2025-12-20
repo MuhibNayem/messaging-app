@@ -87,6 +87,19 @@ func (r *MessageCassandraRepository) Create(ctx context.Context, msg *models.Mes
 		return fmt.Errorf("cassandra client not initialized")
 	}
 
+	// --- VALIDATION: Prevent corrupt data at write time (Facebook-scale defense) ---
+	// This ensures data integrity at the source, preventing ghost messages
+	if msg.SenderID.IsZero() {
+		return fmt.Errorf("message validation failed: sender_id cannot be empty")
+	}
+	if msg.ContentType == "" {
+		return fmt.Errorf("message validation failed: content_type cannot be empty")
+	}
+	if msg.Content == "" && len(msg.MediaURLs) == 0 {
+		return fmt.Errorf("message validation failed: message must have content or media")
+	}
+	// --- END VALIDATION ---
+
 	// 1. Prepare Data
 	conversationID := getConversationID(msg.SenderID, msg.ReceiverID, msg.GroupID)
 
@@ -375,6 +388,14 @@ func (r *MessageCassandraRepository) GetMessages(ctx context.Context, query mode
 			if oid, err := primitive.ObjectIDFromHex(d); err == nil {
 				deliveredTo = append(deliveredTo, oid)
 			}
+		}
+
+		// --- DATA INTEGRITY CHECK: Skip corrupt/malformed rows (Facebook-scale defense) ---
+		// This filtering happens at the repository layer for efficiency
+		// (avoids passing corrupt data through the entire service stack)
+		if sid.IsZero() && content == "" && contentType == "" {
+			log.Printf("[DATA_INTEGRITY] Skipping malformed message row: %s (empty sender, content, content_type)", msgUUID.String())
+			continue
 		}
 
 		messages = append(messages, models.Message{

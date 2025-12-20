@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gocql/gocql"
+	"github.com/redis/go-redis/v9"
 	kafkago "github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -23,15 +24,26 @@ type GroupService struct {
 	activityRepo    *repositories.GroupActivityRepository
 	cassandraClient *db.CassandraClient
 	producer        *kafka.MessageProducer
+	redisClient     *redis.ClusterClient
 }
 
-func NewGroupService(groupRepo *repositories.GroupRepository, userRepo *repositories.UserRepository, activityRepo *repositories.GroupActivityRepository, cassandraClient *db.CassandraClient, producer *kafka.MessageProducer) *GroupService {
+func NewGroupService(groupRepo *repositories.GroupRepository, userRepo *repositories.UserRepository, activityRepo *repositories.GroupActivityRepository, cassandraClient *db.CassandraClient, producer *kafka.MessageProducer, redisClient *redis.ClusterClient) *GroupService {
 	return &GroupService{
 		groupRepo:       groupRepo,
 		userRepo:        userRepo,
 		activityRepo:    activityRepo,
 		cassandraClient: cassandraClient,
 		producer:        producer,
+		redisClient:     redisClient,
+	}
+}
+
+// invalidateActivityCache deletes the cached activities for a group
+// Call this after any activity is created to ensure fresh data
+func (s *GroupService) invalidateActivityCache(ctx context.Context, groupID primitive.ObjectID) {
+	if s.redisClient != nil {
+		cacheKey := "group_activities:" + groupID.Hex()
+		s.redisClient.Del(ctx, cacheKey)
 	}
 }
 
@@ -85,6 +97,9 @@ func (s *GroupService) CreateGroup(ctx context.Context, creatorID primitive.Obje
 
 		if err := s.activityRepo.CreateActivity(ctx, activity); err != nil {
 			fmt.Printf("Failed to create group activity: %v\n", err)
+		} else {
+			// Invalidate cache to ensure fresh data is fetched
+			s.invalidateActivityCache(ctx, createdGroup.ID)
 		}
 
 		// Update inbox for all members
@@ -149,6 +164,9 @@ func (s *GroupService) AddMember(ctx context.Context, groupID, requesterID, newM
 
 	if err := s.activityRepo.CreateActivity(ctx, activity); err != nil {
 		fmt.Printf("Failed to create member added activity: %v\n", err)
+	} else {
+		// Invalidate cache to ensure fresh data is fetched
+		s.invalidateActivityCache(ctx, groupID)
 	}
 
 	// Update inbox for all members (including newly added member)
@@ -246,6 +264,9 @@ func (s *GroupService) RemoveMember(ctx context.Context, groupID, requesterID, m
 
 	if err := s.activityRepo.CreateActivity(ctx, activity); err != nil {
 		fmt.Printf("Failed to create member removal activity: %v\n", err)
+	} else {
+		// Invalidate cache to ensure fresh data is fetched
+		s.invalidateActivityCache(ctx, groupID)
 	}
 
 	// Update inbox for remaining members

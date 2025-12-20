@@ -6,6 +6,7 @@ import (
 	"log"
 	"messaging-app/internal/db"
 	"messaging-app/internal/models"
+	"sort"
 	"time"
 
 	"github.com/gocql/gocql"
@@ -80,7 +81,8 @@ func (r *GroupActivityRepository) GetActivities(ctx context.Context, groupID pri
 
 	iter := r.client.Session.Query(query, groupID.Hex(), limit).Iter()
 
-	activities := []*models.GroupActivity{}
+	// Pre-allocate with capacity to avoid slice growth allocations
+	activities := make([]*models.GroupActivity, 0, limit)
 	var gID, actorID, targetID, actorName, targetName, metadata string
 	var activityType string
 	var activityID gocql.UUID
@@ -98,7 +100,7 @@ func (r *GroupActivityRepository) GetActivities(ctx context.Context, groupID pri
 			}
 		}
 
-		activity := &models.GroupActivity{
+		activities = append(activities, &models.GroupActivity{
 			GroupID:      parsedGroupID,
 			ActivityID:   activityID,
 			ActivityType: models.ActivityType(activityType),
@@ -108,14 +110,17 @@ func (r *GroupActivityRepository) GetActivities(ctx context.Context, groupID pri
 			TargetName:   targetName,
 			Metadata:     metadata,
 			CreatedAt:    createdAt,
-		}
-
-		activities = append(activities, activity)
+		})
 	}
 
 	if err := iter.Close(); err != nil {
 		return nil, err
 	}
+
+	// Sort activities by CreatedAt (oldest first) since Cassandra doesn't support ORDER BY with this schema
+	sort.Slice(activities, func(i, j int) bool {
+		return activities[i].CreatedAt.Before(activities[j].CreatedAt)
+	})
 
 	return activities, nil
 }
