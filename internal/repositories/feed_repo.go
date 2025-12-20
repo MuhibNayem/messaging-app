@@ -287,6 +287,28 @@ func (r *FeedRepository) RemoveAlbumCoverByURL(ctx context.Context, coverURL str
 	return err
 }
 
+// UpdateAlbum updates an album's properties (name, description, cover, privacy)
+func (r *FeedRepository) UpdateAlbum(ctx context.Context, albumID, userID primitive.ObjectID, update bson.M) (*models.Album, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	update["updated_at"] = time.Now()
+
+	// Only allow update if user owns the album
+	result := r.albumsCollection.FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": albumID, "user_id": userID},
+		bson.M{"$set": update},
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	)
+
+	var album models.Album
+	if err := result.Decode(&album); err != nil {
+		return nil, err
+	}
+	return &album, nil
+}
+
 // ----------------------------- Posts -----------------------------
 
 func (r *FeedRepository) CreatePost(ctx context.Context, post *models.Post) (*models.Post, error) {

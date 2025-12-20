@@ -441,6 +441,7 @@ func main() {
 	{
 		albumRoutes.POST("", feedController.CreateAlbum)
 		albumRoutes.GET("/:id", feedController.GetAlbum)
+		albumRoutes.PUT("/:id", feedController.UpdateAlbum)
 		albumRoutes.POST("/:id/media", feedController.AddMediaToAlbum)
 		albumRoutes.GET("/:id/media", feedController.GetAlbumMedia)
 	}

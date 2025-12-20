@@ -1429,3 +1429,38 @@ func (s *FeedService) GetAlbum(ctx context.Context, albumID primitive.ObjectID) 
 	// TODO: Check privacy?
 	return s.feedRepo.GetAlbumByID(ctx, albumID)
 }
+
+// UpdateAlbum updates album properties (name, description, cover, privacy)
+func (s *FeedService) UpdateAlbum(ctx context.Context, userID, albumID primitive.ObjectID, req *models.UpdateAlbumRequest) (*models.Album, error) {
+	// First, get the album to verify ownership and prevent updating system albums
+	album, err := s.feedRepo.GetAlbumByID(ctx, albumID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prevent modifying system albums (profile, cover, timeline)
+	if album.Type != models.AlbumTypeCustom {
+		return nil, fmt.Errorf("cannot modify system albums")
+	}
+
+	// Build update map from request
+	update := bson.M{}
+	if req.Name != "" {
+		update["name"] = req.Name
+	}
+	if req.Description != "" {
+		update["description"] = req.Description
+	}
+	if req.CoverURL != "" {
+		update["cover_url"] = req.CoverURL
+	}
+	if req.Privacy != "" {
+		update["privacy"] = req.Privacy
+	}
+
+	if len(update) == 0 {
+		return album, nil // Nothing to update
+	}
+
+	return s.feedRepo.UpdateAlbum(ctx, albumID, userID, update)
+}

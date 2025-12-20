@@ -865,6 +865,53 @@ func (c *FeedController) CreateAlbum(ctx *gin.Context) {
 	ctx.JSON(http.StatusCreated, album)
 }
 
+// UpdateAlbum godoc
+// @Summary Update an album's properties (name, description, cover, privacy)
+// @Security BearerAuth
+// @Tags albums
+// @Accept json
+// @Produce json
+// @Param id path string true "Album ID"
+// @Param body body models.UpdateAlbumRequest true "Album update data"
+// @Success 200 {object} models.Album
+// @Failure 400 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 403 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /api/albums/{id} [put]
+func (c *FeedController) UpdateAlbum(ctx *gin.Context) {
+	userID := ctx.MustGet("userID").(string)
+	objUserID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	albumID, err := primitive.ObjectIDFromHex(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid album ID"})
+		return
+	}
+
+	var req models.UpdateAlbumRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	album, err := c.feedService.UpdateAlbum(ctx.Request.Context(), objUserID, albumID, &req)
+	if err != nil {
+		if err.Error() == "cannot modify system albums" {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, album)
+}
+
 // GetUserAlbums godoc
 // @Summary Get all albums for a user
 // @Security BearerAuth
@@ -917,10 +964,67 @@ func (c *FeedController) GetAlbum(ctx *gin.Context) {
 		return
 	}
 
+	// SECURITY: Get current user ID for authorization check
+	userIDValue, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+	userIDStr, ok := userIDValue.(string)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "invalid user ID format"})
+		return
+	}
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
 	album, err := c.feedService.GetAlbum(ctx.Request.Context(), albumID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// SECURITY: Comprehensive privacy check (IDOR protection)
+	// Access rules:
+	// 1. Owner can always see their own albums
+	// 2. Profile and Cover albums are always public (system albums)
+	// 3. PUBLIC privacy albums are visible to everyone
+	// 4. FRIENDS privacy albums are visible to friends
+	// 5. ONLY_ME privacy albums are only visible to owner
+
+	isOwner := album.UserID == userID
+	isSystemPublicAlbum := album.Type == models.AlbumTypeProfile || album.Type == models.AlbumTypeCover
+	isPublic := album.Privacy == models.PrivacySettingPublic
+
+	if !isOwner && !isSystemPublicAlbum && !isPublic {
+		// Check if friends privacy and user is a friend
+		if album.Privacy == models.PrivacySettingFriends {
+			// Get album owner's info to check friends list
+			owner, err := c.userService.GetUserByID(ctx.Request.Context(), album.UserID)
+			if err != nil {
+				ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify access"})
+				return
+			}
+			// Check if requester is in owner's friends list
+			isFriend := false
+			for _, friendID := range owner.Friends {
+				if friendID == userID {
+					isFriend = true
+					break
+				}
+			}
+			if !isFriend {
+				ctx.JSON(http.StatusForbidden, gin.H{"error": "this album is only visible to friends"})
+				return
+			}
+		} else {
+			// ONLY_ME or other private settings - only owner can see
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "you don't have permission to view this album"})
+			return
+		}
 	}
 
 	ctx.JSON(http.StatusOK, album)

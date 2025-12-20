@@ -87,9 +87,34 @@ func (c *GroupController) GetGroup(ctx *gin.Context) {
 		return
 	}
 
+	// SECURITY: Get current user ID and verify membership
+	userIDValue, exists := ctx.Get("userID")
+	if !exists {
+		utils.RespondWithError(ctx, http.StatusUnauthorized, "User not authenticated")
+		return
+	}
+	userID, ok := userIDValue.(primitive.ObjectID)
+	if !ok {
+		utils.RespondWithError(ctx, http.StatusInternalServerError, "Invalid user ID format")
+		return
+	}
+
 	group, err := c.groupService.GetGroup(ctx, groupID)
 	if err != nil {
 		utils.RespondWithError(ctx, utils.GetStatusCode(err), err.Error())
+		return
+	}
+
+	// SECURITY: Verify user is a member of this group (IDOR protection)
+	isMember := false
+	for _, memberID := range group.Members {
+		if memberID == userID {
+			isMember = true
+			break
+		}
+	}
+	if !isMember {
+		utils.RespondWithError(ctx, http.StatusForbidden, "You are not a member of this group")
 		return
 	}
 
