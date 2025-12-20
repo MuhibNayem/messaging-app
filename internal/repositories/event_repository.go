@@ -176,3 +176,187 @@ func (r *EventRepository) GetUserEvents(ctx context.Context, userID primitive.Ob
 	}
 	return events, nil
 }
+
+// GetAttendeesByStatus returns attendees filtered by status with pagination
+func (r *EventRepository) GetAttendeesByStatus(ctx context.Context, eventID primitive.ObjectID, status models.RSVPStatus, limit, page int64) ([]models.EventAttendee, int64, error) {
+	event, err := r.GetByID(ctx, eventID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Filter attendees by status
+	var filtered []models.EventAttendee
+	for _, a := range event.Attendees {
+		if status == "" || a.Status == status {
+			filtered = append(filtered, a)
+		}
+	}
+
+	total := int64(len(filtered))
+
+	// Apply pagination
+	start := (page - 1) * limit
+	end := start + limit
+	if start > total {
+		return []models.EventAttendee{}, total, nil
+	}
+	if end > total {
+		end = total
+	}
+
+	return filtered[start:end], total, nil
+}
+
+// GetCategories returns distinct categories with counts
+func (r *EventRepository) GetCategories(ctx context.Context) ([]models.EventCategory, error) {
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{"start_date": bson.M{"$gte": time.Now()}}}},
+		{{Key: "$group", Value: bson.M{
+			"_id":   "$category",
+			"count": bson.M{"$sum": 1},
+		}}},
+		{{Key: "$sort", Value: bson.M{"count": -1}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var results []struct {
+		ID    string `bson:"_id"`
+		Count int64  `bson:"count"`
+	}
+	if err = cursor.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	categories := make([]models.EventCategory, len(results))
+	for i, r := range results {
+		categories[i] = models.EventCategory{
+			Name:  r.ID,
+			Count: r.Count,
+		}
+	}
+
+	return categories, nil
+}
+
+// IncrementShareCount increments the share count for an event
+func (r *EventRepository) IncrementShareCount(ctx context.Context, eventID primitive.ObjectID) error {
+	update := bson.M{
+		"$inc": bson.M{"stats.share_count": 1},
+		"$set": bson.M{"updated_at": time.Now()},
+	}
+	_, err := r.collection.UpdateOne(ctx, bson.M{"_id": eventID}, update)
+	return err
+}
+
+// AddCoHost adds a co-host to an event
+func (r *EventRepository) AddCoHost(ctx context.Context, eventID primitive.ObjectID, coHost models.EventCoHost) error {
+	update := bson.M{
+		"$push": bson.M{"co_hosts": coHost},
+		"$set":  bson.M{"updated_at": time.Now()},
+	}
+	_, err := r.collection.UpdateOne(ctx, bson.M{"_id": eventID}, update)
+	return err
+}
+
+// RemoveCoHost removes a co-host from an event
+func (r *EventRepository) RemoveCoHost(ctx context.Context, eventID, userID primitive.ObjectID) error {
+	update := bson.M{
+		"$pull": bson.M{"co_hosts": bson.M{"user_id": userID}},
+		"$set":  bson.M{"updated_at": time.Now()},
+	}
+	_, err := r.collection.UpdateOne(ctx, bson.M{"_id": eventID}, update)
+	return err
+}
+
+// IsCoHost checks if a user is a co-host of the event
+func (r *EventRepository) IsCoHost(ctx context.Context, eventID, userID primitive.ObjectID) (bool, error) {
+	count, err := r.collection.CountDocuments(ctx, bson.M{
+		"_id":              eventID,
+		"co_hosts.user_id": userID,
+	})
+	return count > 0, err
+}
+
+// Search performs text search on events
+func (r *EventRepository) Search(ctx context.Context, query string, filter bson.M, limit, page int64) ([]models.Event, int64, error) {
+	if filter == nil {
+		filter = bson.M{}
+	}
+
+	// Add text search if query provided
+	if query != "" {
+		// Use regex for partial matching if no text index
+		filter["$or"] = []bson.M{
+			{"title": bson.M{"$regex": query, "$options": "i"}},
+			{"description": bson.M{"$regex": query, "$options": "i"}},
+			{"location": bson.M{"$regex": query, "$options": "i"}},
+		}
+	}
+
+	skip := (page - 1) * limit
+	opts := options.Find().SetLimit(limit).SetSkip(skip).SetSort(bson.M{"start_date": 1})
+
+	cursor, err := r.collection.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer cursor.Close(ctx)
+
+	var events []models.Event
+	if err = cursor.All(ctx, &events); err != nil {
+		return nil, 0, err
+	}
+
+	total, err := r.collection.CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return events, total, nil
+}
+
+// GetNearbyEvents finds events near a location (requires 2dsphere index on coordinates)
+func (r *EventRepository) GetNearbyEvents(ctx context.Context, lat, lng, radiusKm float64, limit, page int64) ([]models.Event, int64, error) {
+	// Convert km to meters for MongoDB $nearSphere
+	radiusMeters := radiusKm * 1000
+
+	filter := bson.M{
+		"coordinates": bson.M{
+			"$nearSphere": bson.M{
+				"$geometry": bson.M{
+					"type":        "Point",
+					"coordinates": []float64{lng, lat}, // MongoDB uses [lng, lat] order
+				},
+				"$maxDistance": radiusMeters,
+			},
+		},
+		"start_date": bson.M{"$gte": time.Now()},
+	}
+
+	skip := (page - 1) * limit
+	opts := options.Find().SetLimit(limit).SetSkip(skip)
+
+	cursor, err := r.collection.Find(ctx, filter, opts)
+	if err != nil {
+		// Fall back to no location filter if geospatial fails
+		return r.List(ctx, limit, page, bson.M{"start_date": bson.M{"$gte": time.Now()}})
+	}
+	defer cursor.Close(ctx)
+
+	var events []models.Event
+	if err = cursor.All(ctx, &events); err != nil {
+		return nil, 0, err
+	}
+
+	total, err := r.collection.CountDocuments(ctx, filter)
+	if err != nil {
+		total = int64(len(events))
+	}
+
+	return events, total, nil
+}

@@ -173,6 +173,8 @@ func main() {
 	reelRepo := repositories.NewReelRepository(db)
 	marketplaceRepo := repositories.NewMarketplaceRepository(db)
 	eventRepo := repositories.NewEventRepository(db)
+	eventInvitationRepo := repositories.NewEventInvitationRepository(db)
+	eventPostRepo := repositories.NewEventPostRepository(db)
 
 	// Graph Repositories (Only if Neo4j is connected)
 	var userGraphRepo *repositories.UserGraphRepository
@@ -250,7 +252,7 @@ func main() {
 
 	// Inject Graph Repo into Event Service?
 	// For now, let's keep EventService signature same until we refactor it.
-	eventService := services.NewEventService(eventRepo, userRepo, eventGraphRepo)
+	eventService := services.NewEventService(eventRepo, userRepo, eventGraphRepo, eventInvitationRepo, eventPostRepo, notificationRepo)
 
 	// Initialize Controllers
 	authController := controllers.NewAuthController(authService, cfg)
@@ -614,14 +616,39 @@ func main() {
 	// Event Routes
 	eventGroup := api.Group("/events")
 	{
+		// Core event CRUD
 		eventGroup.POST("", eventController.CreateEvent)
 		eventGroup.GET("", eventController.ListEvents)
 		eventGroup.GET("/my-events", eventController.GetMyEvents)
 		eventGroup.GET("/birthdays", eventController.GetBirthdays)
+		eventGroup.GET("/categories", eventController.GetCategories)
+		eventGroup.GET("/search", eventController.SearchEvents)
+		eventGroup.GET("/nearby", eventController.GetNearbyEvents)
+		eventGroup.GET("/invitations", eventController.GetInvitations)
+		eventGroup.POST("/invitations/:id/respond", eventController.RespondToInvitation)
+
+		// Event-specific routes
 		eventGroup.GET("/:id", eventController.GetEvent)
 		eventGroup.PUT("/:id", eventController.UpdateEvent)
 		eventGroup.DELETE("/:id", eventController.DeleteEvent)
 		eventGroup.POST("/:id/rsvp", eventController.RSVP)
+		eventGroup.POST("/:id/share", eventController.ShareEvent)
+
+		// Invitations
+		eventGroup.POST("/:id/invite", eventController.InviteFriends)
+
+		// Attendees
+		eventGroup.GET("/:id/attendees", eventController.GetAttendees)
+
+		// Co-hosts
+		eventGroup.POST("/:id/co-hosts", eventController.AddCoHost)
+		eventGroup.DELETE("/:id/co-hosts/:userId", eventController.RemoveCoHost)
+
+		// Discussion posts
+		eventGroup.POST("/:id/posts", eventController.CreatePost)
+		eventGroup.GET("/:id/posts", eventController.GetPosts)
+		eventGroup.DELETE("/:id/posts/:postId", eventController.DeletePost)
+		eventGroup.POST("/:id/posts/:postId/react", eventController.ReactToPost)
 	}
 
 	// WebSocket endpoint
