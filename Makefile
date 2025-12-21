@@ -4,6 +4,7 @@ build:
 	docker-compose build
 
 up:
+	chmod 400 docker/mongodb/mongodb-keyfile
 	docker-compose up -d
 
 down:

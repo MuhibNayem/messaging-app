@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"messaging-app/internal/models"
-
 	"messaging-app/internal/websocket"
 	"time"
 
@@ -53,28 +52,82 @@ func NewMessageConsumer(brokers []string, topic string, groupID string, hub *web
 }
 
 func (c *MessageConsumer) ConsumeMessages(ctx context.Context) {
-	defer c.reader.Close()
-
 	for {
-		start := time.Now()
-		msg, err := c.reader.ReadMessage(ctx)
+		m, err := c.reader.FetchMessage(ctx)
 		if err != nil {
-			log.Printf("Error reading message: %v", err)
-			continue
+			log.Printf("Error fetching message: %v", err)
+			break
 		}
 
-		var message models.Message
-		if err := json.Unmarshal(msg.Value, &message); err != nil {
-			log.Printf("Error unmarshaling message: %v", err)
-			continue
+		messagesConsumed.WithLabelValues(m.Topic).Inc()
+		start := time.Now()
+
+		// Attempt to unmarshal as a Message
+		var msg models.Message
+		if err := json.Unmarshal(m.Value, &msg); err == nil && !msg.ID.IsZero() {
+			log.Printf("Received Kafka message of type: Message for topic %s at offset %d", m.Topic, m.Offset)
+			c.hub.Broadcast <- msg
+		} else {
+			// If not a Message, check for other types.
+			// ReactionEvent and MessageEditedEvent share 'message_id' key, so we need strict checks.
+
+			// Check for ReactionEvent: Must have Emoji and Action
+			var reactionEvent models.ReactionEvent
+			if err := json.Unmarshal(m.Value, &reactionEvent); err == nil && !reactionEvent.MessageID.IsZero() && reactionEvent.Emoji != "" {
+				log.Printf("Received Kafka message of type: ReactionEvent for topic %s at offset %d", m.Topic, m.Offset)
+				c.hub.ReactionEvents <- reactionEvent
+			} else {
+				// If not a ReactionEvent, attempt to unmarshal as a ReadReceiptEvent
+				var readReceiptEvent models.ReadReceiptEvent
+				if err := json.Unmarshal(m.Value, &readReceiptEvent); err == nil && len(readReceiptEvent.MessageIDs) > 0 {
+					log.Printf("Received Kafka message of type: ReadReceiptEvent for topic %s at offset %d", m.Topic, m.Offset)
+					c.hub.ReadReceiptEvents <- readReceiptEvent
+				} else {
+					// If not a ReadReceiptEvent, attempt to unmarshal as a MessageEditedEvent
+					var messageEditedEvent models.MessageEditedEvent
+					// Must have NewContent or EditorID. Note: Content could be empty string potentially?
+					// But usually not. Let's check EditorID too.
+					if err := json.Unmarshal(m.Value, &messageEditedEvent); err == nil && !messageEditedEvent.MessageID.IsZero() && !messageEditedEvent.EditorID.IsZero() {
+						log.Printf("Received Kafka message of type: MessageEditedEvent for topic %s at offset %d", m.Topic, m.Offset)
+						c.hub.MessageEditedEvents <- messageEditedEvent
+					} else {
+						// If not a MessageEditedEvent, attempt to unmarshal as a ConversationSeenEvent
+						var conversationSeenEvent models.ConversationSeenEvent
+						if err := json.Unmarshal(m.Value, &conversationSeenEvent); err == nil && !conversationSeenEvent.ConversationID.IsZero() {
+
+							log.Printf("Received Kafka message of type: ConversationSeenEvent for topic %s at offset %d", m.Topic, m.Offset)
+							c.hub.ConversationSeenEvents <- conversationSeenEvent
+						} else {
+							// Fallback to WebSocketEvent (for feed events)
+							var wsEvent models.WebSocketEvent
+							if err := json.Unmarshal(m.Value, &wsEvent); err != nil {
+								log.Printf("Error unmarshaling Kafka message to known types or WebSocketEvent: %v, message: %s", err, string(m.Value))
+								// If unmarshaling fails, commit the message to avoid reprocessing
+								if err := c.reader.CommitMessages(ctx, m); err != nil {
+									log.Printf("Error committing message after unmarshaling failure: %v", err)
+								}
+								continue
+							}
+							log.Printf("Received Kafka event of type: %s for topic %s at offset %d", wsEvent.Type, m.Topic, m.Offset)
+							c.hub.FeedEvents <- wsEvent
+						}
+					}
+				}
+			}
 		}
 
-		
+		if err := c.reader.CommitMessages(ctx, m); err != nil {
+			log.Printf("Error committing message: %v", err)
+		}
 
-		// Broadcast to WebSocket clients
-		c.hub.Broadcast <- message
-
-		messagesConsumed.WithLabelValues(c.reader.Config().Topic).Inc()
-		consumeDuration.WithLabelValues(c.reader.Config().Topic).Observe(time.Since(start).Seconds())
+		consumeDuration.WithLabelValues(m.Topic).Observe(time.Since(start).Seconds())
 	}
+
+	if err := c.reader.Close(); err != nil {
+		log.Printf("Error closing Kafka reader: %v", err)
+	}
+}
+
+func (c *MessageConsumer) Close() error {
+	return c.reader.Close()
 }

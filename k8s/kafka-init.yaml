@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topic-init
+  namespace: messaging
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: kafka-init
+        image: confluentinc/cp-kafka:7.3.0
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+          BOOTSTRAP=kafka-bootstrap.messaging.svc.cluster.local:9092
+          TOPIC=messages
+          echo "Waiting for Kafka...";
+          until kafka-topics --bootstrap-server "$BOOTSTRAP" --list >/dev/null 2>&1; do
+            sleep 5;
+          done;
+          if kafka-topics --bootstrap-server "$BOOTSTRAP" --list | grep -q "^$TOPIC$"; then
+            echo "Topic $TOPIC already exists";
+          else
+            kafka-topics --bootstrap-server "$BOOTSTRAP" --create --topic "$TOPIC" --partitions 6 --replication-factor 3;
+          fi;
+          kafka-topics --bootstrap-server "$BOOTSTRAP" --describe --topic "$TOPIC";

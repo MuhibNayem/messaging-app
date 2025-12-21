@@ -1,2 +1,4 @@
 .env
 kafka-data
+.gocache
+k8s/secrets.yaml

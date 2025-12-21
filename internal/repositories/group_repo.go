@@ -65,6 +65,26 @@ func (r *GroupRepository) GetGroup(ctx context.Context, id primitive.ObjectID) (
 	return &group, err
 }
 
+// GetGroupsByIDs retrieves multiple groups by their IDs in a single query
+func (r *GroupRepository) GetGroupsByIDs(ctx context.Context, ids []primitive.ObjectID) ([]*models.Group, error) {
+	if len(ids) == 0 {
+		return []*models.Group{}, nil
+	}
+	filter := bson.M{"_id": bson.M{"$in": ids}}
+
+	cursor, err := r.db.Collection("groups").Find(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var groups []*models.Group
+	if err := cursor.All(ctx, &groups); err != nil {
+		return nil, err
+	}
+	return groups, nil
+}
+
 func (r *GroupRepository) AddMember(ctx context.Context, groupID, userID primitive.ObjectID) error {
 	_, err := r.db.Collection("groups").UpdateOne(
 		ctx,
@@ -89,6 +109,18 @@ func (r *GroupRepository) AddAdmin(ctx context.Context, groupID, userID primitiv
 		bson.M{
 			"$addToSet": bson.M{"admins": userID},
 			"$set":      bson.M{"updated_at": time.Now()},
+		},
+	)
+	return err
+}
+
+func (r *GroupRepository) RemoveAdmin(ctx context.Context, groupID, userID primitive.ObjectID) error {
+	_, err := r.db.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$pull": bson.M{"admins": userID},
+			"$set":  bson.M{"updated_at": time.Now()},
 		},
 	)
 	return err
@@ -119,7 +151,6 @@ func (r *GroupRepository) UpdateGroup(ctx context.Context, groupID primitive.Obj
 	return err
 }
 
-
 func (r *GroupRepository) GetUserGroups(ctx context.Context, userID primitive.ObjectID) ([]*models.Group, error) {
 	groups := []*models.Group{}
 	cursor, err := r.db.Collection("groups").Find(ctx, bson.M{"members": userID})
@@ -132,6 +163,70 @@ func (r *GroupRepository) GetUserGroups(ctx context.Context, userID primitive.Ob
 		return nil, err
 	}
 	return groups, err
+}
+
+func (r *GroupRepository) AddPendingMember(ctx context.Context, groupID, userID primitive.ObjectID) error {
+	// Try adding to set. If pending_members is null, this will fail.
+	_, err := r.db.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$addToSet": bson.M{"pending_members": userID},
+			"$set":      bson.M{"updated_at": time.Now()},
+		},
+	)
+
+	// If error indicates null field, initialize it
+	if err != nil {
+		// Just try simpler approach: use $set if null (via query check or just force set if failed)
+		// Since we know it failed, we can force reset if needed, but risky if concurrent.
+		// Better: FindOne and Update if pending_members is null?
+
+		// Actually simplest fix for the specific user error:
+		// Use an aggregation pipeline update which can handle conditionals (Mongo 4.2+)
+		// But let's stick to simple retry logic for this specific corruption case.
+		_, updateErr := r.db.Collection("groups").UpdateOne(
+			ctx,
+			bson.M{"_id": groupID, "pending_members": nil},
+			bson.M{
+				"$set": bson.M{
+					"pending_members": []primitive.ObjectID{userID},
+					"updated_at":      time.Now(),
+				},
+			},
+		)
+		if updateErr == nil {
+			return nil // Recovered
+		}
+		// If updateErr has error, return the original error if secondary failed too
+	}
+	return err
+}
+
+func (r *GroupRepository) RemovePendingMember(ctx context.Context, groupID, userID primitive.ObjectID) error {
+	_, err := r.db.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$pull": bson.M{"pending_members": userID},
+			"$set":  bson.M{"updated_at": time.Now()},
+		},
+	)
+	return err
+}
+
+func (r *GroupRepository) UpdateGroupSettings(ctx context.Context, groupID primitive.ObjectID, settings models.GroupSettings) error {
+	_, err := r.db.Collection("groups").UpdateOne(
+		ctx,
+		bson.M{"_id": groupID},
+		bson.M{
+			"$set": bson.M{
+				"settings":   settings,
+				"updated_at": time.Now(),
+			},
+		},
+	)
+	return err
 }
 
 // Helper function

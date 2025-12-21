@@ -32,28 +32,43 @@ func AuthMiddleware(jwtSecret string, redisClient *redis.ClusterClient) gin.Hand
 	}
 }
 
-func WSJwtAuthMiddleware(jwtSecret string,redisClient *redis.ClusterClient) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        tokenString := c.Query("token")
-        if tokenString == "" {
-            c.AbortWithStatus(http.StatusUnauthorized)
-            return
-        }
+const wsAuthProtocolName = "connectify.auth"
 
-        userID, err := ValidateToken(tokenString, jwtSecret, redisClient)
-        if err != nil {
-            c.AbortWithStatus(http.StatusUnauthorized)
-            return
-        }
-        if err != nil {
-            c.AbortWithStatus(http.StatusUnauthorized)
-            return
-        }
+func WSJwtAuthMiddleware(jwtSecret string, redisClient *redis.ClusterClient) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenString, err := extractWebsocketToken(c.GetHeader("Sec-WebSocket-Protocol"))
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
 
-        // Store user ID in context
-        c.Set("userID", userID)
-        c.Next()
-    }
+		userID, err := ValidateToken(tokenString, jwtSecret, redisClient)
+		if err != nil {
+			fmt.Printf("WS Auth Error: %v\n", err)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Store user ID in context
+		c.Set("userID", userID)
+		c.Next()
+	}
+}
+
+func extractWebsocketToken(header string) (string, error) {
+	if header == "" {
+		return "", fmt.Errorf("Sec-WebSocket-Protocol header required")
+	}
+
+	parts := strings.Split(header, ",")
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" || trimmed == wsAuthProtocolName {
+			continue
+		}
+		return trimmed, nil
+	}
+	return "", fmt.Errorf("websocket auth token missing")
 }
 
 // ValidateToken validates a JWT token and returns the user ID if valid
@@ -81,7 +96,7 @@ func ValidateToken(tokenString, jwtSecret string, redisClient *redis.ClusterClie
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("invalid token")
+		return "", fmt.Errorf("invalid token: %w", err)
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {

@@ -1,0 +1,16 @@
+resources:
+  - namespaces.yaml
+  - app-config.yaml
+  - mongodb.yaml
+  - mongodb-init.yaml
+  - redis.yaml
+  - redis-init.yaml
+  - zookeeper.yaml
+  - kafka.yaml
+  - kafka-init.yaml
+  - cassandra.yaml
+  - neo4j.yaml
+  - minio.yaml
+  - minio-bucket-job.yaml
+  - exporters.yaml
+  - app.yaml

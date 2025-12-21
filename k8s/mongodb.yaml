@@ -1,0 +1,140 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: messaging
+  labels:
+    app: mongodb
+spec:
+  serviceName: mongodb
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsNonRoot: true
+        runAsUser: 999
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values: ["mongodb"]
+            topologyKey: kubernetes.io/hostname
+      initContainers:
+      - name: init-keyfile
+        image: mongo:6.0
+        command: ["/bin/sh", "-c", "cp /secrets/keyfile /keyfile/keyfile && chmod 400 /keyfile/keyfile"]
+        volumeMounts:
+        - name: keyfile
+          mountPath: /keyfile
+        - name: keyfile-secret
+          mountPath: /secrets
+      containers:
+      - name: mongod
+        image: mongo:6.0
+        command:
+        - mongod
+        - "--bind_ip_all"
+        - "--replSet"
+        - rs0
+        - "--keyFile"
+        - /data/keyfile
+        - "--auth"
+        ports:
+        - containerPort: 27017
+          name: mongodb
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-root
+              key: username
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-root
+              key: password
+        volumeMounts:
+        - name: datadir
+          mountPath: /data/db
+        - name: keyfile
+          mountPath: /data/keyfile
+          readOnly: true
+        livenessProbe:
+          exec:
+            command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ ping: 1 })"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ ping: 1 })"]
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            cpu: 2
+            memory: 4Gi
+      volumes:
+      - name: keyfile
+        emptyDir:
+          medium: Memory
+      - name: keyfile-secret
+        secret:
+          secretName: mongodb-keyfile
+  volumeClaimTemplates:
+  - metadata:
+      name: datadir
+      labels:
+        app: mongodb
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 50Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: messaging
+  labels:
+    app: mongodb
+spec:
+  clusterIP: None
+  selector:
+    app: mongodb
+  ports:
+  - name: mongodb
+    port: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-primary
+  namespace: messaging
+  labels:
+    app: mongodb
+spec:
+  type: ClusterIP
+  selector:
+    app: mongodb
+  ports:
+  - name: mongodb
+    port: 27017
