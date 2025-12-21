@@ -1,7 +1,7 @@
 package controllers
 
 import (
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/services"
 	"net/http"
 

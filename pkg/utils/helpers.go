@@ -16,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"golang.org/x/crypto/bcrypt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // String helpers
@@ -181,6 +183,23 @@ func RespondWithSuccess(c *gin.Context, data interface{}) {
 func GetStatusCode(err error) int {
 	if err == nil {
 		return http.StatusOK
+	}
+
+	if st, ok := status.FromError(err); ok {
+		switch st.Code() {
+		case codes.NotFound:
+			return http.StatusNotFound
+		case codes.AlreadyExists:
+			return http.StatusConflict
+		case codes.PermissionDenied:
+			return http.StatusForbidden
+		case codes.Unauthenticated:
+			return http.StatusUnauthorized
+		case codes.InvalidArgument, codes.FailedPrecondition:
+			return http.StatusBadRequest
+		default:
+			return http.StatusInternalServerError
+		}
 	}
 
 	switch err.Error() {

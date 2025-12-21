@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/websocket"
 	"time"
 

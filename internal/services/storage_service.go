@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"messaging-app/config"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"mime/multipart"
 	"net/url"
 	"path/filepath"

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"

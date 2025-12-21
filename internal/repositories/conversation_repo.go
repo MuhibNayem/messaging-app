@@ -3,7 +3,7 @@ package repositories
 import (
 	"context"
 	"log"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"sort"
 
 	"go.mongodb.org/mongo-driver/bson"

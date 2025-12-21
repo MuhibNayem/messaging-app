@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"messaging-app/internal/services"
-	"messaging-app/pkg/utils"
+	"gitlab.com/spydotech-group/shared-entity/utils"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"

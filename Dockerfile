@@ -10,6 +10,7 @@ RUN go mod download
 
 COPY . .
 
+# Verify source files
 RUN test -d cmd/server && test -f cmd/server/main.go || \
     (echo "Source files missing" && exit 1)
 

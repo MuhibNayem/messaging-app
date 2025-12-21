@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/repositories"
 
 	"go.mongodb.org/mongo-driver/bson"

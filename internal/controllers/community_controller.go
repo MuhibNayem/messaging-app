@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/services"
-	"messaging-app/pkg/utils"
+	"gitlab.com/spydotech-group/shared-entity/utils"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"

@@ -8,7 +8,7 @@ import (
 	"messaging-app/config"
 	"messaging-app/internal/controllers"
 	"messaging-app/internal/websocket"
-	"messaging-app/pkg/middleware"
+	"gitlab.com/spydotech-group/shared-entity/middleware"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -52,7 +52,7 @@ func (a *Application) buildRouters(cfg routerConfig) (*gin.Engine, *gin.Engine) 
 		MaxAge:           12 * time.Hour,
 	}
 	router.Use(cors.New(corsConfig))
-	router.Use(middleware.RateLimiter(a.cfg))
+	router.Use(middleware.RateLimiter(a.cfg.RateLimitEnabled, float64(a.cfg.RateLimitLimit), a.cfg.RateLimitBurst))
 
 	webSocketRouter := gin.New()
 	webSocketRouter.Use(gin.Recovery())

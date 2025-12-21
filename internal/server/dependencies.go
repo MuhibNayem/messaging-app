@@ -30,9 +30,6 @@ type repositoryBundle struct {
 	Story            *repositories.StoryRepository
 	Reel             *repositories.ReelRepository
 	Marketplace      *repositories.MarketplaceRepository
-	Event            *repositories.EventRepository
-	EventInvitation  *repositories.EventInvitationRepository
-	EventPost        *repositories.EventPostRepository
 	MessageCassandra *repositories.MessageCassandraRepository
 	GroupActivity    *repositories.GroupActivityRepository
 }
@@ -54,9 +51,6 @@ func buildRepositories(db *mongo.Database, cassandra *cassdb.CassandraClient) re
 		Story:            repositories.NewStoryRepository(db),
 		Reel:             repositories.NewReelRepository(db),
 		Marketplace:      repositories.NewMarketplaceRepository(db),
-		Event:            repositories.NewEventRepository(db),
-		EventInvitation:  repositories.NewEventInvitationRepository(db),
-		EventPost:        repositories.NewEventPostRepository(db),
 		MessageCassandra: repositories.NewMessageCassandraRepository(cassandra),
 		GroupActivity:    repositories.NewGroupActivityRepository(cassandra),
 	}
@@ -64,7 +58,6 @@ func buildRepositories(db *mongo.Database, cassandra *cassdb.CassandraClient) re
 
 type graphBundle struct {
 	UserGraph  *repositories.UserGraphRepository
-	EventGraph *repositories.EventGraphRepository
 	GroupGraph *repositories.GroupGraphRepository
 }
 
@@ -74,7 +67,6 @@ func buildGraphRepositories(neo4jClient *graph.Neo4jClient) graphBundle {
 	}
 	return graphBundle{
 		UserGraph:  repositories.NewUserGraphRepository(neo4jClient.Driver),
-		EventGraph: repositories.NewEventGraphRepository(neo4jClient.Driver),
 		GroupGraph: repositories.NewGroupGraphRepository(neo4jClient.Driver),
 	}
 }
@@ -105,8 +97,8 @@ type serviceBundle struct {
 	Story               *services.StoryService
 	Reel                *services.ReelService
 	Marketplace         *services.MarketplaceService
-	Event               *services.EventService
-	EventRecommendation *services.EventRecommendationService
+	Event               services.EventServiceContract
+	EventRecommendation services.EventRecommendationServiceContract
 	EventCache          *cache.EventCache
 	Cleanup             *services.CleanupService
 }
@@ -131,9 +123,9 @@ func (a *Application) buildBaseServices(repos repositoryBundle, graphs graphBund
 	}
 
 	feedService := services.NewFeedService(repos.Feed, repos.User, repos.Friendship, repos.Community, repos.Privacy, a.kafkaProducer, notificationService, storageService)
-	userService := services.NewUserService(repos.User, repos.Reel, a.redisClient.GetClient(), feedService)
+	userService := services.NewUserService(repos.User, repos.Reel, a.redisClient.GetClient(), feedService, a.userKafkaProducer)
 	groupService := services.NewGroupService(repos.Group, repos.User, repos.GroupActivity, a.cassandra, a.kafkaProducer, a.redisClient.GetClient(), graphs.GroupGraph)
-	friendshipService := services.NewFriendshipService(repos.Friendship, repos.User, graphs.UserGraph)
+	friendshipService := services.NewFriendshipService(repos.Friendship, repos.User, graphs.UserGraph, a.friendshipKafkaProducer)
 	messageService := services.NewMessageService(repos.Message, repos.Group, repos.Friendship, a.kafkaProducer, a.redisClient.GetClient(), repos.User, notificationService, repos.MessageCassandra, repos.GroupActivity)
 	privacyService := services.NewPrivacyService(repos.Privacy, repos.User)
 	searchService := services.NewSearchService(repos.User, repos.Feed, repos.Friendship)

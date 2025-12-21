@@ -1,7 +1,13 @@
-.PHONY: build test deploy
+.PHONY: build build-events docker-build-events test deploy
 
 build:
 	docker-compose build
+
+build-events:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/events ./cmd/events
+
+docker-build-events:
+	docker build -f Dockerfile.events -t messaging-events-service:latest .
 
 up:
 	chmod 400 docker/mongodb/mongodb-keyfile

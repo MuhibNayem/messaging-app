@@ -9,14 +9,15 @@ import (
 	"messaging-app/config"
 	cassdb "messaging-app/internal/db"
 	"messaging-app/internal/graph"
-	"messaging-app/internal/redis"
+
+	"gitlab.com/spydotech-group/shared-entity/redis"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func initMongo(ctx context.Context, cfg *config.Config) (*mongo.Client, *mongo.Database, error) {
+func InitMongo(ctx context.Context, cfg *config.Config) (*mongo.Client, *mongo.Database, error) {
 	clientOptions := options.Client().
 		ApplyURI(cfg.MongoURI).
 		SetAuth(options.Credential{
@@ -32,25 +33,39 @@ func initMongo(ctx context.Context, cfg *config.Config) (*mongo.Client, *mongo.D
 	}
 
 	db := mongoClient.Database(cfg.DBName)
-	if err := createIndexes(context.Background(), db); err != nil {
+	if err := CreateIndexes(context.Background(), db); err != nil {
 		_ = mongoClient.Disconnect(context.Background())
 		return nil, nil, fmt.Errorf("failed to create MongoDB indexes: %w", err)
 	}
 	return mongoClient, db, nil
 }
 
-func initRedis(cfg *config.Config) (*redis.ClusterClient, error) {
-	redisClient := redis.NewClusterClient(cfg)
+func InitRedis(cfg *config.Config) (*redis.ClusterClient, error) {
+	redisConfig := redis.Config{
+		RedisURLs: cfg.RedisURLs,
+		RedisPass: cfg.RedisPass,
+	}
+	redisClient := redis.NewClusterClient(redisConfig)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	if !redisClient.IsAvailable(ctx) {
-		return nil, fmt.Errorf("failed to connect to Redis cluster")
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("failed to connect to Redis cluster within 60s")
+		case <-ticker.C:
+			if redisClient.IsAvailable(ctx) {
+				return redisClient, nil
+			}
+			log.Println("Waiting for Redis cluster to be ready...")
+		}
 	}
-	return redisClient, nil
 }
 
-func initNeo4j(cfg *config.Config) (*graph.Neo4jClient, error) {
+func InitNeo4j(cfg *config.Config) (*graph.Neo4jClient, error) {
 	client, err := graph.NewNeo4jClient(cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword)
 	if err != nil {
 		return nil, err
@@ -58,7 +73,7 @@ func initNeo4j(cfg *config.Config) (*graph.Neo4jClient, error) {
 	return client, nil
 }
 
-func initCassandra(cfg *config.Config) (*cassdb.CassandraClient, error) {
+func InitCassandra(cfg *config.Config) (*cassdb.CassandraClient, error) {
 	client, err := cassdb.NewCassandraClient(cfg.CassandraHosts, cfg.CassandraKeyspace, cfg.CassandraUser, cfg.CassandraPassword)
 	if err != nil {
 		return nil, err
@@ -66,7 +81,7 @@ func initCassandra(cfg *config.Config) (*cassdb.CassandraClient, error) {
 	return client, nil
 }
 
-func createIndexes(ctx context.Context, db *mongo.Database) error {
+func CreateIndexes(ctx context.Context, db *mongo.Database) error {
 	log.Println("Creating MongoDB text indexes...")
 
 	userIndexModel := mongo.IndexModel{

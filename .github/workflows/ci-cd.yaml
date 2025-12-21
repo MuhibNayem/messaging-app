@@ -20,6 +20,8 @@ jobs:
         go test -v -race ./...
         go vet ./...
         staticcheck ./...
+        go test ./internal/realtime
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/events
 
   build:
     needs: test
@@ -28,6 +30,8 @@ jobs:
     - uses: actions/checkout@v2
     - name: Build Docker image
       run: docker build -t messaging-app:latest .
+    - name: Build Events Docker image
+      run: docker build -f Dockerfile.events -t messaging-events-service:latest .
     - name: Log in to Docker Hub
       uses: docker/login-action@v1
       with:
@@ -37,6 +41,8 @@ jobs:
       run: |
         docker tag messaging-app:latest ${{ secrets.DOCKER_HUB_USERNAME }}/messaging-app:latest
         docker push ${{ secrets.DOCKER_HUB_USERNAME }}/messaging-app:latest
+        docker tag messaging-events-service:latest ${{ secrets.DOCKER_HUB_USERNAME }}/messaging-events-service:latest
+        docker push ${{ secrets.DOCKER_HUB_USERNAME }}/messaging-events-service:latest
 
   deploy:
     needs: build

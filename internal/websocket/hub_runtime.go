@@ -7,8 +7,8 @@ import (
 	"log"
 	"time"
 
-	"messaging-app/internal/models"
-	"messaging-app/pkg/utils"
+	"gitlab.com/spydotech-group/shared-entity/models"
+	"gitlab.com/spydotech-group/shared-entity/utils"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )

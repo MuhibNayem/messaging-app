@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"messaging-app/internal/models"
-	"messaging-app/internal/redis"
+	"gitlab.com/spydotech-group/shared-entity/models"
+	"gitlab.com/spydotech-group/shared-entity/redis"
 )
 
 // MessageCache handles storing and retrieving messages and pending queues.

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"messaging-app/internal/db"
 	"messaging-app/internal/kafka"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/repositories"
 	"time"
 

@@ -4,20 +4,21 @@ import (
 	"net/http"
 	"strconv"
 
-	"messaging-app/internal/models"
 	"messaging-app/internal/services"
-	"messaging-app/pkg/utils"
+
+	"gitlab.com/spydotech-group/shared-entity/models"
+	"gitlab.com/spydotech-group/shared-entity/utils"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type EventController struct {
-	eventService          *services.EventService
-	recommendationService *services.EventRecommendationService
+	eventService          services.EventServiceContract
+	recommendationService services.EventRecommendationServiceContract
 }
 
-func NewEventController(eventService *services.EventService, recommendationService *services.EventRecommendationService) *EventController {
+func NewEventController(eventService services.EventServiceContract, recommendationService services.EventRecommendationServiceContract) *EventController {
 	return &EventController{
 		eventService:          eventService,
 		recommendationService: recommendationService,

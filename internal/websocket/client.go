@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 
 	"github.com/gorilla/websocket"
 )

@@ -3,7 +3,7 @@ package controllers
 import (
 	"errors"
 	"log"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/services"
 	"net/http"
 	"strconv"

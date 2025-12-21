@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"messaging-app/internal/models"
+	"messaging-app/internal/kafka"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/repositories"
+	"gitlab.com/spydotech-group/shared-entity/events"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	kafkago "github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -18,17 +21,28 @@ import (
 )
 
 type UserService struct {
-	userRepo    *repositories.UserRepository
-	reelRepo    *repositories.ReelRepository
-	redisClient *redis.ClusterClient
-	feedService *FeedService
+	userRepo      *repositories.UserRepository
+	reelRepo      *repositories.ReelRepository
+	redisClient   *redis.ClusterClient
+	feedService   *FeedService
+	kafkaProducer *kafka.MessageProducer
 }
 
-func NewUserService(userRepo *repositories.UserRepository, reelRepo *repositories.ReelRepository, redisClient *redis.ClusterClient, feedService *FeedService) *UserService {
-	return &UserService{userRepo: userRepo, reelRepo: reelRepo, redisClient: redisClient, feedService: feedService}
+func NewUserService(userRepo *repositories.UserRepository, reelRepo *repositories.ReelRepository, redisClient *redis.ClusterClient, feedService *FeedService, kafkaProducer *kafka.MessageProducer) *UserService {
+	return &UserService{userRepo: userRepo, reelRepo: reelRepo, redisClient: redisClient, feedService: feedService, kafkaProducer: kafkaProducer}
+}
+
+// UserUpdatedEvent represents a user profile update event
+type UserUpdatedEvent struct {
+	UserID      string     `json:"user_id"`
+	Username    string     `json:"username"`
+	FullName    string     `json:"full_name"`
+	Avatar      string     `json:"avatar"`
+	DateOfBirth *time.Time `json:"date_of_birth,omitempty"`
 }
 
 func (s *UserService) GetUserStatus(ctx context.Context, userID primitive.ObjectID) (map[string]interface{}, error) {
+	// ... existing GetUserStatus implementation ...
 	key := fmt.Sprintf("presence:%s", userID.Hex())
 	val, err := s.redisClient.Get(ctx, key).Result()
 	if err != nil {
@@ -162,6 +176,33 @@ func (s *UserService) UpdateUser(ctx context.Context, id primitive.ObjectID, upd
 	updatedUser, err := s.userRepo.UpdateUser(ctx, id, updateData)
 	if err != nil {
 		return nil, err
+	}
+
+	// Publish UserUpdated event
+	if s.kafkaProducer != nil {
+		event := events.UserUpdatedEvent{
+			UserID:      updatedUser.ID.Hex(),
+			Username:    updatedUser.Username,
+			FullName:    updatedUser.FullName,
+			Avatar:      updatedUser.Avatar,
+			DateOfBirth: updatedUser.DateOfBirth,
+		}
+
+		eventBytes, err := json.Marshal(event)
+		if err != nil {
+			log.Printf("Failed to marshal UserUpdatedEvent: %v", err)
+		} else {
+			kafkaMsg := kafkago.Message{
+				Key:   []byte(updatedUser.ID.Hex()),
+				Value: eventBytes,
+				Time:  time.Now(),
+			}
+			if err := s.kafkaProducer.ProduceMessage(ctx, kafkaMsg); err != nil {
+				log.Printf("Failed to produce UserUpdatedEvent: %v", err)
+			} else {
+				log.Printf("Published UserUpdatedEvent for user %s", updatedUser.ID.Hex())
+			}
+		}
 	}
 
 	// Clear password before returning

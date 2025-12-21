@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"messaging-app/pkg/utils"
+	"gitlab.com/spydotech-group/shared-entity/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"

@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package realtime.v1;
+
+option go_package = "github.com/connectify/shared/proto/realtime/v1;realtimepb";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+message RSVPStats {
+  int64 going_count = 1;
+  int64 interested_count = 2;
+  int64 invited_count = 3;
+}
+
+message ReportRSVPEventRequest {
+  string event_id = 1;
+  string user_id = 2;
+  string status = 3;
+  google.protobuf.Timestamp timestamp = 4;
+  RSVPStats stats = 5;
+}
+
+service RealtimeService {
+  rpc ReportRSVPEvent(ReportRSVPEventRequest) returns (google.protobuf.Empty);
+}

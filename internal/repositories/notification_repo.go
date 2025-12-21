@@ -2,7 +2,7 @@ package repositories
 
 import (
 	"context"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -42,7 +42,19 @@ func (r *NotificationRepository) CreateNotification(ctx context.Context, notific
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	notification.CreatedAt = time.Now()
+	if notification.CreatedAt.IsZero() {
+		notification.CreatedAt = time.Now()
+	}
+
+	if !notification.ID.IsZero() {
+		opts := options.Replace().SetUpsert(true)
+		_, err := r.db.Collection("notifications").ReplaceOne(ctx, bson.M{"_id": notification.ID}, notification, opts)
+		if err != nil {
+			return nil, err
+		}
+		return notification, nil
+	}
+
 	result, err := r.db.Collection("notifications").InsertOne(ctx, notification)
 	if err != nil {
 		return nil, err

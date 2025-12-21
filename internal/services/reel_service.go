@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/repositories"
 	"regexp"
 	"time"

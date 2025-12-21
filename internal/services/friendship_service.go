@@ -2,12 +2,17 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"messaging-app/internal/models"
+	"messaging-app/internal/kafka"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/repositories"
+	"gitlab.com/spydotech-group/shared-entity/events"
+	"time"
 
+	kafkalib "github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -15,13 +20,45 @@ type FriendshipService struct {
 	friendshipRepo *repositories.FriendshipRepository
 	userRepo       *repositories.UserRepository
 	userGraphRepo  *repositories.UserGraphRepository
+	kafkaProducer  *kafka.MessageProducer
 }
 
-func NewFriendshipService(fr *repositories.FriendshipRepository, ur *repositories.UserRepository, ugr *repositories.UserGraphRepository) *FriendshipService {
+func NewFriendshipService(fr *repositories.FriendshipRepository, ur *repositories.UserRepository, ugr *repositories.UserGraphRepository, kp *kafka.MessageProducer) *FriendshipService {
 	return &FriendshipService{
 		friendshipRepo: fr,
 		userRepo:       ur,
 		userGraphRepo:  ugr,
+		kafkaProducer:  kp,
+	}
+}
+
+func (s *FriendshipService) publishEvent(ctx context.Context, requesterID, receiverID string, status, action string) {
+	if s.kafkaProducer == nil {
+		return
+	}
+	event := events.FriendshipEvent{
+		RequesterID: requesterID,
+		ReceiverID:  receiverID,
+		Status:      status,
+		Action:      action,
+		Timestamp:   time.Now(),
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("Failed to marshal friendship event: %v", err)
+		return
+	}
+
+	// Use RequesterID as key to partition
+	msg := kafkalib.Message{
+		Key:   []byte(requesterID),
+		Value: payload,
+		Time:  time.Now(),
+	}
+
+	if err := s.kafkaProducer.ProduceMessage(ctx, msg); err != nil {
+		log.Printf("Failed to publish friendship event: %v", err)
 	}
 }
 
@@ -57,6 +94,9 @@ func (s *FriendshipService) SendRequest(ctx context.Context, requesterID, receiv
 			// For now, log error is safe.
 		}
 	}
+
+	// Event: Publish Request Sent
+	go s.publishEvent(context.Background(), requesterID.Hex(), receiverID.Hex(), "pending", "request")
 
 	return friendship, nil
 }
@@ -102,6 +142,15 @@ func (s *FriendshipService) RespondToRequest(ctx context.Context, friendshipID p
 		}
 	}
 
+	// Event: Publish Status Change
+	action := "reject"
+	statusStr := "rejected"
+	if accept {
+		action = "accept"
+		statusStr = "accepted"
+	}
+	go s.publishEvent(context.Background(), targetRequest.RequesterID.Hex(), targetRequest.ReceiverID.Hex(), statusStr, action)
+
 	return nil
 }
 
@@ -135,6 +184,10 @@ func (s *FriendshipService) Unfriend(ctx context.Context, userID, friendID primi
 	if s.userGraphRepo != nil {
 		return s.userGraphRepo.Unfriend(ctx, userID, friendID)
 	}
+
+	// Event: Publish Unfriend
+	go s.publishEvent(context.Background(), userID.Hex(), friendID.Hex(), "removed", "remove")
+
 	return nil
 }
 
@@ -151,6 +204,10 @@ func (s *FriendshipService) BlockUser(ctx context.Context, blockerID, blockedID 
 	if s.userGraphRepo != nil {
 		return s.userGraphRepo.BlockUser(ctx, blockerID, blockedID)
 	}
+
+	// Event: Publish Block
+	go s.publishEvent(context.Background(), blockerID.Hex(), blockedID.Hex(), "blocked", "block")
+
 	return nil
 }
 
@@ -163,6 +220,10 @@ func (s *FriendshipService) UnblockUser(ctx context.Context, blockerID, blockedI
 	if s.userGraphRepo != nil {
 		return s.userGraphRepo.UnblockUser(ctx, blockerID, blockedID)
 	}
+
+	// Event: Publish Unblock
+	go s.publishEvent(context.Background(), blockerID.Hex(), blockedID.Hex(), "unblocked", "unblock")
+
 	return nil
 }
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"messaging-app/internal/models"
-	"messaging-app/internal/redis"
+	"gitlab.com/spydotech-group/shared-entity/models"
+	"gitlab.com/spydotech-group/shared-entity/redis"
 	"messaging-app/internal/repositories"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"

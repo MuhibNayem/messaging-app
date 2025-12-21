@@ -3,7 +3,7 @@ package integration
 import (
 	"context"
 	"messaging-app/config"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"messaging-app/internal/repositories"
 	"messaging-app/internal/services"
 	"os"

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"messaging-app/internal/models"
-	"messaging-app/internal/redis"
+	"gitlab.com/spydotech-group/shared-entity/models"
+	"gitlab.com/spydotech-group/shared-entity/redis"
 )
 
 // EventCache provides caching for event-related data
@@ -48,6 +48,10 @@ func friendsGoingKey(userID, eventID string) string {
 
 func trendingEventsKey() string {
 	return "events:trending"
+}
+
+func categoriesKey() string {
+	return "events:categories"
 }
 
 // EventStats represents cached event statistics
@@ -212,4 +216,34 @@ func (c *EventCache) SetTrendingEvents(ctx context.Context, eventIDs []string) e
 	}
 
 	return c.client.Set(ctx, trendingEventsKey(), data, TrendingEventsTTL)
+}
+
+// GetCategories returns cached event categories.
+func (c *EventCache) GetCategories(ctx context.Context) ([]models.EventCategory, error) {
+	if c == nil {
+		return nil, nil
+	}
+
+	data, err := c.client.Get(ctx, categoriesKey())
+	if err != nil || data == "" {
+		return nil, nil
+	}
+
+	var categories []models.EventCategory
+	if err := json.Unmarshal([]byte(data), &categories); err != nil {
+		return nil, err
+	}
+	return categories, nil
+}
+
+// SetCategories caches event categories with counts.
+func (c *EventCache) SetCategories(ctx context.Context, categories []models.EventCategory) error {
+	if c == nil {
+		return nil
+	}
+	data, err := json.Marshal(categories)
+	if err != nil {
+		return err
+	}
+	return c.client.Set(ctx, categoriesKey(), data, EventCategoriesTTL)
 }

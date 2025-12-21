@@ -14,15 +14,19 @@ import (
 
 	"messaging-app/config"
 	cassdb "messaging-app/internal/db"
+	"messaging-app/internal/eventsclient"
 	"messaging-app/internal/graph"
 	"messaging-app/internal/kafka"
-	"messaging-app/internal/models"
-	"messaging-app/internal/redis"
+	"messaging-app/internal/realtime"
+	"gitlab.com/spydotech-group/shared-entity/redis"
 	"messaging-app/internal/services"
 	"messaging-app/internal/websocket"
+	pkgkafka "gitlab.com/spydotech-group/shared-entity/kafka"
+	realtimepb "gitlab.com/spydotech-group/shared-entity/proto/realtime/v1"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/mongo"
+	"google.golang.org/grpc"
 )
 
 type Application struct {
@@ -38,20 +42,25 @@ type Application struct {
 	neo4jClient *graph.Neo4jClient
 	cassandra   *cassdb.CassandraClient
 
-	kafkaProducer          *kafka.MessageProducer
-	kafkaConsumer          *kafka.MessageConsumer
-	notificationConsumer   *kafka.NotificationConsumer
-	messageArchiveService  *services.MessageArchiveService
-	cleanupService         *services.CleanupService
-	hub                    *websocket.Hub
-	eventBroadcaster       *HubEventBroadcaster
-	mainRouter             *gin.Engine
-	websocketRouter        *gin.Engine
-	httpServer             *http.Server
-	wsServer               *http.Server
-	metricsServer          *http.Server
-	backgroundWorkers      []func()
-	backgroundWorkerCancel context.CancelFunc
+	kafkaProducer           *kafka.MessageProducer
+	userKafkaProducer       *kafka.MessageProducer
+	friendshipKafkaProducer *kafka.MessageProducer
+	dlqProducer             *pkgkafka.DLQProducer
+	kafkaConsumer           *kafka.MessageConsumer
+	notificationConsumer    *kafka.NotificationConsumer
+	eventsClient            *eventsclient.Client
+	messageArchiveService   *services.MessageArchiveService
+	cleanupService          *services.CleanupService
+	hub                     *websocket.Hub
+	mainRouter              *gin.Engine
+	websocketRouter         *gin.Engine
+	httpServer              *http.Server
+	wsServer                *http.Server
+	metricsServer           *http.Server
+	realtimeServer          *grpc.Server
+	realtimeListener        net.Listener
+	backgroundWorkers       []func()
+	backgroundWorkerCancel  context.CancelFunc
 
 	shutdownOnce sync.Once
 }
@@ -78,7 +87,7 @@ func (a *Application) Run() error {
 
 	a.startBackgroundWorkers()
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 	startServer := func(srv *http.Server, name string) {
 		go func() {
 			log.Printf("%s starting on %s", name, srv.Addr)
@@ -91,6 +100,14 @@ func (a *Application) Run() error {
 	startServer(a.httpServer, "HTTP server")
 	startServer(a.wsServer, "WebSocket server")
 	startServer(a.metricsServer, "Metrics server")
+	if a.realtimeServer != nil && a.realtimeListener != nil {
+		go func() {
+			log.Printf("Realtime gRPC server starting on %s", a.realtimeListener.Addr())
+			if err := a.realtimeServer.Serve(a.realtimeListener); err != nil {
+				errCh <- fmt.Errorf("Realtime gRPC server failed: %w", err)
+			}
+		}()
+	}
 
 	select {
 	case <-quit:
@@ -126,6 +143,12 @@ func (a *Application) Shutdown() error {
 			log.Printf("Metrics server shutdown error: %v", err)
 			shutdownErr = err
 		}
+		if a.realtimeServer != nil {
+			a.realtimeServer.GracefulStop()
+		}
+		if a.realtimeListener != nil {
+			_ = a.realtimeListener.Close()
+		}
 
 		a.Close()
 	})
@@ -141,6 +164,18 @@ func (a *Application) Close() {
 	}
 	if a.kafkaProducer != nil {
 		_ = a.kafkaProducer.Close()
+	}
+	if a.userKafkaProducer != nil {
+		_ = a.userKafkaProducer.Close()
+	}
+	if a.friendshipKafkaProducer != nil {
+		_ = a.friendshipKafkaProducer.Close()
+	}
+	if a.dlqProducer != nil {
+		a.dlqProducer.Close()
+	}
+	if a.eventsClient != nil {
+		_ = a.eventsClient.Close()
 	}
 	if a.neo4jClient != nil {
 		_ = a.neo4jClient.Close(context.Background())
@@ -158,27 +193,30 @@ func (a *Application) Close() {
 
 func (a *Application) bootstrap() error {
 	var err error
-	a.mongoClient, a.db, err = initMongo(a.ctx, a.cfg)
+	a.mongoClient, a.db, err = InitMongo(a.ctx, a.cfg)
 	if err != nil {
 		return err
 	}
 
-	a.redisClient, err = initRedis(a.cfg)
+	a.redisClient, err = InitRedis(a.cfg)
 	if err != nil {
 		return err
 	}
 
-	a.neo4jClient, err = initNeo4j(a.cfg)
+	a.neo4jClient, err = InitNeo4j(a.cfg)
 	if err != nil {
 		log.Printf("Warning: Failed to connect to Neo4j: %v", err)
 	}
 
-	a.cassandra, err = initCassandra(a.cfg)
+	a.cassandra, err = InitCassandra(a.cfg)
 	if err != nil {
 		log.Printf("Warning: Failed to connect to Cassandra: %v", err)
 	}
 
 	a.kafkaProducer = kafka.NewMessageProducer(a.cfg.KafkaBrokers, a.cfg.KafkaTopic)
+	a.userKafkaProducer = kafka.NewMessageProducer(a.cfg.KafkaBrokers, "user-events")
+	a.friendshipKafkaProducer = kafka.NewMessageProducer(a.cfg.KafkaBrokers, "friendship-events")
+	a.dlqProducer = pkgkafka.NewDLQProducer(a.cfg.KafkaBrokers)
 
 	if err := a.initDomain(); err != nil {
 		return err
@@ -199,30 +237,19 @@ func (a *Application) initDomain() error {
 	a.cleanupService = servicesBundle.Cleanup
 
 	a.hub = websocket.NewHub(a.redisClient, repos.Group, repos.Feed, repos.User, repos.Friendship, repos.Message, repos.MessageCassandra, servicesBundle.Message)
-	a.eventBroadcaster = &HubEventBroadcaster{hub: a.hub}
 
-	servicesBundle.Event = services.NewEventService(
-		repos.Event,
-		repos.User,
-		graphs.EventGraph,
-		repos.EventInvitation,
-		repos.EventPost,
-		repos.Notification,
-		servicesBundle.EventCache,
-		a.eventBroadcaster,
-	)
-	servicesBundle.EventRecommendation = services.NewEventRecommendationService(
-		repos.Event,
-		graphs.EventGraph,
-		repos.User,
-		repos.Friendship,
-		servicesBundle.EventCache,
-	)
+	client, err := eventsclient.New(a.ctx, a.cfg)
+	if err != nil {
+		return fmt.Errorf("failed to connect to events service: %w", err)
+	}
+	a.eventsClient = client
+	servicesBundle.Event = client
+	servicesBundle.EventRecommendation = client
 
 	controllerConfig := buildControllers(a.cfg, servicesBundle)
 
 	a.kafkaConsumer = kafka.NewMessageConsumer(a.cfg.KafkaBrokers, a.cfg.KafkaTopic, "message-group", a.hub)
-	a.notificationConsumer = kafka.NewNotificationConsumer(a.cfg.KafkaBrokers, "notifications_events", "notification-group", a.hub)
+	a.notificationConsumer = kafka.NewNotificationConsumer(a.cfg.KafkaBrokers, "notifications_events", "notification-group", a.hub, repos.Notification, a.dlqProducer)
 
 	a.mainRouter, a.websocketRouter = a.buildRouters(controllerConfig)
 
@@ -241,6 +268,23 @@ func (a *Application) initDomain() error {
 		Addr:    net.JoinHostPort("", a.cfg.PrometheusPort),
 		Handler: metricsMux,
 	}
+	if err := a.initRealtimeServer(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *Application) initRealtimeServer() error {
+	if a.hub == nil {
+		return fmt.Errorf("hub is not initialized")
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort("", a.cfg.RealtimeGRPCPort))
+	if err != nil {
+		return fmt.Errorf("failed to bind realtime gRPC listener: %w", err)
+	}
+	a.realtimeListener = listener
+	a.realtimeServer = grpc.NewServer()
+	realtimepb.RegisterRealtimeServiceServer(a.realtimeServer, realtime.NewServer(a.hub))
 	return nil
 }
 
@@ -254,15 +298,4 @@ func (a *Application) startBackgroundWorkers() {
 	go a.kafkaConsumer.ConsumeMessages(ctx)
 	go a.notificationConsumer.Start(ctx)
 	go a.cleanupService.StartCleanupWorker(ctx)
-}
-
-type HubEventBroadcaster struct {
-	hub *websocket.Hub
-}
-
-func (h *HubEventBroadcaster) BroadcastRSVP(event models.EventRSVPEvent) {
-	select {
-	case h.hub.EventRSVPEvents <- event:
-	default:
-	}
 }

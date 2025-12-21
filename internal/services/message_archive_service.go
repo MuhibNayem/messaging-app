@@ -7,7 +7,7 @@ import (
 	"log"
 	"messaging-app/config"
 	cassdb "messaging-app/internal/db"
-	redisclient "messaging-app/internal/redis"
+	redisclient "gitlab.com/spydotech-group/shared-entity/redis"
 	"messaging-app/internal/repositories"
 	"time"
 

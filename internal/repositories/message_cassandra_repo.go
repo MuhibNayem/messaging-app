@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"messaging-app/internal/db"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	"sort"
 	"strings"
 	"time"

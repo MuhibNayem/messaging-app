@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"messaging-app/internal/kafka"
-	"messaging-app/internal/models"
+	"gitlab.com/spydotech-group/shared-entity/models"
 	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/repositories"
-	"messaging-app/pkg/utils"
+	"gitlab.com/spydotech-group/shared-entity/utils"
 	"strings"
 	"time"
 

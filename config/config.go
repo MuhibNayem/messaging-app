@@ -11,29 +11,34 @@ import (
 )
 
 type Config struct {
-	MongoURI         string
-	MongoUser        string
-	MongoPassword    string
-	DBName           string
-	KafkaBrokers     []string
-	JWTSecret        string
-	ServerPort       string
-	KafkaTopic       string
-	WebSocketPort    string
-	RedisURLs        []string
-	RedisPass        string
-	AccessTokenTTL   time.Duration
-	RefreshTokenTTL  time.Duration
-	PrometheusPort   string
-	RateLimitEnabled bool
-	RateLimitLimit   float64
-	RateLimitBurst   int
-	StorageEndpoint  string
-	StorageAccessKey string
-	StorageSecretKey string
-	StorageBucket    string
-	StorageUseSSL    bool
-	StoragePublicURL string
+	MongoURI          string
+	MongoUser         string
+	MongoPassword     string
+	DBName            string
+	KafkaBrokers      []string
+	JWTSecret         string
+	ServerPort        string
+	KafkaTopic        string
+	WebSocketPort     string
+	RedisURLs         []string
+	RedisPass         string
+	AccessTokenTTL    time.Duration
+	RefreshTokenTTL   time.Duration
+	PrometheusPort    string
+	RateLimitEnabled  bool
+	RateLimitLimit    float64
+	RateLimitBurst    int
+	StorageEndpoint   string
+	StorageAccessKey  string
+	StorageSecretKey  string
+	StorageBucket     string
+	StorageUseSSL     bool
+	StoragePublicURL  string
+	EventsGRPCPort    string
+	EventsGRPCHost    string
+	EventsMetricsPort string
+	RealtimeGRPCPort  string
+	RealtimeGRPCHost  string
 
 	CORSAllowedOrigins []string
 	RefreshCookieName  string
@@ -74,6 +79,11 @@ func LoadConfig() *Config {
 		corsOrigins[i] = strings.TrimSpace(corsOrigins[i])
 	}
 	cookieSecure, _ := strconv.ParseBool(getEnv("COOKIE_SECURE", "false"))
+	eventsGRPCPort := getEnv("EVENTS_GRPC_PORT", "9096")
+	eventsGRPCHost := getEnv("EVENTS_GRPC_HOST", "localhost")
+	eventsMetricsPort := getEnv("EVENTS_METRICS_PORT", "9100")
+	realtimeGRPCPort := getEnv("REALTIME_GRPC_PORT", "9097")
+	realtimeGRPCHost := getEnv("REALTIME_GRPC_HOST", "localhost")
 
 	return &Config{
 		MongoURI:           getEnv("MONGO_URI", "mongodb://localhost:27017"),
@@ -99,6 +109,11 @@ func LoadConfig() *Config {
 		StorageBucket:      getEnv("STORAGE_BUCKET", "connectify-uploads"),
 		StorageUseSSL:      storageUseSSL,
 		StoragePublicURL:   getEnv("STORAGE_PUBLIC_URL", "http://localhost:9000"),
+		EventsGRPCPort:     eventsGRPCPort,
+		EventsGRPCHost:     eventsGRPCHost,
+		EventsMetricsPort:  eventsMetricsPort,
+		RealtimeGRPCPort:   realtimeGRPCPort,
+		RealtimeGRPCHost:   realtimeGRPCHost,
 		CORSAllowedOrigins: corsOrigins,
 		RefreshCookieName:  getEnv("REFRESH_COOKIE_NAME", "connectify_refresh"),
 		CookieDomain:       getEnv("COOKIE_DOMAIN", ""),

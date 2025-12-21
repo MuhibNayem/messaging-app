@@ -1,0 +1,360 @@
+syntax = "proto3";
+
+package events.v1;
+
+option go_package = "github.com/connectify/shared/proto/events/v1;eventspb";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+message UserShort {
+  string id = 1;
+  string username = 2;
+  string full_name = 3;
+  string avatar = 4;
+}
+
+message EventStats {
+  int64 going_count = 1;
+  int64 interested_count = 2;
+  int64 invited_count = 3;
+  int64 share_count = 4;
+}
+
+message EventAttendee {
+  string user_id = 1;
+  string status = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  bool is_cohost = 4;
+}
+
+message Event {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  google.protobuf.Timestamp start_date = 4;
+  google.protobuf.Timestamp end_date = 5;
+  string location = 6;
+  bool is_online = 7;
+  string privacy = 8;
+  string category = 9;
+  string cover_image = 10;
+  EventStats stats = 11;
+  string creator_id = 12;
+  repeated EventAttendee attendees = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+  UserShort creator = 16;
+  string my_status = 17;
+  bool is_host = 18;
+  repeated UserShort friends_going = 19;
+}
+
+message EventInput {
+  string title = 1;
+  string description = 2;
+  google.protobuf.Timestamp start_date = 3;
+  google.protobuf.Timestamp end_date = 4;
+  string location = 5;
+  optional bool is_online = 6;
+  string privacy = 7;
+  string category = 8;
+  string cover_image = 9;
+}
+
+message CreateEventRequest {
+  string user_id = 1;
+  EventInput event = 2;
+}
+
+message EventResponse {
+  Event event = 1;
+}
+
+message GetEventRequest {
+  string event_id = 1;
+  string viewer_id = 2;
+}
+
+message UpdateEventRequest {
+  string user_id = 1;
+  string event_id = 2;
+  EventInput event = 3;
+}
+
+message DeleteEventRequest {
+  string user_id = 1;
+  string event_id = 2;
+}
+
+message ListEventsRequest {
+  string user_id = 1;
+  int64 limit = 2;
+  int64 page = 3;
+  string query = 4;
+  string category = 5;
+  string period = 6;
+}
+
+message ListEventsResponse {
+  repeated Event events = 1;
+  int64 total = 2;
+  int64 page = 3;
+  int64 limit = 4;
+}
+
+message GetMyEventsRequest {
+  string user_id = 1;
+  int64 limit = 2;
+  int64 page = 3;
+}
+
+message RSVPRequest {
+  string user_id = 1;
+  string event_id = 2;
+  string status = 3;
+}
+
+message GetBirthdaysRequest {
+  string user_id = 1;
+}
+
+message BirthdaysResponse {
+  repeated BirthdayUser today = 1;
+  repeated BirthdayUser upcoming = 2;
+}
+
+message BirthdayUser {
+  string id = 1;
+  string username = 2;
+  string full_name = 3;
+  string avatar = 4;
+  int32 age = 5;
+  string date = 6;
+}
+
+message InviteFriendsRequest {
+  string user_id = 1;
+  string event_id = 2;
+  repeated string friend_ids = 3;
+  string message = 4;
+}
+
+message GetInvitationsRequest {
+  string user_id = 1;
+  int64 limit = 2;
+  int64 page = 3;
+}
+
+message EventShort {
+  string id = 1;
+  string title = 2;
+  string cover_image = 3;
+  google.protobuf.Timestamp start_date = 4;
+  string location = 5;
+}
+
+message Invitation {
+  string id = 1;
+  EventShort event = 2;
+  UserShort inviter = 3;
+  string status = 4;
+  string message = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message GetInvitationsResponse {
+  repeated Invitation invitations = 1;
+  int64 total = 2;
+  int64 page = 3;
+  int64 limit = 4;
+}
+
+message RespondToInvitationRequest {
+  string user_id = 1;
+  string invitation_id = 2;
+  bool accept = 3;
+}
+
+message EventPostReaction {
+  UserShort user = 1;
+  string emoji = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message EventPost {
+  string id = 1;
+  string event_id = 2;
+  string user_id = 3;
+  string content = 4;
+  repeated string media_urls = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  UserShort author = 8;
+  repeated EventPostReaction reactions = 9;
+}
+
+message CreatePostRequest {
+  string user_id = 1;
+  string event_id = 2;
+  string content = 3;
+  repeated string media_urls = 4;
+}
+
+message GetPostsRequest {
+  string event_id = 1;
+  int64 limit = 2;
+  int64 page = 3;
+}
+
+message GetPostsResponse {
+  repeated EventPost posts = 1;
+  int64 total = 2;
+  int64 page = 3;
+  int64 limit = 4;
+}
+
+message DeletePostRequest {
+  string user_id = 1;
+  string event_id = 2;
+  string post_id = 3;
+}
+
+message ReactToPostRequest {
+  string user_id = 1;
+  string event_id = 2;
+  string post_id = 3;
+  string reaction = 4;
+  bool remove = 5;
+}
+
+message GetAttendeesRequest {
+  string event_id = 1;
+  string status = 2;
+  int64 limit = 3;
+  int64 page = 4;
+}
+
+message EventAttendeeView {
+  UserShort user = 1;
+  string status = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  bool is_host = 4;
+  bool is_cohost = 5;
+}
+
+message GetAttendeesResponse {
+  repeated EventAttendeeView attendees = 1;
+  int64 total = 2;
+  int64 page = 3;
+  int64 limit = 4;
+}
+
+message CoHostRequest {
+  string user_id = 1;
+  string event_id = 2;
+  string target_user_id = 3;
+}
+
+message EventCategory {
+  string name = 1;
+  string icon = 2;
+  int64 count = 3;
+}
+
+message GetCategoriesResponse {
+  repeated EventCategory categories = 1;
+}
+
+message SearchEventsRequest {
+  string user_id = 1;
+  string query = 2;
+  string category = 3;
+  string timeframe = 4;
+  int64 limit = 5;
+  int64 page = 6;
+  string start_date = 7;
+  string end_date = 8;
+  double latitude = 9;
+  double longitude = 10;
+  double radius_km = 11;
+  optional bool is_online = 12;
+}
+
+message ShareEventRequest {
+  string user_id = 1;
+  string event_id = 2;
+}
+
+message NearbyEventsRequest {
+  double latitude = 1;
+  double longitude = 2;
+  double radius_km = 3;
+  int64 limit = 4;
+  int64 page = 5;
+  string user_id = 6;
+}
+
+message Recommendation {
+  Event event = 1;
+  repeated UserShort friends_going = 2;
+  string reason = 3;
+  double score = 4;
+}
+
+message RecommendationRequest {
+  string user_id = 1;
+  int32 limit = 2;
+}
+
+message RecommendationResponse {
+  repeated Recommendation recommendations = 1;
+}
+
+message TrendingEventsRequest {
+  int32 limit = 1;
+}
+
+message TrendingScore {
+  Event event = 1;
+  double score = 2;
+}
+
+message TrendingEventsResponse {
+  repeated TrendingScore trending = 1;
+}
+
+message ReportRSVPEventRequest {
+  string event_id = 1;
+  string user_id = 2;
+  string status = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+service EventsService {
+  rpc CreateEvent(CreateEventRequest) returns (EventResponse);
+  rpc GetEvent(GetEventRequest) returns (EventResponse);
+  rpc UpdateEvent(UpdateEventRequest) returns (EventResponse);
+  rpc DeleteEvent(DeleteEventRequest) returns (google.protobuf.Empty);
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  rpc GetMyEvents(GetMyEventsRequest) returns (ListEventsResponse);
+  rpc RSVP(RSVPRequest) returns (google.protobuf.Empty);
+  rpc GetBirthdays(GetBirthdaysRequest) returns (BirthdaysResponse);
+  rpc InviteFriends(InviteFriendsRequest) returns (google.protobuf.Empty);
+  rpc GetInvitations(GetInvitationsRequest) returns (GetInvitationsResponse);
+  rpc RespondToInvitation(RespondToInvitationRequest) returns (google.protobuf.Empty);
+  rpc CreatePost(CreatePostRequest) returns (EventPost);
+  rpc GetPosts(GetPostsRequest) returns (GetPostsResponse);
+  rpc DeletePost(DeletePostRequest) returns (google.protobuf.Empty);
+  rpc ReactToPost(ReactToPostRequest) returns (google.protobuf.Empty);
+  rpc GetAttendees(GetAttendeesRequest) returns (GetAttendeesResponse);
+  rpc AddCoHost(CoHostRequest) returns (google.protobuf.Empty);
+  rpc RemoveCoHost(CoHostRequest) returns (google.protobuf.Empty);
+  rpc GetCategories(google.protobuf.Empty) returns (GetCategoriesResponse);
+  rpc SearchEvents(SearchEventsRequest) returns (ListEventsResponse);
+  rpc ShareEvent(ShareEventRequest) returns (google.protobuf.Empty);
+  rpc GetNearbyEvents(NearbyEventsRequest) returns (ListEventsResponse);
+  rpc GetRecommendations(RecommendationRequest) returns (RecommendationResponse);
+  rpc GetTrending(TrendingEventsRequest) returns (TrendingEventsResponse);
+  rpc ReportRSVPEvent(ReportRSVPEventRequest) returns (google.protobuf.Empty);
+}
