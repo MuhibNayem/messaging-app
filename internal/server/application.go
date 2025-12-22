@@ -17,12 +17,14 @@ import (
 	"messaging-app/internal/eventsclient"
 	"messaging-app/internal/graph"
 	"messaging-app/internal/kafka"
+	"messaging-app/internal/marketplaceclient"
 	"messaging-app/internal/realtime"
-	"gitlab.com/spydotech-group/shared-entity/redis"
 	"messaging-app/internal/services"
 	"messaging-app/internal/websocket"
+
 	pkgkafka "gitlab.com/spydotech-group/shared-entity/kafka"
 	realtimepb "gitlab.com/spydotech-group/shared-entity/proto/realtime/v1"
+	"gitlab.com/spydotech-group/shared-entity/redis"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -49,6 +51,7 @@ type Application struct {
 	kafkaConsumer           *kafka.MessageConsumer
 	notificationConsumer    *kafka.NotificationConsumer
 	eventsClient            *eventsclient.Client
+	marketplaceClient       *marketplaceclient.Client
 	messageArchiveService   *services.MessageArchiveService
 	cleanupService          *services.CleanupService
 	hub                     *websocket.Hub
@@ -246,7 +249,15 @@ func (a *Application) initDomain() error {
 	servicesBundle.Event = client
 	servicesBundle.EventRecommendation = client
 
-	controllerConfig := buildControllers(a.cfg, servicesBundle)
+	// Initialize marketplace gRPC client
+	marketplaceClient, err := marketplaceclient.New(a.ctx, a.cfg)
+	if err != nil {
+		return fmt.Errorf("failed to connect to marketplace service: %w", err)
+	}
+	a.marketplaceClient = marketplaceClient
+	// TODO: Update servicesBundle.Marketplace to use marketplaceClient
+
+	controllerConfig := buildControllers(a.cfg, servicesBundle, a.marketplaceClient)
 
 	a.kafkaConsumer = kafka.NewMessageConsumer(a.cfg.KafkaBrokers, a.cfg.KafkaTopic, "message-group", a.hub)
 	a.notificationConsumer = kafka.NewNotificationConsumer(a.cfg.KafkaBrokers, "notifications_events", "notification-group", a.hub, repos.Notification, a.dlqProducer)

@@ -9,6 +9,7 @@ import (
 	"messaging-app/internal/controllers"
 	cassdb "messaging-app/internal/db"
 	"messaging-app/internal/graph"
+	"messaging-app/internal/marketplaceclient"
 	notifications "messaging-app/internal/notifications"
 	"messaging-app/internal/repositories"
 	"messaging-app/internal/seeds"
@@ -161,7 +162,7 @@ func (a *Application) buildBaseServices(repos repositoryBundle, graphs graphBund
 	}, nil
 }
 
-func buildControllers(cfg *config.Config, services serviceBundle) routerConfig {
+func buildControllers(cfg *config.Config, services serviceBundle, marketplaceClient *marketplaceclient.Client) routerConfig {
 	return routerConfig{
 		authController:         controllers.NewAuthController(services.Auth, cfg),
 		userController:         controllers.NewUserController(services.User),
@@ -177,7 +178,7 @@ func buildControllers(cfg *config.Config, services serviceBundle) routerConfig {
 		communityController:    controllers.NewCommunityController(services.Community),
 		storyController:        controllers.NewStoryController(services.Story),
 		reelController:         controllers.NewReelController(services.Reel),
-		marketplaceController:  controllers.NewMarketplaceController(services.Marketplace),
+		marketplaceController:  controllers.NewMarketplaceController(marketplaceClient),
 		eventController:        controllers.NewEventController(services.Event, services.EventRecommendation),
 	}
 }

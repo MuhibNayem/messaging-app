@@ -1,24 +1,25 @@
 package controllers
 
 import (
-	"gitlab.com/spydotech-group/shared-entity/models"
-	"messaging-app/internal/services"
+	"messaging-app/internal/marketplaceclient"
 	"net/http"
+
+	"gitlab.com/spydotech-group/shared-entity/models"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type MarketplaceController struct {
-	service *services.MarketplaceService
+	client *marketplaceclient.Client
 }
 
-func NewMarketplaceController(service *services.MarketplaceService) *MarketplaceController {
-	return &MarketplaceController{service: service}
+func NewMarketplaceController(client *marketplaceclient.Client) *MarketplaceController {
+	return &MarketplaceController{client: client}
 }
 
 func (c *MarketplaceController) GetCategories(ctx *gin.Context) {
-	categories, err := c.service.GetCategories(ctx.Request.Context())
+	categories, err := c.client.GetCategories(ctx.Request.Context())
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -56,7 +57,7 @@ func (c *MarketplaceController) CreateProduct(ctx *gin.Context) {
 		return
 	}
 
-	product, err := c.service.CreateProduct(ctx.Request.Context(), userObjectID, req)
+	product, err := c.client.CreateProduct(ctx.Request.Context(), userObjectID, req)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -80,7 +81,7 @@ func (c *MarketplaceController) GetProduct(ctx *gin.Context) {
 		}
 	}
 
-	product, err := c.service.GetProductByID(ctx.Request.Context(), productID, viewerID)
+	product, err := c.client.GetProduct(ctx.Request.Context(), productID, viewerID)
 	if err != nil {
 		ctx.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
 		return
@@ -104,13 +105,18 @@ func (c *MarketplaceController) ListProducts(ctx *gin.Context) {
 		filter.Limit = 20
 	}
 
-	resp, err := c.service.SearchProducts(ctx.Request.Context(), filter)
+	products, total, err := c.client.SearchProducts(ctx.Request.Context(), filter)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	ctx.JSON(http.StatusOK, resp)
+	ctx.JSON(http.StatusOK, gin.H{
+		"products": products,
+		"total":    total,
+		"page":     filter.Page,
+		"limit":    filter.Limit,
+	})
 }
 
 func (c *MarketplaceController) GetConversations(ctx *gin.Context) {
@@ -126,7 +132,7 @@ func (c *MarketplaceController) GetConversations(ctx *gin.Context) {
 	}
 	userObjectID, _ := primitive.ObjectIDFromHex(userIDStr)
 
-	conversations, err := c.service.GetMarketplaceConversations(ctx.Request.Context(), userObjectID)
+	conversations, err := c.client.GetMarketplaceConversations(ctx.Request.Context(), userObjectID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -156,7 +162,7 @@ func (c *MarketplaceController) MarkSold(ctx *gin.Context) {
 	}
 	userObjectID, _ := primitive.ObjectIDFromHex(userIDStr)
 
-	if err := c.service.MarkProductSold(ctx.Request.Context(), productID, userObjectID); err != nil {
+	if err := c.client.MarkProductSold(ctx.Request.Context(), productID, userObjectID); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}) // Could be unauthorized
 		return
 	}
@@ -180,7 +186,7 @@ func (c *MarketplaceController) DeleteProduct(ctx *gin.Context) {
 	}
 	userObjectID, _ := primitive.ObjectIDFromHex(userIDStr)
 
-	if err := c.service.DeleteProduct(ctx.Request.Context(), productID, userObjectID); err != nil {
+	if err := c.client.DeleteProduct(ctx.Request.Context(), productID, userObjectID); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -204,7 +210,7 @@ func (c *MarketplaceController) ToggleSave(ctx *gin.Context) {
 	}
 	userObjectID, _ := primitive.ObjectIDFromHex(userIDStr)
 
-	isSaved, err := c.service.ToggleSaveProduct(ctx.Request.Context(), productID, userObjectID)
+	isSaved, err := c.client.ToggleSaveProduct(ctx.Request.Context(), productID, userObjectID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

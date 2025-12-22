@@ -9,7 +9,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.97
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/prometheus/client_golang v1.22.0
-	gitlab.com/spydotech-group/shared-entity v0.0.2
+	gitlab.com/spydotech-group/shared-entity v0.0.3
 	golang.org/x/crypto v0.43.0
 	golang.org/x/time v0.14.0
 	google.golang.org/grpc v1.77.0

@@ -11,34 +11,36 @@ import (
 )
 
 type Config struct {
-	MongoURI          string
-	MongoUser         string
-	MongoPassword     string
-	DBName            string
-	KafkaBrokers      []string
-	JWTSecret         string
-	ServerPort        string
-	KafkaTopic        string
-	WebSocketPort     string
-	RedisURLs         []string
-	RedisPass         string
-	AccessTokenTTL    time.Duration
-	RefreshTokenTTL   time.Duration
-	PrometheusPort    string
-	RateLimitEnabled  bool
-	RateLimitLimit    float64
-	RateLimitBurst    int
-	StorageEndpoint   string
-	StorageAccessKey  string
-	StorageSecretKey  string
-	StorageBucket     string
-	StorageUseSSL     bool
-	StoragePublicURL  string
-	EventsGRPCPort    string
-	EventsGRPCHost    string
-	EventsMetricsPort string
-	RealtimeGRPCPort  string
-	RealtimeGRPCHost  string
+	MongoURI            string
+	MongoUser           string
+	MongoPassword       string
+	DBName              string
+	KafkaBrokers        []string
+	JWTSecret           string
+	ServerPort          string
+	KafkaTopic          string
+	WebSocketPort       string
+	RedisURLs           []string
+	RedisPass           string
+	AccessTokenTTL      time.Duration
+	RefreshTokenTTL     time.Duration
+	PrometheusPort      string
+	RateLimitEnabled    bool
+	RateLimitLimit      float64
+	RateLimitBurst      int
+	StorageEndpoint     string
+	StorageAccessKey    string
+	StorageSecretKey    string
+	StorageBucket       string
+	StorageUseSSL       bool
+	StoragePublicURL    string
+	EventsGRPCPort      string
+	EventsGRPCHost      string
+	EventsMetricsPort   string
+	MarketplaceGRPCPort string
+	MarketplaceGRPCHost string
+	RealtimeGRPCPort    string
+	RealtimeGRPCHost    string
 
 	CORSAllowedOrigins []string
 	RefreshCookieName  string
@@ -82,42 +84,46 @@ func LoadConfig() *Config {
 	eventsGRPCPort := getEnv("EVENTS_GRPC_PORT", "9096")
 	eventsGRPCHost := getEnv("EVENTS_GRPC_HOST", "localhost")
 	eventsMetricsPort := getEnv("EVENTS_METRICS_PORT", "9100")
-	realtimeGRPCPort := getEnv("REALTIME_GRPC_PORT", "9097")
+	marketplaceGRPCPort := getEnv("MARKETPLACE_GRPC_PORT", "9097")
+	marketplaceGRPCHost := getEnv("MARKETPLACE_GRPC_HOST", "localhost")
+	realtimeGRPCPort := getEnv("REALTIME_GRPC_PORT", "9099")
 	realtimeGRPCHost := getEnv("REALTIME_GRPC_HOST", "localhost")
 
 	return &Config{
-		MongoURI:           getEnv("MONGO_URI", "mongodb://localhost:27017"),
-		MongoUser:          getEnv("MONGO_USER", ""),
-		MongoPassword:      getEnv("MONGO_PASSWORD", ""),
-		DBName:             getEnv("DB_NAME", "messaging_app"),
-		KafkaBrokers:       strings.Split(getEnv("KAFKA_BROKERS", "localhost:9092"), ","),
-		JWTSecret:          getEnv("JWT_SECRET", "very-secret-key"),
-		ServerPort:         getEnv("SERVER_PORT", "8080"),
-		KafkaTopic:         getEnv("KAFKA_TOPIC", "messages"),
-		WebSocketPort:      getEnv("WS_PORT", "8081"),
-		RedisURLs:          strings.Split(getEnv("REDIS_URL", "localhost:6379"), ","),
-		RedisPass:          getEnv("REDIS_PASS", ""),
-		AccessTokenTTL:     time.Minute * time.Duration(accessTTL),
-		RefreshTokenTTL:    time.Hour * 24 * time.Duration(refreshTTL),
-		PrometheusPort:     getEnv("PROMETHEUS_PORT", "9091"),
-		RateLimitEnabled:   rateLimitEnabled,
-		RateLimitLimit:     rateLimitLimit,
-		RateLimitBurst:     rateLimitBurst,
-		StorageEndpoint:    getEnv("STORAGE_ENDPOINT", "minio:9000"),
-		StorageAccessKey:   getEnv("STORAGE_ACCESS_KEY", "minioadmin"),
-		StorageSecretKey:   getEnv("STORAGE_SECRET_KEY", "minioadmin"),
-		StorageBucket:      getEnv("STORAGE_BUCKET", "connectify-uploads"),
-		StorageUseSSL:      storageUseSSL,
-		StoragePublicURL:   getEnv("STORAGE_PUBLIC_URL", "http://localhost:9000"),
-		EventsGRPCPort:     eventsGRPCPort,
-		EventsGRPCHost:     eventsGRPCHost,
-		EventsMetricsPort:  eventsMetricsPort,
-		RealtimeGRPCPort:   realtimeGRPCPort,
-		RealtimeGRPCHost:   realtimeGRPCHost,
-		CORSAllowedOrigins: corsOrigins,
-		RefreshCookieName:  getEnv("REFRESH_COOKIE_NAME", "connectify_refresh"),
-		CookieDomain:       getEnv("COOKIE_DOMAIN", ""),
-		CookieSecure:       cookieSecure,
+		MongoURI:            getEnv("MONGO_URI", "mongodb://localhost:27017"),
+		MongoUser:           getEnv("MONGO_USER", ""),
+		MongoPassword:       getEnv("MONGO_PASSWORD", ""),
+		DBName:              getEnv("DB_NAME", "messaging_app"),
+		KafkaBrokers:        strings.Split(getEnv("KAFKA_BROKERS", "localhost:9092"), ","),
+		JWTSecret:           getEnv("JWT_SECRET", "very-secret-key"),
+		ServerPort:          getEnv("SERVER_PORT", "8080"),
+		KafkaTopic:          getEnv("KAFKA_TOPIC", "messages"),
+		WebSocketPort:       getEnv("WS_PORT", "8081"),
+		RedisURLs:           strings.Split(getEnv("REDIS_URL", "localhost:6379"), ","),
+		RedisPass:           getEnv("REDIS_PASS", ""),
+		AccessTokenTTL:      time.Minute * time.Duration(accessTTL),
+		RefreshTokenTTL:     time.Hour * 24 * time.Duration(refreshTTL),
+		PrometheusPort:      getEnv("PROMETHEUS_PORT", "9091"),
+		RateLimitEnabled:    rateLimitEnabled,
+		RateLimitLimit:      rateLimitLimit,
+		RateLimitBurst:      rateLimitBurst,
+		StorageEndpoint:     getEnv("STORAGE_ENDPOINT", "minio:9000"),
+		StorageAccessKey:    getEnv("STORAGE_ACCESS_KEY", "minioadmin"),
+		StorageSecretKey:    getEnv("STORAGE_SECRET_KEY", "minioadmin"),
+		StorageBucket:       getEnv("STORAGE_BUCKET", "connectify-uploads"),
+		StorageUseSSL:       storageUseSSL,
+		StoragePublicURL:    getEnv("STORAGE_PUBLIC_URL", "http://localhost:9000"),
+		EventsGRPCPort:      eventsGRPCPort,
+		EventsGRPCHost:      eventsGRPCHost,
+		EventsMetricsPort:   eventsMetricsPort,
+		MarketplaceGRPCPort: marketplaceGRPCPort,
+		MarketplaceGRPCHost: marketplaceGRPCHost,
+		RealtimeGRPCPort:    realtimeGRPCPort,
+		RealtimeGRPCHost:    realtimeGRPCHost,
+		CORSAllowedOrigins:  corsOrigins,
+		RefreshCookieName:   getEnv("REFRESH_COOKIE_NAME", "connectify_refresh"),
+		CookieDomain:        getEnv("COOKIE_DOMAIN", ""),
+		CookieSecure:        cookieSecure,
 
 		// New DBs
 		CassandraHosts:    strings.Split(getEnv("CASSANDRA_HOSTS", "localhost"), ","),
