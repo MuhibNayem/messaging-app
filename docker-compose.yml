@@ -463,6 +463,8 @@ services:
         condition: service_healthy
       events-service:
         condition: service_started
+      marketplace-service:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
@@ -500,7 +502,21 @@ services:
     networks:
       - messaging-net
 
-
+  marketplace-service:
+    build:
+      context: ../marketplace-service
+      dockerfile: Dockerfile
+    container_name: marketplace-service
+    ports:
+      - "9097:9097"
+      - "9198:9198"
+    env_file:
+      - ".env"
+    depends_on:
+      mongodb3:
+        condition: service_healthy
+    networks:
+      - messaging-net
 
   # MinIO Service
   minio:
